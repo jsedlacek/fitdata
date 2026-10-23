@@ -1,7 +1,7 @@
 # Produkce na Google Cloud
 
 ```
-Cloud Scheduler (denně 10:00 Europe/Prague)
+Cloud Scheduler (každou hodinu)
   └─> Cloud Run job fitdata-sync      `fitdata job --days 7`
         ├─ Google Health API ─> GCS gs://fitdata-jsedlacek-data/raw/{typ}/{den|měsíc}.jsonl
         └─ normalizace ─> BigQuery health.{heart_rate, activity, spo2, hrv, nights, exercises, daily}

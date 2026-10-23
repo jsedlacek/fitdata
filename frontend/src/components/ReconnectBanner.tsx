@@ -14,7 +14,7 @@ export function ReconnectBanner({ run }: { run: SyncRun | null }) {
     return (
       <div role="status" className="mb-5 flex items-start gap-3 rounded-xl border border-l-4 border-l-good bg-surface px-4 py-3 text-sm">
         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-good" />
-        <p>Přístup k datům je obnovený. Chybějící dny se doplní při příští synchronizaci (denně v 10:00).</p>
+        <p>Přístup k datům je obnovený. Chybějící dny se doplní při příští synchronizaci (každou hodinu).</p>
       </div>
     );
   }

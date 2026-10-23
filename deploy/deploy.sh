@@ -36,10 +36,10 @@ gcloud run jobs deploy "$JOB_NAME" --project "$PROJECT" --region "$REGION" \
   --service-account "$JOB_SA" --set-env-vars "$ENV" \
   --cpu 1 --memory 1Gi --task-timeout 30m --max-retries 1
 
-echo "== Schedule (daily 10:00 $TIME_ZONE)"
+echo "== Schedule ($SCHEDULE $TIME_ZONE)"
 gcloud run jobs add-iam-policy-binding "$JOB_NAME" --project "$PROJECT" --region "$REGION" \
   --member "serviceAccount:$SCHEDULER_SA" --role roles/run.invoker >/dev/null
-SCHEDULE_ARGS=(--project "$PROJECT" --location "$REGION" --schedule "0 10 * * *" --time-zone "$TIME_ZONE"
+SCHEDULE_ARGS=(--project "$PROJECT" --location "$REGION" --schedule "$SCHEDULE" --time-zone "$TIME_ZONE"
   --uri "https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/$JOB_NAME:run"
   --http-method POST --oauth-service-account-email "$SCHEDULER_SA")
 if gcloud scheduler jobs describe "$JOB_NAME-daily" --project "$PROJECT" --location "$REGION" >/dev/null 2>&1; then

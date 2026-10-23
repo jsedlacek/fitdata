@@ -7,6 +7,8 @@ BUCKET=${BUCKET:-$PROJECT-data}
 DATASET=${DATASET:-health}
 REPO=${REPO:-fitdata}
 TIME_ZONE=${TIME_ZONE:-Europe/Prague}
+# When the sync job runs (cron in TIME_ZONE); each run re-fetches the last 7 days.
+SCHEDULE=${SCHEDULE:-"0 * * * *"}
 # Custom domain of the dashboard; must be verified for the gcloud account
 # (gcloud domains list-user-verified). Empty means the Cloud Run URL.
 DOMAIN=${DOMAIN:-fitdata.jakub.contact}
