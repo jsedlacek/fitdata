@@ -20,6 +20,7 @@ cargo run -- whoami      # identita, profil, spárovaná zařízení
 cargo run -- probe       # které datové typy jsou dostupné a mají data
 cargo run -- backfill    # celá historie (lze přerušit a pustit znovu)
 cargo run -- sync        # posledních 7 dní (denní job)
+cargo run -- serve       # prototyp dashboardu na http://devbox.test:8080
 ```
 
 `backfill` i `sync` berou `--types heart-rate,sleep,...`, aby šlo stahovat jen vybrané typy.

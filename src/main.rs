@@ -1,9 +1,11 @@
 mod api;
 mod datatypes;
+mod model;
 mod oauth;
 mod secrets;
 mod store;
 mod sync;
+mod web;
 
 use anyhow::{Context, Result, bail};
 use chrono::{Days, NaiveDate};
@@ -38,6 +40,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Prototype dashboard over the locally stored data.
+    Serve {
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
+    },
     /// Interactive OAuth consent; stores a refresh token.
     Login {
         #[arg(long, default_value_t = 8080)]
@@ -109,6 +116,10 @@ async fn main() -> Result<()> {
     let http = reqwest::Client::builder()
         .user_agent("fitdata/0.1")
         .build()?;
+    if let Cmd::Serve { port } = cli.cmd {
+        return web::serve(cli.storage.into(), port).await;
+    }
+
     let project = cli.gcp_project.as_deref();
     let client_ref = SecretRef::parse(&cli.oauth_client, project)?;
     let token_ref = SecretRef::parse(&cli.refresh_token, project)?;
@@ -135,7 +146,7 @@ async fn main() -> Result<()> {
     let store = Store::open(&cli.storage)?;
 
     match cli.cmd {
-        Cmd::Login { .. } => unreachable!(),
+        Cmd::Login { .. } | Cmd::Serve { .. } => unreachable!(),
         Cmd::Whoami => {
             let info = json!({
                 "identity": client.identity().await?,
