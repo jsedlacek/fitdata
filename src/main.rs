@@ -194,7 +194,7 @@ async fn record_run(
         "INSERT INTO {} (date, run_at, ok, auth_error, error, days) VALUES ('{}', '{}', {}, {auth_error}, {error}, {days})",
         bq.table("sync_runs"),
         local.date_naive(),
-        started.to_rfc3339(),
+        started.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
         result.is_ok(),
     ))
     .await?;
