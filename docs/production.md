@@ -5,11 +5,11 @@ Cloud Scheduler (denně 10:00 Europe/Prague)
   └─> Cloud Run job fitdata-sync      `fitdata job --days 7`
         ├─ Google Health API ─> GCS gs://fitdata-jsedlacek-raw/raw/{typ}/{den|měsíc}.jsonl
         └─ normalizace ─> BigQuery fitdata.{heart_rate, activity, spo2, hrv, nights, exercises, daily}
-Cloud Run service fitdata-web          `fitdata serve`
-  └─ Google přihlášení (ALLOWED_EMAILS) ─> dotazy do BigQuery
+Cloud Run service fitdata-web (europe-west1)   `fitdata serve`   https://fitdata.jakub.contact
+  └─ Google přihlášení (ALLOWED_EMAILS) ─> dotazy do BigQuery (europe-west3)
 ```
 
-Jeden image, jedna binárka; job a web se liší jen argumenty.
+Jeden image, jedna binárka; job a web se liší jen argumenty. Data, job i image jsou ve Frankfurtu (`europe-west3`). Web běží v Belgii (`europe-west1`), protože Frankfurt neumí Cloud Run domain mapping.
 
 ## Nasazení
 
@@ -20,7 +20,14 @@ deploy/deploy.sh   # build (Cloud Build), job + scheduler, web
 
 Nastavení je v [deploy/config.sh](../deploy/config.sh). Schémata tabulek jsou v [deploy/schema/](../deploy/schema/). Nový sloupec stačí přidat do schématu i do `model.rs` a spustit znovu `setup.sh`.
 
-OAuth Web client musí mít mezi *Authorized redirect URIs* adresu `https://fitdata-web-<číslo projektu>.europe-west3.run.app/auth/callback`.
+OAuth Web client musí mít mezi *Authorized redirect URIs* adresu `https://fitdata.jakub.contact/auth/callback`.
+
+### Vlastní doména
+
+- Doména musí být ověřená pro účet, pod kterým běží `gcloud` (`gcloud domains list-user-verified`). Pokud není, ověří ji `gcloud domains verify jakub.contact`.
+- `deploy.sh` vytvoří domain mapping a vypíše DNS záznam: `CNAME fitdata → ghs.googlehosted.com`.
+- V Cloudflare musí být záznam **DNS only** (šedý mráček). Přes proxy Google nevydá certifikát.
+- Certifikát se vydává 15–60 minut po nastavení DNS. Stav ukáže `gcloud beta run domain-mappings describe --domain fitdata.jakub.contact --region europe-west1`.
 
 ## Data
 

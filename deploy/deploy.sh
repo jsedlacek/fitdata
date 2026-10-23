@@ -7,17 +7,28 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/config.sh
 
-TAG=$(git rev-parse --short HEAD)$(git diff --quiet HEAD -- || echo "-dirty")
+# Tag by the last commit that touched what goes into the image, so changes to
+# deploy scripts or docs reuse the existing image.
+SOURCES=(Dockerfile Cargo.toml Cargo.lock src web)
+TAG=$(git log -1 --format=%h -- "${SOURCES[@]}")$(git diff --quiet HEAD -- "${SOURCES[@]}" || echo "-dirty")
 IMAGE=$REGION-docker.pkg.dev/$PROJECT/$REPO/fitdata:$TAG
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)')
-# Cloud Run's deterministic URL; it must be an authorized redirect URI
-# (+ /auth/callback) of the OAuth Web client.
-PUBLIC_URL=https://$SERVICE_NAME-$PROJECT_NUMBER.$REGION.run.app
+# Google redirects to $PUBLIC_URL/auth/callback, which must be an authorized
+# redirect URI of the OAuth Web client.
+if [[ -n $DOMAIN ]]; then
+  PUBLIC_URL=https://$DOMAIN
+else
+  PUBLIC_URL=https://$SERVICE_NAME-$PROJECT_NUMBER.$WEB_REGION.run.app
+fi
 
 ENV=GCP_PROJECT=$PROJECT,GCP_REGION=$REGION,STORAGE=gs://$BUCKET,BQ_DATASET=$DATASET,TZ=$TIME_ZONE,RUST_LOG=fitdata=info
 
-echo "== Build $IMAGE"
-gcloud builds submit --project "$PROJECT" --region "$REGION" --tag "$IMAGE" .
+if [[ $TAG != *-dirty ]] && gcloud artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
+  echo "== Image $IMAGE already built"
+else
+  echo "== Build $IMAGE"
+  gcloud builds submit --project "$PROJECT" --region "$REGION" --tag "$IMAGE" .
+fi
 
 echo "== Job $JOB_NAME"
 gcloud run jobs deploy "$JOB_NAME" --project "$PROJECT" --region "$REGION" \
@@ -39,11 +50,22 @@ fi
 
 echo "== Service $SERVICE_NAME"
 # Public endpoint; the app itself requires Google sign-in (ALLOWED_EMAILS).
-gcloud run deploy "$SERVICE_NAME" --project "$PROJECT" --region "$REGION" \
+gcloud run deploy "$SERVICE_NAME" --project "$PROJECT" --region "$WEB_REGION" \
   --image "$IMAGE" --args serve \
   --service-account "$WEB_SA" \
   --set-env-vars "^;^${ENV//,/;};PUBLIC_URL=$PUBLIC_URL;ALLOWED_EMAILS=$ALLOWED_EMAILS" \
   --allow-unauthenticated --cpu 1 --memory 512Mi --min-instances 0 --max-instances 2
+
+if [[ -n $DOMAIN ]]; then
+  echo "== Domain mapping $DOMAIN"
+  if ! gcloud beta run domain-mappings describe --domain "$DOMAIN" --project "$PROJECT" --region "$WEB_REGION" >/dev/null 2>&1; then
+    gcloud beta run domain-mappings create --service "$SERVICE_NAME" --domain "$DOMAIN" \
+      --project "$PROJECT" --region "$WEB_REGION"
+  fi
+  echo "DNS records (Cloudflare: DNS only, not proxied):"
+  gcloud beta run domain-mappings describe --domain "$DOMAIN" --project "$PROJECT" --region "$WEB_REGION" \
+    --format 'table(status.resourceRecords[].name, status.resourceRecords[].type, status.resourceRecords[].rrdata)'
+fi
 
 echo
 echo "Dashboard: $PUBLIC_URL"
