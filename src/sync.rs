@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::api::{ApiError, HealthClient};
 use crate::datatypes::{DataType, Window};
+use crate::model::Raw;
 use crate::store::Store;
 
 /// Types fetched concurrently; requests within a type are sequential.
@@ -66,6 +67,19 @@ fn slots(dt: &DataType, from: NaiveDate, to: NaiveDate) -> Vec<Slot> {
 
 fn object_path(dt: &DataType, slot: &Slot) -> String {
     format!("raw/{}/{}.jsonl", dt.id, slot.key)
+}
+
+/// Reads the stored raw points of all data types for slots overlapping the
+/// civil date range `[from, to)`.
+pub async fn read_raw(store: &Store, from: NaiveDate, to: NaiveDate) -> Result<Raw> {
+    let reads = crate::datatypes::ALL.iter().map(|dt| async move {
+        let mut points = Vec::new();
+        for slot in slots(dt, from, to) {
+            points.extend(store.get_jsonl(&object_path(dt, &slot)).await?);
+        }
+        Ok::<_, anyhow::Error>((dt.id.to_string(), points))
+    });
+    stream::iter(reads).buffer_unordered(8).try_collect().await
 }
 
 /// Fetches one slot and writes it; returns the number of points.

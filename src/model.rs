@@ -3,13 +3,12 @@
 //! All timestamps are converted to the user's local wall-clock time using the
 //! UTC offset stored with each point, so days split at local midnight.
 
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::Result;
-use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Timelike};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SleepStage {
@@ -137,26 +136,18 @@ fn interval_end(p: &Value) -> Option<NaiveDateTime> {
     local(&p["interval"]["endTime"], &p["interval"]["endUtcOffset"])
 }
 
-/// Every point of a data type, from all `raw/{type}/*.jsonl` files, unwrapped
-/// to the payload object (e.g. the value of `"heartRate"`).
-fn read_type(dir: &Path, data_type: &str, key: &str) -> Result<Vec<Value>> {
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir.join("raw").join(data_type)) else {
-        return Ok(out);
-    };
-    for entry in entries {
-        let path = entry?.path();
-        if path.extension().is_some_and(|e| e == "jsonl") {
-            for line in std::fs::read_to_string(&path)?
-                .lines()
-                .filter(|l| !l.is_empty())
-            {
-                let mut v: Value = serde_json::from_str(line)?;
-                out.push(v[key].take());
-            }
-        }
-    }
-    Ok(out)
+/// Raw API data points per data type id, as stored in `raw/{type}/*.jsonl`.
+pub type Raw = HashMap<String, Vec<Value>>;
+
+/// Every point of a data type, unwrapped to the payload object (e.g. the value
+/// of `"heartRate"`).
+fn read_type(raw: &Raw, data_type: &str, key: &str) -> Result<Vec<Value>> {
+    Ok(raw
+        .get(data_type)
+        .into_iter()
+        .flatten()
+        .map(|p| p[key].clone())
+        .collect())
 }
 
 fn series(
@@ -174,40 +165,40 @@ fn series(
 }
 
 impl Dataset {
-    /// Loads everything under a local data directory (the prototype keeps
-    /// it all in memory; production will query BigQuery instead).
-    pub fn load(dir: &Path) -> Result<Self> {
+    /// Normalizes raw points (typically a few days of them, see
+    /// `sync::read_raw`) into typed series and per-day metrics.
+    pub fn from_raw(raw: &Raw) -> Result<Self> {
         let mut ds = Dataset {
             heart_rate: series(
-                &read_type(dir, "heart-rate", "heartRate")?,
+                &read_type(raw, "heart-rate", "heartRate")?,
                 sample_time,
                 "beatsPerMinute",
             ),
-            steps: series(&read_type(dir, "steps", "steps")?, interval_start, "count"),
+            steps: series(&read_type(raw, "steps", "steps")?, interval_start, "count"),
             active_kcal: series(
-                &read_type(dir, "active-energy-burned", "activeEnergyBurned")?,
+                &read_type(raw, "active-energy-burned", "activeEnergyBurned")?,
                 interval_start,
                 "kcal",
             ),
             azm: series(
-                &read_type(dir, "active-zone-minutes", "activeZoneMinutes")?,
+                &read_type(raw, "active-zone-minutes", "activeZoneMinutes")?,
                 interval_start,
                 "activeZoneMinutes",
             ),
             spo2: series(
-                &read_type(dir, "oxygen-saturation", "oxygenSaturation")?,
+                &read_type(raw, "oxygen-saturation", "oxygenSaturation")?,
                 sample_time,
                 "percentage",
             ),
             hrv: series(
-                &read_type(dir, "heart-rate-variability", "heartRateVariability")?,
+                &read_type(raw, "heart-rate-variability", "heartRateVariability")?,
                 sample_time,
                 "rootMeanSquareOfSuccessiveDifferencesMilliseconds",
             ),
             ..Default::default()
         };
 
-        for p in read_type(dir, "sleep", "sleep")? {
+        for p in read_type(raw, "sleep", "sleep")? {
             let (Some(start), Some(end)) = (interval_start(&p), interval_end(&p)) else {
                 continue;
             };
@@ -242,7 +233,7 @@ impl Dataset {
         ds.sleep.sort_by_key(|s| s.start);
         ds.sleep.dedup_by_key(|s| s.start);
 
-        for p in read_type(dir, "exercise", "exercise")? {
+        for p in read_type(raw, "exercise", "exercise")? {
             let (Some(start), Some(end)) = (interval_start(&p), interval_end(&p)) else {
                 continue;
             };
@@ -263,7 +254,7 @@ impl Dataset {
         }
         ds.exercise.sort_by_key(|e| e.start);
 
-        ds.build_daily(dir)?;
+        ds.build_daily(raw)?;
         Ok(ds)
     }
 
@@ -274,15 +265,15 @@ impl Dataset {
         })
     }
 
-    fn build_daily(&mut self, dir: &Path) -> Result<()> {
+    fn build_daily(&mut self, raw: &Raw) -> Result<()> {
         // Daily summaries computed by Google.
-        for p in read_type(dir, "daily-resting-heart-rate", "dailyRestingHeartRate")? {
+        for p in read_type(raw, "daily-resting-heart-rate", "dailyRestingHeartRate")? {
             if let Some(d) = date(&p["date"]) {
                 self.day(d).resting_hr = num(&p["beatsPerMinute"]);
             }
         }
         for p in read_type(
-            dir,
+            raw,
             "daily-heart-rate-variability",
             "dailyHeartRateVariability",
         )? {
@@ -294,7 +285,7 @@ impl Dataset {
                 m.nonrem_hr = num(&p["nonRemHeartRateBeatsPerMinute"]);
             }
         }
-        for p in read_type(dir, "daily-oxygen-saturation", "dailyOxygenSaturation")? {
+        for p in read_type(raw, "daily-oxygen-saturation", "dailyOxygenSaturation")? {
             if let Some(d) = date(&p["date"]) {
                 let m = self.day(d);
                 m.spo2_avg = num(&p["averagePercentage"]);
@@ -302,13 +293,13 @@ impl Dataset {
                 m.spo2_high = num(&p["upperBoundPercentage"]);
             }
         }
-        for p in read_type(dir, "daily-respiratory-rate", "dailyRespiratoryRate")? {
+        for p in read_type(raw, "daily-respiratory-rate", "dailyRespiratoryRate")? {
             if let Some(d) = date(&p["date"]) {
                 self.day(d).respiratory_rate = num(&p["breathsPerMinute"]);
             }
         }
         for p in read_type(
-            dir,
+            raw,
             "daily-sleep-temperature-derivations",
             "dailySleepTemperatureDerivations",
         )? {
@@ -418,49 +409,74 @@ impl Dataset {
     }
 }
 
-/// Points within `[from, to)` of a time-sorted series.
-pub fn window(
-    s: &[(NaiveDateTime, f64)],
-    from: NaiveDateTime,
-    to: NaiveDateTime,
-) -> &[(NaiveDateTime, f64)] {
-    let a = s.partition_point(|(t, _)| *t < from);
-    let b = s.partition_point(|(t, _)| *t < to);
-    &s[a..b]
-}
+/// Rows for the BigQuery tables (see deploy/schema/), limited to local dates
+/// in `[from, to]`. Each row has a `date` column the tables are partitioned by.
+pub fn table_rows(ds: &Dataset, from: NaiveDate, to: NaiveDate) -> Vec<(&'static str, Vec<Value>)> {
+    let in_range = |t: &NaiveDateTime| (from..=to).contains(&t.date());
+    let samples = |s: &[(NaiveDateTime, f64)], field: &str| -> Vec<Value> {
+        s.iter()
+            .filter(|(t, _)| in_range(t))
+            .map(|(t, v)| json!({ "date": t.date(), "ts": t, field: v }))
+            .collect()
+    };
 
-/// Buckets a series into `minutes`-wide bins: (bin start, min, mean, max).
-pub fn bin_stats(s: &[(NaiveDateTime, f64)], minutes: u32) -> Vec<(NaiveDateTime, f64, f64, f64)> {
-    let mut out: Vec<(NaiveDateTime, f64, f64, f64, usize)> = Vec::new();
-    for (t, v) in s {
-        let bin = t.with_second(0).unwrap().with_nanosecond(0).unwrap()
-            - Duration::minutes((t.minute() % minutes) as i64);
-        match out.last_mut() {
-            Some(last) if last.0 == bin => {
-                last.1 = last.1.min(*v);
-                last.3 = last.3.max(*v);
-                last.2 += v;
-                last.4 += 1;
-            }
-            _ => out.push((bin, *v, *v, *v, 1)),
+    // Per-minute activity, merged from three interval series.
+    let mut minutes: BTreeMap<NaiveDateTime, [Option<f64>; 3]> = BTreeMap::new();
+    for (i, series) in [&ds.steps, &ds.active_kcal, &ds.azm]
+        .into_iter()
+        .enumerate()
+    {
+        for (t, v) in series.iter().filter(|(t, _)| in_range(t)) {
+            minutes.entry(*t).or_default()[i] = Some(*v);
         }
     }
-    out.into_iter()
-        .map(|(t, lo, sum, hi, n)| (t, lo, (sum / n as f64 * 10.0).round() / 10.0, hi))
-        .collect()
-}
+    let activity = minutes
+        .into_iter()
+        .map(|(t, [steps, kcal, azm])| json!({ "date": t.date(), "ts": t, "steps": steps, "active_kcal": kcal, "azm": azm }))
+        .collect();
 
-/// Sums a series into `minutes`-wide bins: (bin start, total).
-pub fn bin_sum(s: &[(NaiveDateTime, f64)], minutes: u32) -> Vec<(NaiveDateTime, f64)> {
-    let mut out: Vec<(NaiveDateTime, f64)> = Vec::new();
-    for (t, v) in s {
-        let bin = t.with_second(0).unwrap() - Duration::minutes((t.minute() % minutes) as i64);
-        match out.last_mut() {
-            Some(last) if last.0 == bin => last.1 += v,
-            _ => out.push((bin, *v)),
-        }
-    }
-    out
+    let nights = from
+        .iter_days()
+        .take_while(|d| *d <= to)
+        .filter_map(|d| {
+            let n = ds.night_before(d)?;
+            let m = |k: &str| n.stage_minutes.get(k).copied();
+            Some(json!({
+                "date": d, "start": n.start, "end": n.end,
+                "minutes_asleep": n.minutes_asleep, "minutes_awake": n.minutes_awake,
+                "deep_minutes": m("DEEP"), "light_minutes": m("LIGHT"),
+                "rem_minutes": m("REM"), "awake_minutes": m("AWAKE"),
+                "stages": n.stages,
+            }))
+        })
+        .collect();
+
+    let exercises = ds
+        .exercise
+        .iter()
+        .filter(|e| in_range(&e.start))
+        .map(|e| {
+            let mut v = serde_json::to_value(e).unwrap_or_default();
+            v["date"] = json!(e.start.date());
+            v
+        })
+        .collect();
+
+    let daily = ds
+        .daily
+        .range(from..=to)
+        .map(|(_, m)| serde_json::to_value(m).unwrap_or_default())
+        .collect();
+
+    vec![
+        ("heart_rate", samples(&ds.heart_rate, "bpm")),
+        ("activity", activity),
+        ("spo2", samples(&ds.spo2, "pct")),
+        ("hrv", samples(&ds.hrv, "rmssd_ms")),
+        ("nights", nights),
+        ("exercises", exercises),
+        ("daily", daily),
+    ]
 }
 
 #[cfg(test)]
@@ -508,18 +524,5 @@ mod tests {
         );
         assert_eq!(n.minutes_asleep, Some(430));
         assert_eq!(n.stage_minutes["DEEP"], 58 + 49);
-    }
-
-    #[test]
-    fn bins_by_minutes() {
-        let t = |s: &str| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").unwrap();
-        let s = vec![
-            (t("2026-10-23 10:01:10"), 60.0),
-            (t("2026-10-23 10:14:00"), 80.0),
-            (t("2026-10-23 10:15:00"), 70.0),
-        ];
-        let b = bin_stats(&s, 15);
-        assert_eq!(b.len(), 2);
-        assert_eq!(b[0], (t("2026-10-23 10:00:00"), 60.0, 70.0, 80.0));
     }
 }

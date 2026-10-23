@@ -1,0 +1,30 @@
+[
+  {
+    "name": "date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Local calendar date (partition key)"
+  },
+  {
+    "name": "ts",
+    "type": "DATETIME",
+    "mode": "REQUIRED",
+    "description": "Start of the minute, local time"
+  },
+  {
+    "name": "steps",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "active_kcal",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "azm",
+    "type": "FLOAT",
+    "mode": "NULLABLE",
+    "description": "Active zone minutes"
+  }
+]

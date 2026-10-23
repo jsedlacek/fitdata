@@ -6,9 +6,7 @@ Fitbit Web API se vypíná 30. 10. 2026; tohle používá jeho náhradu, Google 
 
 ## Stav
 
-Prototyp: CLI v Rustu, které stahuje surová data do lokálního adresáře `data/` (nebo do `gs://bucket`).
-
-Plánovaná produkce: Cloud Run job (denní sync) → Cloud Storage (raw NDJSON) → BigQuery → dashboard.
+Běží v produkci na Google Cloud: denní Cloud Run job stahuje data do GCS a BigQuery a dashboard běží na Cloud Runu za přihlášením Googlem. Popis je v [docs/production.md](docs/production.md).
 
 ## Použití
 
@@ -19,8 +17,10 @@ cargo run -- login       # jednorázově: OAuth souhlas, uloží refresh token d
 cargo run -- whoami      # identita, profil, spárovaná zařízení
 cargo run -- probe       # které datové typy jsou dostupné a mají data
 cargo run -- backfill    # celá historie (lze přerušit a pustit znovu)
-cargo run -- sync        # posledních 7 dní (denní job)
-cargo run -- serve       # prototyp dashboardu na http://devbox.test:8080
+cargo run -- sync        # posledních 7 dní
+cargo run -- load --from 2026-10-21   # normalizace raw dat do BigQuery
+cargo run -- job         # sync + load posledních 7 dní (to dělá denní job)
+cargo run -- serve       # dashboard nad BigQuery (lokálně AUTH_DISABLED=1)
 ```
 
 `backfill` i `sync` berou `--types heart-rate,sleep,...`, aby šlo stahovat jen vybrané typy.

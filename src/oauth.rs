@@ -60,16 +60,101 @@ impl StoredToken {
 }
 
 #[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
-    expires_in: u64,
-    refresh_token: Option<String>,
-    scope: Option<String>,
+pub struct TokenResponse {
+    pub access_token: String,
+    pub expires_in: u64,
+    pub refresh_token: Option<String>,
+    pub scope: Option<String>,
+    /// Present when the `openid` scope was requested.
+    pub id_token: Option<String>,
 }
 
-fn random_b64(bytes: usize) -> String {
+pub fn random_b64(bytes: usize) -> String {
     let buf: Vec<u8> = (0..bytes).map(|_| rand::random::<u8>()).collect();
     URL_SAFE_NO_PAD.encode(buf)
+}
+
+/// A pending authorization: the URL to send the browser to, plus the secrets
+/// needed to verify and redeem the callback.
+pub struct AuthRequest {
+    pub url: Url,
+    pub state: String,
+    pub verifier: String,
+}
+
+/// Authorization-code + PKCE request. `offline` asks for a refresh token
+/// (forcing the consent screen so Google issues a new one).
+pub fn auth_request(
+    creds: &ClientCredentials,
+    redirect_uri: &str,
+    scopes: &[&str],
+    offline: bool,
+) -> Result<AuthRequest> {
+    let verifier = random_b64(48);
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let state = random_b64(16);
+    let mut url = Url::parse(AUTH_URL)?;
+    {
+        let mut q = url.query_pairs_mut();
+        q.append_pair("client_id", &creds.client_id)
+            .append_pair("redirect_uri", redirect_uri)
+            .append_pair("response_type", "code")
+            .append_pair("scope", &scopes.join(" "))
+            .append_pair("code_challenge", &challenge)
+            .append_pair("code_challenge_method", "S256")
+            .append_pair("state", &state);
+        if offline {
+            q.append_pair("access_type", "offline")
+                .append_pair("prompt", "consent");
+        }
+    }
+    Ok(AuthRequest {
+        url,
+        state,
+        verifier,
+    })
+}
+
+pub async fn exchange_code(
+    http: &reqwest::Client,
+    creds: &ClientCredentials,
+    code: &str,
+    redirect_uri: &str,
+    verifier: &str,
+) -> Result<TokenResponse> {
+    let resp = http
+        .post(TOKEN_URL)
+        .form(&[
+            ("code", code),
+            ("client_id", &creds.client_id),
+            ("client_secret", &creds.client_secret),
+            ("redirect_uri", redirect_uri),
+            ("grant_type", "authorization_code"),
+            ("code_verifier", verifier),
+        ])
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        bail!(
+            "token exchange failed ({status}): {}",
+            resp.text().await.unwrap_or_default()
+        );
+    }
+    Ok(resp.json().await?)
+}
+
+impl TokenResponse {
+    /// The long-lived token to store after a Health API consent.
+    pub fn into_stored(self) -> Result<StoredToken> {
+        Ok(StoredToken {
+            refresh_token: self
+                .refresh_token
+                .context("Google returned no refresh token; revoke the app's access and retry")?,
+            scope: self.scope.unwrap_or_default(),
+            obtained_at: chrono::Utc::now(),
+        })
+    }
 }
 
 /// Runs the interactive consent flow and returns the new refresh token.
@@ -84,23 +169,12 @@ pub async fn login(
     port: u16,
 ) -> Result<StoredToken> {
     let redirect_uri = format!("http://localhost:{port}/callback");
-    let verifier = random_b64(48);
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let state = random_b64(16);
+    let req = auth_request(creds, &redirect_uri, READ_SCOPES, true)?;
 
-    let mut url = Url::parse(AUTH_URL)?;
-    url.query_pairs_mut()
-        .append_pair("client_id", &creds.client_id)
-        .append_pair("redirect_uri", &redirect_uri)
-        .append_pair("response_type", "code")
-        .append_pair("scope", &READ_SCOPES.join(" "))
-        .append_pair("access_type", "offline")
-        .append_pair("prompt", "consent")
-        .append_pair("code_challenge", &challenge)
-        .append_pair("code_challenge_method", "S256")
-        .append_pair("state", &state);
-
-    println!("Open this URL in your browser and grant access:\n\n{url}\n");
+    println!(
+        "Open this URL in your browser and grant access:\n\n{}\n",
+        req.url
+    );
     println!(
         "Waiting for the redirect on port {port}. If the browser shows an error page \
          after consent, copy its full address (http://localhost:{port}/callback?...) and paste it here:"
@@ -111,37 +185,15 @@ pub async fn login(
     if let Some(err) = params.get("error") {
         bail!("authorization failed: {err}");
     }
-    if params.get("state") != Some(&state) {
+    if params.get("state") != Some(&req.state) {
         bail!("state mismatch in callback; start the login again");
     }
     let code = params
         .get("code")
         .context("callback has no `code` parameter")?;
-
-    let resp: TokenResponse = http
-        .post(TOKEN_URL)
-        .form(&[
-            ("code", code.as_str()),
-            ("client_id", &creds.client_id),
-            ("client_secret", &creds.client_secret),
-            ("redirect_uri", &redirect_uri),
-            ("grant_type", "authorization_code"),
-            ("code_verifier", &verifier),
-        ])
-        .send()
+    let token = exchange_code(http, creds, code, &redirect_uri, &req.verifier)
         .await?
-        .error_for_status()
-        .context("token exchange failed")?
-        .json()
-        .await?;
-
-    let token = StoredToken {
-        refresh_token: resp
-            .refresh_token
-            .context("Google returned no refresh token; revoke the app's access and retry")?,
-        scope: resp.scope.unwrap_or_default(),
-        obtained_at: chrono::Utc::now(),
-    };
+        .into_stored()?;
     println!("\nGranted scopes: {}", token.scope);
     Ok(token)
 }

@@ -1,0 +1,7 @@
+# Upload only what the Docker build needs.
+*
+!Dockerfile
+!Cargo.toml
+!Cargo.lock
+!src/**
+!web/**

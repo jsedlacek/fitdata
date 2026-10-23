@@ -1,0 +1,123 @@
+[
+  {
+    "name": "date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Local calendar date (partition key)"
+  },
+  {
+    "name": "resting_hr",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "hrv_ms",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "hrv_deep_rmssd_ms",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "nonrem_hr",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "spo2_avg",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "spo2_low",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "spo2_high",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "respiratory_rate",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "nightly_temp_c",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "steps",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "active_kcal",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "azm",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "hr_min",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "hr_avg",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "hr_max",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "sleep_minutes",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "sleep_awake_minutes",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "sleep_deep_minutes",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "sleep_light_minutes",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "sleep_rem_minutes",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "sleep_start",
+    "type": "DATETIME",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "sleep_end",
+    "type": "DATETIME",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "exercise_minutes",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  }
+]

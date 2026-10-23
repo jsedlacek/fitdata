@@ -61,6 +61,9 @@ const fn reconciled(id: &'static str, kind: Kind, window: Window) -> DataType {
 use Kind::*;
 use Window::*;
 
+/// Readable data types. Not listed because the API cannot read them with
+/// these scopes: moods, symptoms, ovulation-test, menstrual-period (write-only)
+/// and hydration-log, nutrition-log (no read scope exists).
 pub const ALL: &[DataType] = &[
     // Intraday samples and intervals.
     dt("heart-rate", Sample, Day),
@@ -87,10 +90,6 @@ pub const ALL: &[DataType] = &[
     dt("height", Sample, Month),
     dt("body-fat", Sample, Month),
     dt("blood-glucose", Sample, Month),
-    dt("moods", Sample, Month),
-    dt("symptoms", Sample, Month),
-    dt("ovulation-test", Sample, Month),
-    dt("menstrual-period", Interval, Month),
     // Daily summaries.
     dt("daily-heart-rate-variability", Daily, Month),
     dt("daily-heart-rate-zones", Daily, Month),
@@ -102,8 +101,6 @@ pub const ALL: &[DataType] = &[
     // Sessions.
     reconciled("sleep", SleepSession, Month),
     dt("exercise", Session, Month),
-    dt("hydration-log", Session, Month),
-    dt("nutrition-log", Session, Month),
     dt("irregular-rhythm-notification", Session, Month),
     dt("electrocardiogram", StartOnly, All),
 ];

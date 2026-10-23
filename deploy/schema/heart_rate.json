@@ -1,0 +1,19 @@
+[
+  {
+    "name": "date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Local calendar date (partition key)"
+  },
+  {
+    "name": "ts",
+    "type": "DATETIME",
+    "mode": "REQUIRED",
+    "description": "Local wall-clock time"
+  },
+  {
+    "name": "bpm",
+    "type": "FLOAT",
+    "mode": "REQUIRED"
+  }
+]

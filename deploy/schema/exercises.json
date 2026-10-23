@@ -1,0 +1,48 @@
+[
+  {
+    "name": "date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Local calendar date (partition key)"
+  },
+  {
+    "name": "start",
+    "type": "DATETIME",
+    "mode": "REQUIRED"
+  },
+  {
+    "name": "end",
+    "type": "DATETIME",
+    "mode": "REQUIRED"
+  },
+  {
+    "name": "kind",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "name",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "active_minutes",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "avg_hr",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "kcal",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "azm",
+    "type": "FLOAT",
+    "mode": "NULLABLE"
+  }
+]

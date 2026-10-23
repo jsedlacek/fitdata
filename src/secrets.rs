@@ -1,15 +1,28 @@
-//! Secrets (OAuth client, refresh token) live in Secret Manager and are only
-//! held in memory. A local file path is accepted too, e.g. for tests.
+//! Secrets (OAuth client, refresh token, session key) live in Secret Manager
+//! and are only held in memory. A local file path is accepted too, for tests.
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
-use base64::{Engine, engine::general_purpose::STANDARD};
-use serde_json::{Value, json};
+use anyhow::{Context, Result};
+use google_cloud_gax::error::rpc::Code;
+use google_cloud_secretmanager_v1::client::SecretManagerService;
+use google_cloud_secretmanager_v1::model::SecretPayload;
+use tokio::sync::OnceCell;
 
-const SM_BASE: &str = "https://secretmanager.googleapis.com/v1";
-const METADATA_TOKEN_URL: &str =
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+static CLIENT: OnceCell<SecretManagerService> = OnceCell::const_new();
+
+/// Shared client using Application Default Credentials (the service account
+/// on Cloud Run, `gcloud auth application-default login` locally).
+async fn client() -> Result<&'static SecretManagerService> {
+    CLIENT
+        .get_or_try_init(|| async {
+            SecretManagerService::builder()
+                .build()
+                .await
+                .context("Secret Manager client")
+        })
+        .await
+}
 
 #[derive(Debug, Clone)]
 pub enum SecretRef {
@@ -32,7 +45,7 @@ impl SecretRef {
     }
 
     /// The latest secret version, or `None` if there is none yet.
-    pub async fn read(&self, http: &reqwest::Client) -> Result<Option<Vec<u8>>> {
+    pub async fn read(&self) -> Result<Option<Vec<u8>>> {
         match self {
             Self::File(p) => match std::fs::read(p) {
                 Ok(b) => Ok(Some(b)),
@@ -40,38 +53,30 @@ impl SecretRef {
                 Err(e) => Err(e).with_context(|| format!("reading {}", p.display())),
             },
             Self::Manager(name) => {
-                let resp = http
-                    .get(format!("{SM_BASE}/{name}/versions/latest:access"))
-                    .bearer_auth(gcp_access_token(http).await?)
+                let resp = client()
+                    .await?
+                    .access_secret_version()
+                    .set_name(format!("{name}/versions/latest"))
                     .send()
-                    .await?;
-                if resp.status() == reqwest::StatusCode::NOT_FOUND {
-                    return Ok(None);
+                    .await;
+                match resp {
+                    Ok(r) => Ok(r.payload.map(|p| p.data.to_vec())),
+                    // No secret, or a secret without enabled versions yet.
+                    Err(e)
+                        if e.status().is_some_and(|s| {
+                            matches!(s.code, Code::NotFound | Code::FailedPrecondition)
+                        }) =>
+                    {
+                        Ok(None)
+                    }
+                    Err(e) => Err(e).with_context(|| format!("reading secret {name}")),
                 }
-                let status = resp.status();
-                let body: Value = resp.json().await.unwrap_or_default();
-                // A secret without versions answers 400/404 with this status.
-                if body["error"]["status"] == "NOT_FOUND"
-                    || body["error"]["status"] == "FAILED_PRECONDITION"
-                {
-                    return Ok(None);
-                }
-                if !status.is_success() {
-                    bail!(
-                        "reading secret {name} failed ({status}): {}",
-                        body["error"]["message"]
-                    );
-                }
-                let data = body["payload"]["data"]
-                    .as_str()
-                    .context("secret has no payload")?;
-                Ok(Some(STANDARD.decode(data)?))
             }
         }
     }
 
     /// Stores `data` as the new latest version.
-    pub async fn write(&self, http: &reqwest::Client, data: &[u8]) -> Result<()> {
+    pub async fn write(&self, data: &[u8]) -> Result<()> {
         match self {
             Self::File(p) => {
                 if let Some(dir) = p.parent() {
@@ -86,19 +91,14 @@ impl SecretRef {
                 Ok(())
             }
             Self::Manager(name) => {
-                let resp = http
-                    .post(format!("{SM_BASE}/{name}:addVersion"))
-                    .bearer_auth(gcp_access_token(http).await?)
-                    .json(&json!({ "payload": { "data": STANDARD.encode(data) } }))
+                client()
+                    .await?
+                    .add_secret_version()
+                    .set_parent(name.clone())
+                    .set_payload(SecretPayload::new().set_data(bytes::Bytes::copy_from_slice(data)))
                     .send()
-                    .await?;
-                if !resp.status().is_success() {
-                    let status = resp.status();
-                    bail!(
-                        "writing secret {name} failed ({status}): {}",
-                        resp.text().await.unwrap_or_default()
-                    );
-                }
+                    .await
+                    .with_context(|| format!("writing secret {name}"))?;
                 Ok(())
             }
         }
@@ -112,37 +112,6 @@ impl std::fmt::Display for SecretRef {
             Self::File(p) => write!(f, "{}", p.display()),
         }
     }
-}
-
-/// Google Cloud access token: the service account's on Cloud Run, the gcloud
-/// user's when running locally.
-async fn gcp_access_token(http: &reqwest::Client) -> Result<String> {
-    if std::env::var_os("K_SERVICE").is_some() || std::env::var_os("CLOUD_RUN_JOB").is_some() {
-        let v: Value = http
-            .get(METADATA_TOKEN_URL)
-            .header("Metadata-Flavor", "Google")
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        return v["access_token"]
-            .as_str()
-            .map(str::to_owned)
-            .context("metadata server returned no token");
-    }
-    let out = tokio::process::Command::new("gcloud")
-        .args(["auth", "print-access-token"])
-        .output()
-        .await
-        .context("running `gcloud auth print-access-token` (is gcloud installed and logged in?)")?;
-    if !out.status.success() {
-        bail!(
-            "gcloud auth print-access-token failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8(out.stdout)?.trim().to_string())
 }
 
 #[cfg(test)]
