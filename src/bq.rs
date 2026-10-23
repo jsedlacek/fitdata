@@ -152,6 +152,23 @@ impl Bq {
     }
 }
 
+/// A quoted GoogleSQL string literal for untrusted text (at most 1000 chars).
+pub fn string_literal(s: &str) -> String {
+    let mut out = String::from("'");
+    for c in s.chars().take(1000) {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
 fn first_line(sql: &str) -> &str {
     sql.trim().lines().next().unwrap_or_default()
 }
@@ -206,6 +223,11 @@ mod tests {
             .set_type(ty)
             .set_mode(mode)
             .set_fields(fields)
+    }
+
+    #[test]
+    fn escapes_string_literals() {
+        assert_eq!(string_literal("it's a\\b\nc"), r"'it\'s a\\b\nc'");
     }
 
     #[test]

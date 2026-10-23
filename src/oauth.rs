@@ -42,6 +42,18 @@ impl ClientCredentials {
     }
 }
 
+/// The stored refresh token no longer works and a new consent is needed.
+#[derive(Debug)]
+pub struct AuthError(pub String);
+
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for AuthError {}
+
 #[derive(Serialize, Deserialize)]
 pub struct StoredToken {
     pub refresh_token: String,
@@ -287,6 +299,14 @@ impl TokenSource {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            // 400/401 (e.g. invalid_grant): the refresh token was revoked or
+            // expired; only a new consent ("Connect Fitbit") fixes that.
+            if matches!(status.as_u16(), 400 | 401) {
+                return Err(AuthError(format!(
+                    "refreshing access token failed ({status}): {body}"
+                ))
+                .into());
+            }
             bail!("refreshing access token failed ({status}): {body}");
         }
         let resp: TokenResponse = resp.json().await?;

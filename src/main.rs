@@ -133,6 +133,74 @@ async fn membership_start(client: &HealthClient) -> Result<Option<NaiveDate>> {
     )
 }
 
+async fn health_client(
+    http: &reqwest::Client,
+    creds: ClientCredentials,
+    token_ref: &SecretRef,
+) -> Result<HealthClient> {
+    let stored = token_ref.read().await?.ok_or_else(|| {
+        oauth::AuthError(format!(
+            "no refresh token in {token_ref}; run `fitdata login` first"
+        ))
+    })?;
+    let refresh_token = StoredToken::from_json(&stored)?.refresh_token;
+    Ok(HealthClient::new(
+        http.clone(),
+        TokenSource::new(http.clone(), creds, refresh_token),
+    ))
+}
+
+/// The daily job: re-fetch the last `days` days, then rebuild them in BigQuery.
+async fn job(
+    http: &reqwest::Client,
+    creds: ClientCredentials,
+    token_ref: &SecretRef,
+    store: &Store,
+    bq: &Bq,
+    days: u64,
+) -> Result<()> {
+    let client = health_client(http, creds, token_ref).await?;
+    let today = chrono::Local::now().date_naive();
+    let from = today - Days::new(days);
+    let n = sync::fetch_range(
+        &client,
+        store,
+        &select_types(&[])?,
+        from,
+        today + Days::new(1),
+    )
+    .await?;
+    println!("Synced {from}..{today}: {n} data points");
+    load(store, bq, from, today).await
+}
+
+/// Appends the outcome of a job run to the `sync_runs` table.
+async fn record_run(
+    bq: &Bq,
+    started: chrono::DateTime<chrono::Utc>,
+    days: u64,
+    result: &Result<()>,
+) -> Result<()> {
+    let auth_error = result
+        .as_ref()
+        .err()
+        .is_some_and(|e| e.chain().any(|c| c.is::<oauth::AuthError>()));
+    let error = match result {
+        Ok(()) => "NULL".to_string(),
+        Err(e) => bq::string_literal(&format!("{e:#}")),
+    };
+    let local = started.with_timezone(&chrono::Local);
+    bq.query(format!(
+        "INSERT INTO {} (date, run_at, ok, auth_error, error, days) VALUES ('{}', '{}', {}, {auth_error}, {error}, {days})",
+        bq.table("sync_runs"),
+        local.date_naive(),
+        started.to_rfc3339(),
+        result.is_ok(),
+    ))
+    .await?;
+    Ok(())
+}
+
 /// Rebuilds the BigQuery tables for local dates `[from, to]` from raw data.
 async fn load(store: &Store, bq: &Bq, from: NaiveDate, to: NaiveDate) -> Result<()> {
     if from > to {
@@ -223,28 +291,22 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let refresh_token =
-        StoredToken::from_json(&token_ref.read().await?.with_context(|| {
-            format!("no refresh token in {token_ref}; run `fitdata login` first")
-        })?)?
-        .refresh_token;
-    let client = HealthClient::new(http.clone(), TokenSource::new(http, creds, refresh_token));
+    if let Cmd::Job { days } = cli.cmd {
+        let bq = bq().await?;
+        let started = chrono::Utc::now();
+        let result = job(&http, creds, &token_ref, &store, &bq, days).await;
+        // The dashboard reads the last run to tell whether the token still works.
+        if let Err(e) = record_run(&bq, started, days, &result).await {
+            tracing::error!("recording the run failed: {e:#}");
+        }
+        return result;
+    }
+
+    let client = health_client(&http, creds, &token_ref).await?;
 
     match cli.cmd {
-        Cmd::Login { .. } | Cmd::Serve { .. } | Cmd::Load { .. } => unreachable!(),
-        Cmd::Job { days } => {
-            let today = chrono::Local::now().date_naive();
-            let from = today - Days::new(days);
-            let n = sync::fetch_range(
-                &client,
-                &store,
-                &select_types(&[])?,
-                from,
-                today + Days::new(1),
-            )
-            .await?;
-            println!("Synced {from}..{today}: {n} data points");
-            load(&store, &bq().await?, from, today).await?;
+        Cmd::Login { .. } | Cmd::Serve { .. } | Cmd::Load { .. } | Cmd::Job { .. } => {
+            unreachable!()
         }
         Cmd::Whoami => {
             let info = json!({

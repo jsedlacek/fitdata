@@ -91,14 +91,35 @@ impl SecretRef {
                 Ok(())
             }
             Self::Manager(name) => {
-                client()
-                    .await?
+                let sm = client().await?;
+                let added = sm
                     .add_secret_version()
                     .set_parent(name.clone())
                     .set_payload(SecretPayload::new().set_data(bytes::Bytes::copy_from_slice(data)))
                     .send()
                     .await
                     .with_context(|| format!("writing secret {name}"))?;
+                // Keep exactly one usable version: older tokens are disabled
+                // (recoverable with `gcloud secrets versions enable`).
+                let enabled = sm
+                    .list_secret_versions()
+                    .set_parent(name.clone())
+                    .set_filter("state:ENABLED")
+                    .set_page_size(100)
+                    .send()
+                    .await
+                    .with_context(|| format!("listing versions of {name}"))?;
+                for v in enabled
+                    .versions
+                    .into_iter()
+                    .filter(|v| v.name != added.name)
+                {
+                    sm.disable_secret_version()
+                        .set_name(&v.name)
+                        .send()
+                        .await
+                        .with_context(|| format!("disabling {}", v.name))?;
+                }
                 Ok(())
             }
         }

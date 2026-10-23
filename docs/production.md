@@ -40,7 +40,7 @@ OAuth Web client musí mít mezi *Authorized redirect URIs* adresu `https://fitd
 | Identita | Smí |
 |---|---|
 | `fitdata-job` | číst `oauth-client` a `refresh-token`, zapisovat do bucketu, zapisovat do datasetu |
-| `fitdata-web` | číst `oauth-client` a `session-key`, přidávat verze `refresh-token`, číst dataset |
+| `fitdata-web` | číst `oauth-client` a `session-key`, přidávat a vypínat verze `refresh-token` (číst ne), číst dataset |
 | `fitdata-scheduler` | spustit job |
 
 Web je na Cloud Runu veřejný, ale každá stránka i API vyžaduje přihlášení Googlem s e-mailem z `ALLOWED_EMAILS`. Session je HMAC podepsaná cookie (klíč `session-key`, platnost 30 dní).

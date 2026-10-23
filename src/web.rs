@@ -67,7 +67,6 @@ pub async fn serve(cfg: Config) -> Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
-        .route("/auth/logout", get(logout))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
@@ -177,14 +176,6 @@ async fn connect_fitbit(State(cfg): State<Shared>) -> Response {
     start_oauth(&cfg, "health", READ_SCOPES, true)
 }
 
-async fn logout(State(cfg): State<Shared>) -> Response {
-    (
-        [(header::SET_COOKIE, set_cookie(&cfg, SESSION_COOKIE, "", 0))],
-        Redirect::to("/auth/login"),
-    )
-        .into_response()
-}
-
 #[derive(Deserialize)]
 struct CallbackParams {
     code: Option<String>,
@@ -276,15 +267,20 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
 // --------------------------------------------------------------------- API
 
 async fn overview(State(cfg): State<Shared>) -> Response {
-    match cfg
-        .bq
-        .query(format!(
-            "SELECT * FROM {} ORDER BY date",
-            cfg.bq.table("daily")
-        ))
-        .await
-    {
-        Ok(days) => Json(json!({ "days": days })).into_response(),
+    let days = cfg.bq.query(format!(
+        "SELECT * FROM {} ORDER BY date",
+        cfg.bq.table("daily")
+    ));
+    let runs = cfg.bq.query(format!(
+        "SELECT FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%S', run_at, 'Europe/Prague') AS run_at, ok, auth_error
+         FROM {} ORDER BY run_at DESC LIMIT 1",
+        cfg.bq.table("sync_runs")
+    ));
+    match tokio::try_join!(days, runs) {
+        // `lastSync` lets the page offer "reconnect" only when the token broke.
+        Ok((days, runs)) => {
+            Json(json!({ "days": days, "lastSync": runs.into_iter().next() })).into_response()
+        }
         Err(e) => internal(e),
     }
 }

@@ -70,8 +70,17 @@
   button:hover { background: var(--shade); }
   .spacer { flex: 1; }
   .muted { color: var(--muted); }
-  a.link { color: var(--ink-2); text-decoration: none; font-size: 13px; }
-  a.link:hover { color: var(--ink); text-decoration: underline; }
+  .banner {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 16px;
+    padding: 12px 16px; border-radius: 12px; background: var(--surface);
+    border: 1px solid var(--border); border-left: 4px solid var(--s4);
+  }
+  .banner[hidden] { display: none; }
+  .banner a {
+    color: var(--ink); font-weight: 600; text-decoration: none; border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 12px; background: var(--page);
+  }
+  .banner a:hover { background: var(--shade); }
 
   .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
   @media (max-width: 820px) { .tiles { grid-template-columns: 1fr 1fr; } }
@@ -113,10 +122,9 @@
     <div class="days" id="days" role="group" aria-label="Den"></div>
     <div class="spacer"></div>
     <span class="muted" id="status"></span>
-    <a class="link" href="/auth/fitbit" title="Znovu udělit přístup k datům z Google Health">Připojit Fitbit</a>
-    <a class="link" href="/auth/logout">Odhlásit</a>
   </header>
 
+  <div class="banner" id="banner" role="status" hidden></div>
   <section class="tiles" id="tiles" aria-label="Metriky dne"></section>
 
   <h2 id="day-title">Den</h2>
@@ -386,10 +394,30 @@ async function api(url) {
   return r.json();
 }
 
+// "Reconnect" only when the last job run could not use the refresh token.
+function showSyncStatus(last) {
+  const banner = $('banner');
+  const justConnected = new URLSearchParams(location.search).has('fitbit');
+  if (justConnected) {
+    banner.innerHTML = '<span>Přístup k datům je obnovený. Chybějící dny se doplní při příštím běhu synchronizace (denně v 10:00).</span>';
+    history.replaceState(null, '', '/');
+  } else if (last && last.auth_error) {
+    banner.innerHTML = '<span>Synchronizace nemá přístup k datům z Google Health, nová data nepřibývají.</span>'
+      + '<a href="/auth/fitbit">Obnovit přístup k datům</a>';
+  }
+  banner.hidden = !(justConnected || last?.auth_error);
+  if (last?.run_at) {
+    const t = new Date(last.run_at);
+    $('status').title = `Poslední synchronizace ${t.toLocaleString('cs-CZ')}${last.ok ? '' : ' (selhala)'}`;
+  }
+}
+
 async function load() {
   $('status').textContent = 'Načítám…';
-  days = (await api('/api/overview')).days.filter(x => x.hr_avg != null || x.sleep_minutes != null);
-  $('status').textContent = days.length ? `${days.length} dní dat` : '';
+  const overview = await api('/api/overview');
+  showSyncStatus(overview.lastSync);
+  days = overview.days.filter(x => x.hr_avg != null || x.sleep_minutes != null);
+  $('status').textContent = days.length ? `${days.length} ${days.length === 1 ? 'den' : days.length < 5 ? 'dny' : 'dní'} dat` : '';
   if (!days.length) { $('tiles').innerHTML = '<div class="empty">Zatím žádná data. Spusť <code>fitdata backfill</code> a <code>fitdata load</code>.</div>'; return; }
   $('days').innerHTML = days.map(x => `<button data-date="${x.date}">${dayLabel(x.date)}</button>`).join('');
   for (const b of $('days').children) b.onclick = () => selectDay(b.dataset.date);

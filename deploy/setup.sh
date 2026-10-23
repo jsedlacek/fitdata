@@ -76,10 +76,11 @@ secret_role() { # secret member role
 # Job: read the OAuth client + refresh token, raw data in the bucket, load into BigQuery.
 secret_role oauth-client "$JOB_SA" roles/secretmanager.secretAccessor
 secret_role refresh-token "$JOB_SA" roles/secretmanager.secretAccessor
-# Web: sign-in needs the OAuth client and session key; "Connect Fitbit" adds refresh-token versions.
+# Web: sign-in needs the OAuth client and session key; "Connect Fitbit" adds a
+# refresh-token version and disables the older ones (it cannot read any).
 secret_role oauth-client "$WEB_SA" roles/secretmanager.secretAccessor
 secret_role session-key "$WEB_SA" roles/secretmanager.secretAccessor
-secret_role refresh-token "$WEB_SA" roles/secretmanager.secretVersionAdder
+secret_role refresh-token "$WEB_SA" roles/secretmanager.secretVersionManager
 
 gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member "serviceAccount:$JOB_SA" --role roles/storage.objectAdmin >/dev/null
