@@ -1,4 +1,3 @@
-import { lazy, Suspense } from 'react';
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { AppShell } from '@/components/AppShell';
 import { DayPage } from '@/routes/day';
@@ -14,24 +13,6 @@ const dayRoute = createRoute({
   component: function Day() {
     const { date } = dayRoute.useSearch();
     return <DayPage date={date} />;
-  },
-});
-
-// Chart library comparison; loaded on demand so Unovis stays out of the main bundle.
-const LabPage = lazy(() => import('@/routes/lab'));
-
-const labRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/lab',
-  validateSearch: (s: Record<string, unknown>): { date?: string } =>
-    typeof s.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.date) ? { date: s.date } : {},
-  component: function Lab() {
-    const { date } = labRoute.useSearch();
-    return (
-      <Suspense>
-        <LabPage date={date} />
-      </Suspense>
-    );
   },
 });
 
@@ -51,7 +32,7 @@ const trendsRoute = createRoute({
 });
 
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([dayRoute, trendsRoute, labRoute]),
+  routeTree: rootRoute.addChildren([dayRoute, trendsRoute]),
   defaultPreload: 'intent',
 });
 

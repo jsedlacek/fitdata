@@ -105,39 +105,3 @@
   body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
   :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 }
-
-/* Unovis charts read their look from --vis-* variables; map them onto the
-   theme tokens above so light/dark switch together with the rest of the UI. */
-.vis-theme {
-  --vis-font-family: var(--font-sans);
-  --vis-color-main: var(--s1);
-  --vis-axis-tick-label-color: var(--muted);
-  --vis-axis-tick-label-font-size: 11px;
-  --vis-axis-label-color: var(--ink-2);
-  --vis-axis-grid-color: var(--grid);
-  --vis-axis-domain-color: var(--axis);
-  --vis-axis-tick-color: transparent;
-  --vis-crosshair-line-stroke-color: var(--axis);
-  --vis-crosshair-circle-stroke-color: var(--surface);
-  --vis-tooltip-background-color: var(--surface);
-  --vis-tooltip-border-color: var(--border);
-  --vis-tooltip-text-color: var(--ink);
-  --vis-tooltip-border-radius: 10px;
-  --vis-tooltip-padding: 8px 10px;
-  --vis-tooltip-box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
-  --vis-plotband-color: var(--shade);
-  --vis-plotband-label-color: var(--muted);
-  --vis-plotband-label-font-size: 11px;
-  --vis-brush-selection-fill-color: var(--s1);
-  --vis-brush-selection-opacity: 0.08;
-  --vis-brush-selection-stroke-color: var(--s1);
-  --vis-brush-unselected-fill-color: var(--page);
-  --vis-brush-unselected-opacity: 0.55;
-  --vis-brush-handle-fill-color: var(--surface);
-  --vis-brush-handle-stroke-color: var(--s1);
-  --vis-timeline-row-even-fill-color: transparent;
-  --vis-timeline-row-odd-fill-color: var(--shade);
-  --vis-timeline-label-color: var(--ink-2);
-  --vis-timeline-line-hover-stroke-color: var(--ink);
-  --vis-area-stroke-color: transparent;
-}
