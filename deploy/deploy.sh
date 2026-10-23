@@ -9,7 +9,7 @@ source deploy/config.sh
 
 # Tag by the last commit that touched what goes into the image, so changes to
 # deploy scripts or docs reuse the existing image.
-SOURCES=(Dockerfile Cargo.toml Cargo.lock src web)
+SOURCES=(Dockerfile Cargo.toml Cargo.lock src frontend)
 TAG=$(git log -1 --format=%h -- "${SOURCES[@]}")$(git diff --quiet HEAD -- "${SOURCES[@]}" || echo "-dirty")
 IMAGE=$REGION-docker.pkg.dev/$PROJECT/$REPO/fitdata:$TAG
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)')

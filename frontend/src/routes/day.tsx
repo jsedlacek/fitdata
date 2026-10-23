@@ -1,0 +1,162 @@
+import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
+import { Activity, BedDouble, Flame, Footprints, HeartPulse, RefreshCw, Waves, Wind, Zap } from 'lucide-react';
+import { dayQuery, overviewQuery, type Daily } from '@/lib/api';
+import { duration, hm, num, plural } from '@/lib/format';
+import { before, mean, type MetricKey } from '@/lib/stats';
+import { DateNav } from '@/components/DateNav';
+import { DayTimeline } from '@/components/DayTimeline';
+import { ExerciseList } from '@/components/ExerciseList';
+import { KpiCard } from '@/components/KpiCard';
+import { NightVitals } from '@/components/NightVitals';
+import { SleepCard } from '@/components/SleepCard';
+import { Button } from '@/components/ui/button';
+import { Card, CardBody, CardHeader } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+
+type Kpi = { key: MetricKey; label: string; icon: typeof Activity; unit?: string; digits?: number; accent: string; time?: boolean };
+
+const KPIS: Kpi[] = [
+  { key: 'sleep_minutes', label: 'Spánek', icon: BedDouble, accent: 'var(--s7)', time: true },
+  { key: 'resting_hr', label: 'Klidový tep', icon: HeartPulse, unit: 'bpm', accent: 'var(--s5)' },
+  { key: 'hrv_ms', label: 'HRV', icon: Activity, unit: 'ms', digits: 1, accent: 'var(--s1)' },
+  { key: 'steps', label: 'Kroky', icon: Footprints, accent: 'var(--s3)' },
+  { key: 'azm', label: 'Aktivní zóny', icon: Zap, unit: 'min', accent: 'var(--s2)' },
+  { key: 'spo2_avg', label: 'SpO₂', icon: Waves, unit: '%', digits: 1, accent: 'var(--s1)' },
+  { key: 'respiratory_rate', label: 'Dech', icon: Wind, unit: '/min', digits: 1, accent: 'var(--s3)' },
+  { key: 'active_kcal', label: 'Aktivní kcal', icon: Flame, unit: 'kcal', accent: 'var(--s2)' },
+];
+
+/** Days that have any measurement (the daily table also holds empty rows). */
+export const withData = (days: Daily[]) => days.filter((d) => d.hr_avg != null || d.sleep_minutes != null || d.steps != null);
+
+export function DayPage({ date: wanted }: { date?: string }) {
+  const navigate = useNavigate();
+  const overview = useQuery(overviewQuery);
+  const days = withData(overview.data?.days ?? []);
+  const date = wanted && days.some((d) => d.date === wanted) ? wanted : days.at(-1)?.date;
+  const day = useQuery({ ...dayQuery(date ?? ''), enabled: !!date });
+
+  if (overview.isError) return <ErrorCard onRetry={() => overview.refetch()} />;
+  if (overview.isPending) return <DaySkeleton />;
+  if (!date) {
+    return (
+      <Card>
+        <CardBody className="py-16 text-center text-sm text-muted">Zatím žádná data. Spusť synchronizaci (`fitdata job`).</CardBody>
+      </Card>
+    );
+  }
+
+  const metrics = days.find((d) => d.date === date)!;
+  const go = (d: string) => navigate({ to: '/', search: { date: d } });
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold tracking-tight">Přehled dne</h1>
+        <DateNav date={date} available={days.map((d) => d.date)} onChange={go} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {KPIS.map((k) => {
+          const v = metrics[k.key];
+          const base = before(days, date, k.key, 7);
+          const avg = mean(base);
+          const diff = v != null && avg != null ? v - avg : null;
+          const fmt = (x: number) => (k.time ? duration(x) : num(x, k.digits ?? 0));
+          const delta = diff == null ? null : `${diff >= 0 ? '+' : '−'}${fmt(Math.abs(diff))}`;
+          const spark = days.filter((d) => d.date <= date).slice(-14).map((d) => d[k.key]);
+          return (
+            <KpiCard
+              key={k.key}
+              icon={k.icon}
+              label={k.label}
+              value={v == null ? '–' : k.time ? hm(v) : num(v, k.digits ?? 0)}
+              unit={k.time ? 'h' : k.unit}
+              delta={delta}
+              baselineLabel={`vs. Ø ${base.length} ${plural(base.length, 'dne', 'dnů', 'dnů')}`}
+              spark={spark}
+              accent={k.accent}
+            />
+          );
+        })}
+      </div>
+
+      {day.isError ? (
+        <ErrorCard onRetry={() => day.refetch()} />
+      ) : !day.data ? (
+        <>
+          <Skeleton className="h-[420px] rounded-xl" />
+          <Skeleton className="h-[360px] rounded-xl" />
+        </>
+      ) : (
+        <>
+          <DayTimeline day={day.data} />
+          <div className="grid gap-5 lg:grid-cols-5">
+            <div className="lg:col-span-3">
+              <SleepCard night={day.data.sleep} />
+            </div>
+            <div className="space-y-5 lg:col-span-2">
+              <HeartSummary m={metrics} />
+              <ExerciseList exercises={day.data.exercises} />
+            </div>
+          </div>
+          <NightVitals day={day.data} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function HeartSummary({ m }: { m: Daily }) {
+  const items = [
+    ['Nejnižší', m.hr_min],
+    ['Průměr', m.hr_avg],
+    ['Nejvyšší', m.hr_max],
+    ['Ve spánku (non-REM)', m.nonrem_hr],
+  ] as const;
+  return (
+    <Card>
+      <CardHeader title="Tep během dne" subtitle="tepů za minutu" />
+      <CardBody className="grid grid-cols-2 gap-3">
+        {items.map(([label, v]) => (
+          <div key={label} className="rounded-lg bg-surface-2 px-3 py-2">
+            <div className="text-xs text-ink-2">{label}</div>
+            <div className="text-lg font-semibold tabular-nums">{num(v)}</div>
+          </div>
+        ))}
+        <div className="col-span-2 text-xs text-muted">
+          Cvičení celkem {duration(m.exercise_minutes ?? 0)} · noční teplota {m.nightly_temp_c != null ? `${num(m.nightly_temp_c, 1)} °C` : '–'}
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+export function ErrorCard({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Card>
+      <CardBody className="flex flex-col items-center gap-3 py-12 text-center">
+        <p className="text-sm text-ink-2">Data se nepodařilo načíst.</p>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCw /> Zkusit znovu
+        </Button>
+      </CardBody>
+    </Card>
+  );
+}
+
+function DaySkeleton() {
+  return (
+    <div className="space-y-5">
+      <div className="flex justify-between">
+        <Skeleton className="h-7 w-40" />
+        <Skeleton className="h-8 w-64" />
+      </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-[108px] rounded-xl" />)}
+      </div>
+      <Skeleton className="h-[420px] rounded-xl" />
+    </div>
+  );
+}

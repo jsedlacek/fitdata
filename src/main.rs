@@ -60,8 +60,11 @@ enum Cmd {
         /// Key for signing session cookies: `sm://<secret>` or a file path.
         #[arg(long, env = "SESSION_KEY", default_value = "sm://session-key")]
         session_key: String,
+        /// The built frontend (`npm run build` in frontend/).
+        #[arg(long, env = "STATIC_DIR", default_value = "frontend/dist")]
+        static_dir: std::path::PathBuf,
         /// Skip sign-in (local development only).
-        #[arg(long, env = "AUTH_DISABLED")]
+        #[arg(long, env = "AUTH_DISABLED", value_parser = clap::builder::BoolishValueParser::new())]
         auth_disabled: bool,
     },
     /// Interactive OAuth consent; stores a refresh token.
@@ -256,6 +259,7 @@ async fn main() -> Result<()> {
         public_url,
         allowed_emails,
         session_key,
+        static_dir,
         auth_disabled,
     } = &cli.cmd
     {
@@ -265,6 +269,7 @@ async fn main() -> Result<()> {
             .context("session key secret is empty")?;
         return web::serve(web::Config {
             port: *port,
+            static_dir: static_dir.clone(),
             public_url: public_url.trim_end_matches('/').to_string(),
             allowed_emails: allowed_emails
                 .iter()

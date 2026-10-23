@@ -4,4 +4,7 @@
 !Cargo.toml
 !Cargo.lock
 !src/**
-!web/**
+!frontend/
+!frontend/**
+frontend/node_modules/
+frontend/dist/

@@ -1,12 +1,13 @@
 //! Dashboard: JSON API over the BigQuery tables plus a single page, behind
 //! Google sign-in restricted to an allowlist of accounts.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use axum::Router;
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Json, Redirect, Response};
 use axum::routing::get;
@@ -16,21 +17,23 @@ use hmac::{Hmac, KeyInit, Mac};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
+use tower::ServiceBuilder;
+use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::bq::Bq;
 use crate::datatypes::READ_SCOPES;
 use crate::oauth::{ClientCredentials, auth_request, exchange_code};
 use crate::secrets::SecretRef;
 
-const INDEX: &str = include_str!("../web/index.html");
-/// Served by the app itself so the page works without access to a CDN.
-const ECHARTS: &str = include_str!("../web/vendor/echarts-5.5.1.min.js");
 const SESSION_COOKIE: &str = "fd_session";
 const OAUTH_COOKIE: &str = "fd_oauth";
 const SESSION_DAYS: i64 = 30;
 
 pub struct Config {
     pub port: u16,
+    /// The built frontend (`frontend/dist`), served as a single-page app.
+    pub static_dir: PathBuf,
     pub public_url: String,
     pub allowed_emails: Vec<String>,
     pub session_key: Vec<u8>,
@@ -51,12 +54,31 @@ pub async fn serve(cfg: Config) -> Result<()> {
     let port = cfg.port;
     let state = Arc::new(cfg);
 
+    // Hashed build assets never change; index.html must always be revalidated.
+    let assets = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        ))
+        .service(ServeDir::new(state.static_dir.join("assets")));
+    let spa = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache"),
+        ))
+        // Client-side routes (/trends, ...) get index.html.
+        .service(
+            ServeDir::new(&state.static_dir)
+                .fallback(ServeFile::new(state.static_dir.join("index.html"))),
+        );
+
     let protected = Router::new()
-        .route("/", get(|| async { Html(INDEX) }))
-        .route("/vendor/echarts-5.5.1.min.js", get(echarts))
         .route("/api/overview", get(overview))
         .route("/api/day/{date}", get(day))
+        .route("/api/{*rest}", get(|| async { StatusCode::NOT_FOUND }))
         .route("/auth/fitbit", get(connect_fitbit))
+        .nest_service("/assets", assets)
+        .fallback_service(spa)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             require_session,
@@ -73,17 +95,6 @@ pub async fn serve(cfg: Config) -> Result<()> {
     tracing::info!("dashboard listening on 0.0.0.0:{port}");
     axum::serve(listener, app).await?;
     Ok(())
-}
-
-async fn echarts() -> impl IntoResponse {
-    (
-        [
-            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
-            // Versioned file name, so it never changes.
-            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-        ],
-        ECHARTS,
-    )
 }
 
 fn internal(e: anyhow::Error) -> Response {
