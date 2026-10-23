@@ -18,7 +18,7 @@ PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format 'value(projectNumb
 if [[ -n $DOMAIN ]]; then
   PUBLIC_URL=https://$DOMAIN
 else
-  PUBLIC_URL=https://$SERVICE_NAME-$PROJECT_NUMBER.$WEB_REGION.run.app
+  PUBLIC_URL=https://$SERVICE_NAME-$PROJECT_NUMBER.$REGION.run.app
 fi
 
 ENV=GCP_PROJECT=$PROJECT,GCP_REGION=$REGION,STORAGE=gs://$BUCKET,BQ_DATASET=$DATASET,TZ=$TIME_ZONE,RUST_LOG=fitdata=info
@@ -50,7 +50,7 @@ fi
 
 echo "== Service $SERVICE_NAME"
 # Public endpoint; the app itself requires Google sign-in (ALLOWED_EMAILS).
-gcloud run deploy "$SERVICE_NAME" --project "$PROJECT" --region "$WEB_REGION" \
+gcloud run deploy "$SERVICE_NAME" --project "$PROJECT" --region "$REGION" \
   --image "$IMAGE" --args serve \
   --service-account "$WEB_SA" \
   --set-env-vars "^;^${ENV//,/;};PUBLIC_URL=$PUBLIC_URL;ALLOWED_EMAILS=$ALLOWED_EMAILS" \
@@ -58,12 +58,12 @@ gcloud run deploy "$SERVICE_NAME" --project "$PROJECT" --region "$WEB_REGION" \
 
 if [[ -n $DOMAIN ]]; then
   echo "== Domain mapping $DOMAIN"
-  if ! gcloud beta run domain-mappings describe --domain "$DOMAIN" --project "$PROJECT" --region "$WEB_REGION" >/dev/null 2>&1; then
+  if ! gcloud beta run domain-mappings describe --domain "$DOMAIN" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1; then
     gcloud beta run domain-mappings create --service "$SERVICE_NAME" --domain "$DOMAIN" \
-      --project "$PROJECT" --region "$WEB_REGION"
+      --project "$PROJECT" --region "$REGION"
   fi
   echo "DNS records (Cloudflare: DNS only, not proxied):"
-  gcloud beta run domain-mappings describe --domain "$DOMAIN" --project "$PROJECT" --region "$WEB_REGION" \
+  gcloud beta run domain-mappings describe --domain "$DOMAIN" --project "$PROJECT" --region "$REGION" \
     --format 'table(status.resourceRecords[].name, status.resourceRecords[].type, status.resourceRecords[].rrdata)'
 fi
 

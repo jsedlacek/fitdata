@@ -4,7 +4,7 @@ Jednorázové kroky, aby `fitdata` mohl číst tvoje data z Google Health API.
 
 ## Region
 
-**`europe-west3` (Frankfurt)**: nejbližší region k Praze s kompletní nabídkou služeb (Cloud Run, Cloud Storage, BigQuery, Secret Manager, Scheduler). BigQuery dataset i bucket dáme do stejného regionu, aby load joby nepřesouvaly data mezi regiony. Alternativa je `europe-central2` (Varšava). Při našem objemu dat je rozdíl v ceně i latenci zanedbatelný.
+**`europe-west1` (Belgie)**: všechno (bucket, BigQuery, job, web) běží v jednom regionu. Frankfurt (`europe-west3`) je k Praze blíž, ale neumí Cloud Run domain mapping, který potřebuje vlastní doména dashboardu. Belgie ho umí a Cloud Run je tam v levnější cenové úrovni. Rozdíl v latenci je na dashboardu nepostřehnutelný.
 
 ## 1. Projekt a API
 

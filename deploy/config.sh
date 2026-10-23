@@ -1,13 +1,12 @@
 # Shared settings for deploy/*.sh (sourced, not executed).
 PROJECT=${PROJECT:-fitdata-jsedlacek}
-REGION=${REGION:-europe-west3}
-BUCKET=${BUCKET:-$PROJECT-raw}
-DATASET=${DATASET:-fitdata}
+# Everything (data, job, web) lives here; europe-west1 has Cloud Run domain
+# mappings, which e.g. europe-west3 lacks.
+REGION=${REGION:-europe-west1}
+BUCKET=${BUCKET:-$PROJECT-data}
+DATASET=${DATASET:-health}
 REPO=${REPO:-fitdata}
 TIME_ZONE=${TIME_ZONE:-Europe/Prague}
-# The dashboard runs in a region with Cloud Run domain mappings ($REGION has
-# none); it still queries BigQuery in $REGION.
-WEB_REGION=${WEB_REGION:-europe-west1}
 # Custom domain of the dashboard; must be verified for the gcloud account
 # (gcloud domains list-user-verified). Empty means the Cloud Run URL.
 DOMAIN=${DOMAIN:-fitdata.jakub.contact}

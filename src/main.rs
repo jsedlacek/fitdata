@@ -37,9 +37,9 @@ struct Cli {
     #[arg(long, env = "STORAGE", default_value = "data")]
     storage: String,
     /// Location of the BigQuery dataset (and of the Cloud Run resources).
-    #[arg(long, env = "GCP_REGION", default_value = "europe-west3")]
+    #[arg(long, env = "GCP_REGION", default_value = "europe-west1")]
     region: String,
-    #[arg(long, env = "BQ_DATASET", default_value = "fitdata")]
+    #[arg(long, env = "BQ_DATASET", default_value = "health")]
     bq_dataset: String,
     #[command(subcommand)]
     cmd: Cmd,

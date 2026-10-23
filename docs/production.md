@@ -3,13 +3,13 @@
 ```
 Cloud Scheduler (denně 10:00 Europe/Prague)
   └─> Cloud Run job fitdata-sync      `fitdata job --days 7`
-        ├─ Google Health API ─> GCS gs://fitdata-jsedlacek-raw/raw/{typ}/{den|měsíc}.jsonl
-        └─ normalizace ─> BigQuery fitdata.{heart_rate, activity, spo2, hrv, nights, exercises, daily}
-Cloud Run service fitdata-web (europe-west1)   `fitdata serve`   https://fitdata.jakub.contact
-  └─ Google přihlášení (ALLOWED_EMAILS) ─> dotazy do BigQuery (europe-west3)
+        ├─ Google Health API ─> GCS gs://fitdata-jsedlacek-data/raw/{typ}/{den|měsíc}.jsonl
+        └─ normalizace ─> BigQuery health.{heart_rate, activity, spo2, hrv, nights, exercises, daily}
+Cloud Run service fitdata-web          `fitdata serve`   https://fitdata.jakub.contact
+  └─ Google přihlášení (ALLOWED_EMAILS) ─> dotazy do BigQuery
 ```
 
-Jeden image, jedna binárka; job a web se liší jen argumenty. Data, job i image jsou ve Frankfurtu (`europe-west3`). Web běží v Belgii (`europe-west1`), protože Frankfurt neumí Cloud Run domain mapping.
+Jeden image, jedna binárka; job a web se liší jen argumenty. Všechno běží v jednom regionu, `europe-west1` (Belgie). Frankfurt (`europe-west3`) by byl blíž, ale neumí Cloud Run domain mapping.
 
 ## Nasazení
 
@@ -50,13 +50,13 @@ Když přestane fungovat refresh token (odvolaný přístup), stačí na dashboa
 ## Provoz
 
 ```bash
-gcloud run jobs execute fitdata-sync --region europe-west3 --wait     # spustit job hned
-gcloud run jobs executions list --job fitdata-sync --region europe-west3
+gcloud run jobs execute fitdata-sync --region europe-west1 --wait     # spustit job hned
+gcloud run jobs executions list --job fitdata-sync --region europe-west1
 gcloud logging read 'resource.type="cloud_run_job"' --limit 50 --format 'value(textPayload)'
 ```
 
 Načíst starší rozsah znovu (např. po změně normalizace), lokálně s ADC:
 
 ```bash
-STORAGE=gs://fitdata-jsedlacek-raw cargo run -- load --from 2026-10-21
+STORAGE=gs://fitdata-jsedlacek-data cargo run -- load --from 2026-10-21
 ```
