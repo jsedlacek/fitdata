@@ -4,6 +4,7 @@ mod bq;
 mod claims;
 mod cloudrun;
 mod datatypes;
+mod health;
 mod mcp;
 mod model;
 mod oauth;
@@ -134,19 +135,6 @@ fn select_types(ids: &[String]) -> Result<Vec<&'static DataType>> {
         .collect()
 }
 
-/// The day the Fitbit / Google Health account was created.
-async fn membership_start(client: &HealthClient) -> Result<Option<NaiveDate>> {
-    let d = &client.profile().await?["membershipStartDate"];
-    Ok(
-        match (d["year"].as_i64(), d["month"].as_u64(), d["day"].as_u64()) {
-            (Some(y), Some(m), Some(day)) => {
-                NaiveDate::from_ymd_opt(y as i32, m as u32, day as u32)
-            }
-            _ => None,
-        },
-    )
-}
-
 async fn health_client(
     http: &reqwest::Client,
     creds: ClientCredentials,
@@ -233,11 +221,16 @@ async fn load(store: &Store, bq: &Bq, from: NaiveDate, to: NaiveDate) -> Result<
     }
     // One extra day on each side: nights start the evening before, and
     // intervals near midnight may be stored in the neighbouring day's file.
-    let raw = sync::read_raw(store, from - Days::new(1), to + Days::new(2)).await?;
-    let ds = model::Dataset::from_raw(raw)?;
-    for (table, rows) in model::table_rows(&ds, from, to) {
-        bq.replace_range(store, table, &rows, from, to).await?;
-    }
+    let points = sync::read_raw(store, from - Days::new(1), to + Days::new(2)).await?;
+    let ds = model::Dataset::from_points(points);
+    let t = model::table_rows(&ds, from, to);
+    bq.replace_range(store, &t.heart_rate, from, to).await?;
+    bq.replace_range(store, &t.activity, from, to).await?;
+    bq.replace_range(store, &t.spo2, from, to).await?;
+    bq.replace_range(store, &t.hrv, from, to).await?;
+    bq.replace_range(store, &t.nights, from, to).await?;
+    bq.replace_range(store, &t.exercises, from, to).await?;
+    bq.replace_range(store, &t.daily, from, to).await?;
     tracing::info!("loaded {from}..{to} into BigQuery dataset {}", bq.dataset);
     Ok(())
 }
@@ -393,7 +386,7 @@ async fn run(cli: Cli) -> Result<()> {
             // Some daily types are computed for days before the account existed.
             let since = match since {
                 Some(d) => Some(d),
-                None => membership_start(&client).await?,
+                None => client.membership_start().await?,
             };
             if let Some(d) = since {
                 println!("Backfilling from {d}");

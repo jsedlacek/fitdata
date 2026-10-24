@@ -1,41 +1,40 @@
-//! Normalizes raw API data points into flat, typed records and per-day metrics.
+//! Normalizes parsed API data points (`health.rs`) into typed series, per-day
+//! metrics and the rows of the BigQuery tables.
 //!
 //! All timestamps are converted to the user's local wall-clock time using the
 //! UTC offset stored with each point, so days split at local midnight.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use anyhow::Result;
-use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime};
-use serde::Serialize;
-use serde_json::{Value, json};
+use chrono::{Duration, NaiveDate, NaiveDateTime};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
+use crate::health::{Points, StageType};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SleepStage {
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
-    pub stage: String,
+    pub stage: StageType,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Span {
+    pub start: NaiveDateTime,
+    pub end: NaiveDateTime,
+}
+
+#[derive(Debug, Clone)]
 pub struct Sleep {
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
-    pub main: bool,
     pub minutes_asleep: Option<i64>,
     pub minutes_awake: Option<i64>,
-    /// Minutes per stage type (DEEP, LIGHT, REM, AWAKE).
-    pub stage_minutes: BTreeMap<String, i64>,
+    pub stage_minutes: BTreeMap<StageType, i64>,
     pub stages: Vec<SleepStage>,
     /// Short awakenings (a minute or two) inside light sleep; Google Health
     /// shows them as restless sleep.
     pub restless: Vec<Span>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Span {
-    pub start: NaiveDateTime,
-    pub end: NaiveDateTime,
 }
 
 impl Sleep {
@@ -47,8 +46,16 @@ impl Sleep {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// A row of a BigQuery table; `TABLE` is its name and the file name of its
+/// schema in deploy/schema/.
+pub trait Row: Serialize {
+    const TABLE: &'static str;
+}
+
+/// Row of `exercises`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Exercise {
+    pub date: NaiveDate,
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
     pub kind: String,
@@ -59,11 +66,15 @@ pub struct Exercise {
     pub azm: Option<f64>,
 }
 
-/// One row per local calendar day; every field optional because devices and
-/// days differ in what they report.
-#[derive(Debug, Clone, Default, Serialize)]
+impl Row for Exercise {
+    const TABLE: &'static str = "exercises";
+}
+
+/// Row of `daily`: one per local calendar day; every metric optional because
+/// devices and days differ in what they report.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DailyMetrics {
-    pub date: Option<NaiveDate>,
+    pub date: NaiveDate,
     pub resting_hr: Option<f64>,
     pub hrv_ms: Option<f64>,
     pub hrv_deep_rmssd_ms: Option<f64>,
@@ -89,8 +100,78 @@ pub struct DailyMetrics {
     pub exercise_minutes: Option<f64>,
 }
 
-/// Longest wake-up between two sleep sessions that still makes them one night.
-const MAX_NIGHT_GAP: Duration = Duration::hours(3);
+impl Row for DailyMetrics {
+    const TABLE: &'static str = "daily";
+}
+
+#[derive(Debug, Serialize)]
+pub struct HeartRateRow {
+    pub date: NaiveDate,
+    pub ts: NaiveDateTime,
+    pub bpm: f64,
+}
+
+impl Row for HeartRateRow {
+    const TABLE: &'static str = "heart_rate";
+}
+
+#[derive(Debug, Serialize)]
+pub struct Spo2Row {
+    pub date: NaiveDate,
+    pub ts: NaiveDateTime,
+    pub pct: f64,
+}
+
+impl Row for Spo2Row {
+    const TABLE: &'static str = "spo2";
+}
+
+#[derive(Debug, Serialize)]
+pub struct HrvRow {
+    pub date: NaiveDate,
+    pub ts: NaiveDateTime,
+    pub rmssd_ms: f64,
+}
+
+impl Row for HrvRow {
+    const TABLE: &'static str = "hrv";
+}
+
+/// Row of `activity`: one minute, merged from three interval series.
+#[derive(Debug, Serialize)]
+pub struct ActivityRow {
+    pub date: NaiveDate,
+    pub ts: NaiveDateTime,
+    pub steps: Option<f64>,
+    pub active_kcal: Option<f64>,
+    pub azm: Option<f64>,
+}
+
+impl Row for ActivityRow {
+    const TABLE: &'static str = "activity";
+}
+
+/// Row of `nights`: the night that ended on `date` (see `Dataset::night_before`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NightRow {
+    pub date: NaiveDate,
+    pub start: NaiveDateTime,
+    pub end: NaiveDateTime,
+    pub minutes_asleep: Option<i64>,
+    pub minutes_awake: Option<i64>,
+    pub deep_minutes: Option<i64>,
+    pub light_minutes: Option<i64>,
+    pub rem_minutes: Option<i64>,
+    pub awake_minutes: Option<i64>,
+    /// NULL in rows loaded before restless sleep was tracked.
+    pub restless_minutes: Option<i64>,
+    pub stages: Vec<SleepStage>,
+    pub restless: Vec<Span>,
+}
+
+impl Row for NightRow {
+    const TABLE: &'static str = "nights";
+}
 
 #[derive(Default)]
 pub struct Dataset {
@@ -108,224 +189,146 @@ pub struct Dataset {
     pub daily: BTreeMap<NaiveDate, DailyMetrics>,
 }
 
-/// `"7200s"` -> 2 h
-fn offset(v: &Value) -> Duration {
-    v.as_str()
-        .and_then(|s| s.trim_end_matches('s').parse::<f64>().ok())
-        .map(|s| Duration::seconds(s as i64))
-        .unwrap_or_default()
-}
+/// Longest wake-up between two sleep sessions that still makes them one night.
+const MAX_NIGHT_GAP: Duration = Duration::hours(3);
 
-fn local(ts: &Value, off: &Value) -> Option<NaiveDateTime> {
-    let t = DateTime::parse_from_rfc3339(ts.as_str()?).ok()?;
-    Some(t.naive_utc() + offset(off))
-}
-
-/// Numbers arrive as JSON numbers or as strings (int64 fields, "NaN").
-fn num(v: &Value) -> Option<f64> {
-    let n = match v {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.parse().ok(),
-        _ => None,
-    }?;
-    n.is_finite().then_some(n)
-}
-
-fn date(v: &Value) -> Option<NaiveDate> {
-    NaiveDate::from_ymd_opt(
-        v["year"].as_i64()? as i32,
-        v["month"].as_u64()? as u32,
-        v["day"].as_u64()? as u32,
-    )
-}
-
-fn sample_time(p: &Value) -> Option<NaiveDateTime> {
-    local(
-        &p["sampleTime"]["physicalTime"],
-        &p["sampleTime"]["utcOffset"],
-    )
-}
-
-fn interval_start(p: &Value) -> Option<NaiveDateTime> {
-    local(
-        &p["interval"]["startTime"],
-        &p["interval"]["startUtcOffset"],
-    )
-}
-
-fn interval_end(p: &Value) -> Option<NaiveDateTime> {
-    local(&p["interval"]["endTime"], &p["interval"]["endUtcOffset"])
-}
-
-/// Payload objects of raw API data points per data type id (see `sync::read_raw`).
-pub type Raw = HashMap<String, Vec<Value>>;
-
-/// Takes all points of a data type out of `raw` (each type is read once).
-fn read_type(raw: &mut Raw, data_type: &str) -> Result<Vec<Value>> {
-    Ok(raw.remove(data_type).unwrap_or_default())
-}
-
-fn series(
-    points: &[Value],
-    time: fn(&Value) -> Option<NaiveDateTime>,
-    field: &str,
+/// Sorted values with a time; points without a value are left out, and of
+/// several points at the same time the first one is kept.
+fn series<T>(
+    points: &[T],
+    point: impl Fn(&T) -> (NaiveDateTime, Option<f64>),
 ) -> Vec<(NaiveDateTime, f64)> {
     let mut s: Vec<_> = points
         .iter()
-        .filter_map(|p| Some((time(p)?, num(&p[field])?)))
+        .filter_map(|p| match point(p) {
+            (t, Some(v)) => Some((t, v)),
+            (_, None) => None,
+        })
         .collect();
     s.sort_by_key(|(t, _)| *t);
     s.dedup_by_key(|(t, _)| *t);
     s
 }
 
+/// Whole minutes; summaries report them as integers anyway.
+fn minutes(v: Option<f64>) -> Option<i64> {
+    v.map(|m| m.round() as i64)
+}
+
 impl Dataset {
-    /// Normalizes raw points (typically a few days of them, see
+    /// Normalizes parsed points (typically a few days of them, see
     /// `sync::read_raw`) into typed series and per-day metrics.
-    pub fn from_raw(mut raw: Raw) -> Result<Self> {
-        let raw = &mut raw;
+    pub fn from_points(p: Points) -> Self {
         let mut ds = Dataset {
-            heart_rate: series(
-                &read_type(raw, "heart-rate")?,
-                sample_time,
-                "beatsPerMinute",
-            ),
-            steps: series(&read_type(raw, "steps")?, interval_start, "count"),
-            active_kcal: series(
-                &read_type(raw, "active-energy-burned")?,
-                interval_start,
-                "kcal",
-            ),
-            azm: series(
-                &read_type(raw, "active-zone-minutes")?,
-                interval_start,
-                "activeZoneMinutes",
-            ),
-            spo2: series(
-                &read_type(raw, "oxygen-saturation")?,
-                sample_time,
-                "percentage",
-            ),
-            hrv: series(
-                &read_type(raw, "heart-rate-variability")?,
-                sample_time,
-                "rootMeanSquareOfSuccessiveDifferencesMilliseconds",
-            ),
+            heart_rate: series(&p.heart_rate, |x| {
+                (x.sample_time.local(), x.beats_per_minute)
+            }),
+            steps: series(&p.steps, |x| (x.interval.local_start(), x.count)),
+            active_kcal: series(&p.active_energy_burned, |x| {
+                (x.interval.local_start(), x.kcal)
+            }),
+            azm: series(&p.active_zone_minutes, |x| {
+                (x.interval.local_start(), x.active_zone_minutes)
+            }),
+            spo2: series(&p.oxygen_saturation, |x| {
+                (x.sample_time.local(), x.percentage)
+            }),
+            hrv: series(&p.heart_rate_variability, |x| {
+                (
+                    x.sample_time.local(),
+                    x.root_mean_square_of_successive_differences_milliseconds,
+                )
+            }),
             ..Default::default()
         };
 
-        for p in read_type(raw, "sleep")? {
-            let (Some(start), Some(end)) = (interval_start(&p), interval_end(&p)) else {
-                continue;
+        for s in &p.sleep {
+            let span = |i: &crate::health::Interval| Span {
+                start: i.local_start(),
+                end: i.local_end(),
             };
-            let stages = p["stages"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|s| {
-                    Some(SleepStage {
-                        start: local(&s["startTime"], &s["startUtcOffset"])?,
-                        end: local(&s["endTime"], &s["endUtcOffset"])?,
-                        stage: s["type"].as_str()?.to_string(),
-                    })
-                })
-                .collect();
-            let stage_minutes = p["summary"]["stagesSummary"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|s| Some((s["type"].as_str()?.to_string(), num(&s["minutes"])? as i64)))
-                .collect();
-            let restless = p["shortAwakenings"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|s| {
-                    Some(Span {
-                        start: local(&s["startTime"], &s["startUtcOffset"])?,
-                        end: local(&s["endTime"], &s["endUtcOffset"])?,
-                    })
-                })
-                .collect();
             ds.sleep.push(Sleep {
-                start,
-                end,
-                main: p["metadata"]["mainSleep"].as_bool().unwrap_or(false),
-                minutes_asleep: num(&p["summary"]["minutesAsleep"]).map(|m| m as i64),
-                minutes_awake: num(&p["summary"]["minutesAwake"]).map(|m| m as i64),
-                stage_minutes,
-                stages,
-                restless,
+                start: s.interval.local_start(),
+                end: s.interval.local_end(),
+                minutes_asleep: minutes(s.summary.minutes_asleep),
+                minutes_awake: minutes(s.summary.minutes_awake),
+                stage_minutes: s
+                    .summary
+                    .stages_summary
+                    .iter()
+                    .filter_map(|st| Some((st.stage, minutes(st.minutes)?)))
+                    .collect(),
+                stages: s
+                    .stages
+                    .iter()
+                    .map(|st| {
+                        let Span { start, end } = span(&st.interval);
+                        SleepStage {
+                            start,
+                            end,
+                            stage: st.stage,
+                        }
+                    })
+                    .collect(),
+                restless: s.short_awakenings.iter().map(span).collect(),
             });
         }
         ds.sleep.sort_by_key(|s| s.start);
         ds.sleep.dedup_by_key(|s| s.start);
 
-        for p in read_type(raw, "exercise")? {
-            let (Some(start), Some(end)) = (interval_start(&p), interval_end(&p)) else {
-                continue;
-            };
-            let m = &p["metricsSummary"];
+        for e in &p.exercise {
+            let (start, end) = (e.interval.local_start(), e.interval.local_end());
+            let m = &e.metrics_summary;
             ds.exercise.push(Exercise {
+                date: start.date(),
                 start,
                 end,
-                kind: p["exerciseType"].as_str().unwrap_or("UNKNOWN").to_string(),
-                name: p["displayName"].as_str().unwrap_or_default().to_string(),
-                active_minutes: p["activeDuration"]
-                    .as_str()
-                    .and_then(|d| d.trim_end_matches('s').parse::<f64>().ok())
-                    .map(|s| s / 60.0),
-                avg_hr: num(&m["averageHeartRateBeatsPerMinute"]),
-                kcal: num(&m["caloriesKcal"]),
-                azm: num(&m["activeZoneMinutes"]),
+                kind: e.exercise_type.clone().unwrap_or_else(|| "UNKNOWN".into()),
+                name: e.display_name.clone(),
+                active_minutes: e
+                    .active_duration
+                    .map(|d| d.num_milliseconds() as f64 / 60_000.0),
+                avg_hr: m.average_heart_rate_beats_per_minute,
+                kcal: m.calories_kcal,
+                azm: m.active_zone_minutes,
             });
         }
         ds.exercise.sort_by_key(|e| e.start);
 
-        ds.build_daily(raw)?;
-        Ok(ds)
+        ds.build_daily(&p);
+        ds
     }
 
     fn day(&mut self, d: NaiveDate) -> &mut DailyMetrics {
         self.daily.entry(d).or_insert_with(|| DailyMetrics {
-            date: Some(d),
+            date: d,
             ..Default::default()
         })
     }
 
-    fn build_daily(&mut self, raw: &mut Raw) -> Result<()> {
+    fn build_daily(&mut self, p: &Points) {
         // Daily summaries computed by Google.
-        for p in read_type(raw, "daily-resting-heart-rate")? {
-            if let Some(d) = date(&p["date"]) {
-                self.day(d).resting_hr = num(&p["beatsPerMinute"]);
-            }
+        for x in &p.daily_resting_heart_rate {
+            self.day(x.date.0).resting_hr = x.beats_per_minute;
         }
-        for p in read_type(raw, "daily-heart-rate-variability")? {
-            if let Some(d) = date(&p["date"]) {
-                let m = self.day(d);
-                m.hrv_ms = num(&p["averageHeartRateVariabilityMilliseconds"]);
-                m.hrv_deep_rmssd_ms =
-                    num(&p["deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds"]);
-                m.nonrem_hr = num(&p["nonRemHeartRateBeatsPerMinute"]);
-            }
+        for x in &p.daily_heart_rate_variability {
+            let m = self.day(x.date.0);
+            m.hrv_ms = x.average_heart_rate_variability_milliseconds;
+            m.hrv_deep_rmssd_ms =
+                x.deep_sleep_root_mean_square_of_successive_differences_milliseconds;
+            m.nonrem_hr = x.non_rem_heart_rate_beats_per_minute;
         }
-        for p in read_type(raw, "daily-oxygen-saturation")? {
-            if let Some(d) = date(&p["date"]) {
-                let m = self.day(d);
-                m.spo2_avg = num(&p["averagePercentage"]);
-                m.spo2_low = num(&p["lowerBoundPercentage"]);
-                m.spo2_high = num(&p["upperBoundPercentage"]);
-            }
+        for x in &p.daily_oxygen_saturation {
+            let m = self.day(x.date.0);
+            m.spo2_avg = x.average_percentage;
+            m.spo2_low = x.lower_bound_percentage;
+            m.spo2_high = x.upper_bound_percentage;
         }
-        for p in read_type(raw, "daily-respiratory-rate")? {
-            if let Some(d) = date(&p["date"]) {
-                self.day(d).respiratory_rate = num(&p["breathsPerMinute"]);
-            }
+        for x in &p.daily_respiratory_rate {
+            self.day(x.date.0).respiratory_rate = x.breaths_per_minute;
         }
-        for p in read_type(raw, "daily-sleep-temperature-derivations")? {
-            if let Some(d) = date(&p["date"]) {
-                self.day(d).nightly_temp_c = num(&p["nightlyTemperatureCelsius"]);
-            }
+        for x in &p.daily_sleep_temperature_derivations {
+            self.day(x.date.0).nightly_temp_c = x.nightly_temperature_celsius;
         }
 
         // Aggregates of intraday data.
@@ -371,23 +374,23 @@ impl Dataset {
             let Some(n) = self.night_before(d) else {
                 continue;
             };
+            let stage = |s| n.stage_minutes.get(&s).map(|v| *v as f64);
             let m = self.day(d);
             m.sleep_minutes = n.minutes_asleep.map(|v| v as f64);
             m.sleep_awake_minutes = n.minutes_awake.map(|v| v as f64);
-            m.sleep_deep_minutes = n.stage_minutes.get("DEEP").map(|v| *v as f64);
-            m.sleep_light_minutes = n.stage_minutes.get("LIGHT").map(|v| *v as f64);
-            m.sleep_rem_minutes = n.stage_minutes.get("REM").map(|v| *v as f64);
+            m.sleep_deep_minutes = stage(StageType::Deep);
+            m.sleep_light_minutes = stage(StageType::Light);
+            m.sleep_rem_minutes = stage(StageType::Rem);
             m.sleep_start = Some(n.start);
             m.sleep_end = Some(n.end);
         }
         let exercises = self.exercise.clone();
         for e in &exercises {
-            let m = self.day(e.start.date());
+            let m = self.day(e.date);
             m.exercise_minutes = Some(
                 m.exercise_minutes.unwrap_or(0.0) + (e.end - e.start).num_seconds() as f64 / 60.0,
             );
         }
-        Ok(())
     }
 
     /// The night before `d`: the first sleep session that ended on `d` before
@@ -413,7 +416,6 @@ impl Dataset {
         let mut night = Sleep {
             start: first.start,
             end: first.end,
-            main: true,
             minutes_asleep: None,
             minutes_awake: None,
             stage_minutes: BTreeMap::new(),
@@ -428,11 +430,11 @@ impl Dataset {
             if p.start > night.end {
                 let gap = (p.start - night.end).num_minutes();
                 night.minutes_awake = add(night.minutes_awake, Some(gap));
-                *night.stage_minutes.entry("AWAKE".to_string()).or_default() += gap;
+                *night.stage_minutes.entry(StageType::Awake).or_default() += gap;
                 night.stages.push(SleepStage {
                     start: night.end,
                     end: p.start,
-                    stage: "AWAKE".to_string(),
+                    stage: StageType::Awake,
                 });
             }
             night.start = night.start.min(p.start);
@@ -440,7 +442,7 @@ impl Dataset {
             night.minutes_asleep = add(night.minutes_asleep, p.minutes_asleep);
             night.minutes_awake = add(night.minutes_awake, p.minutes_awake);
             for (k, v) in &p.stage_minutes {
-                *night.stage_minutes.entry(k.clone()).or_default() += v;
+                *night.stage_minutes.entry(*k).or_default() += v;
             }
             night.stages.extend(p.stages.iter().cloned());
             night.restless.extend(p.restless.iter().cloned());
@@ -451,18 +453,26 @@ impl Dataset {
     }
 }
 
-/// Rows for the BigQuery tables (see deploy/schema/), limited to local dates
-/// in `[from, to]`. Each row has a `date` column the tables are partitioned by.
-pub fn table_rows(ds: &Dataset, from: NaiveDate, to: NaiveDate) -> Vec<(&'static str, Vec<Value>)> {
+/// Rows of every BigQuery table for local dates in `[from, to]`.
+pub struct Tables {
+    pub heart_rate: Vec<HeartRateRow>,
+    pub activity: Vec<ActivityRow>,
+    pub spo2: Vec<Spo2Row>,
+    pub hrv: Vec<HrvRow>,
+    pub nights: Vec<NightRow>,
+    pub exercises: Vec<Exercise>,
+    pub daily: Vec<DailyMetrics>,
+}
+
+pub fn table_rows(ds: &Dataset, from: NaiveDate, to: NaiveDate) -> Tables {
     let in_range = |t: &NaiveDateTime| (from..=to).contains(&t.date());
-    let samples = |s: &[(NaiveDateTime, f64)], field: &str| -> Vec<Value> {
+    let samples = |s: &[(NaiveDateTime, f64)]| {
         s.iter()
             .filter(|(t, _)| in_range(t))
-            .map(|(t, v)| json!({ "date": t.date(), "ts": t, field: v }))
-            .collect()
+            .map(|&(t, v)| (t.date(), t, v))
+            .collect::<Vec<_>>()
     };
 
-    // Per-minute activity, merged from three interval series.
     let mut minutes: BTreeMap<NaiveDateTime, [Option<f64>; 3]> = BTreeMap::new();
     for (i, series) in [&ds.steps, &ds.active_kcal, &ds.azm]
         .into_iter()
@@ -472,84 +482,81 @@ pub fn table_rows(ds: &Dataset, from: NaiveDate, to: NaiveDate) -> Vec<(&'static
             minutes.entry(*t).or_default()[i] = Some(*v);
         }
     }
-    let activity = minutes
-        .into_iter()
-        .map(|(t, [steps, kcal, azm])| json!({ "date": t.date(), "ts": t, "steps": steps, "active_kcal": kcal, "azm": azm }))
-        .collect();
 
     let nights = from
         .iter_days()
         .take_while(|d| *d <= to)
-        .filter_map(|d| {
-            let n = ds.night_before(d)?;
-            let m = |k: &str| n.stage_minutes.get(k).copied();
-            Some(json!({
-                "date": d, "start": n.start, "end": n.end,
-                "minutes_asleep": n.minutes_asleep, "minutes_awake": n.minutes_awake,
-                "deep_minutes": m("DEEP"), "light_minutes": m("LIGHT"),
-                "rem_minutes": m("REM"), "awake_minutes": m("AWAKE"),
-                "restless_minutes": n.restless_minutes(),
-                "stages": n.stages, "restless": n.restless,
-            }))
+        .filter_map(|date| {
+            let n = ds.night_before(date)?;
+            let m = |k| n.stage_minutes.get(&k).copied();
+            Some(NightRow {
+                date,
+                start: n.start,
+                end: n.end,
+                minutes_asleep: n.minutes_asleep,
+                minutes_awake: n.minutes_awake,
+                deep_minutes: m(StageType::Deep),
+                light_minutes: m(StageType::Light),
+                rem_minutes: m(StageType::Rem),
+                awake_minutes: m(StageType::Awake),
+                restless_minutes: Some(n.restless_minutes()),
+                stages: n.stages,
+                restless: n.restless,
+            })
         })
         .collect();
 
-    let exercises = ds
-        .exercise
-        .iter()
-        .filter(|e| in_range(&e.start))
-        .map(|e| {
-            let mut v = serde_json::to_value(e).unwrap_or_default();
-            v["date"] = json!(e.start.date());
-            v
-        })
-        .collect();
-
-    let daily = ds
-        .daily
-        .range(from..=to)
-        .map(|(_, m)| serde_json::to_value(m).unwrap_or_default())
-        .collect();
-
-    vec![
-        ("heart_rate", samples(&ds.heart_rate, "bpm")),
-        ("activity", activity),
-        ("spo2", samples(&ds.spo2, "pct")),
-        ("hrv", samples(&ds.hrv, "rmssd_ms")),
-        ("nights", nights),
-        ("exercises", exercises),
-        ("daily", daily),
-    ]
+    Tables {
+        heart_rate: samples(&ds.heart_rate)
+            .into_iter()
+            .map(|(date, ts, bpm)| HeartRateRow { date, ts, bpm })
+            .collect(),
+        activity: minutes
+            .into_iter()
+            .map(|(ts, [steps, active_kcal, azm])| ActivityRow {
+                date: ts.date(),
+                ts,
+                steps,
+                active_kcal,
+                azm,
+            })
+            .collect(),
+        spo2: samples(&ds.spo2)
+            .into_iter()
+            .map(|(date, ts, pct)| Spo2Row { date, ts, pct })
+            .collect(),
+        hrv: samples(&ds.hrv)
+            .into_iter()
+            .map(|(date, ts, rmssd_ms)| HrvRow { date, ts, rmssd_ms })
+            .collect(),
+        nights,
+        exercises: ds
+            .exercise
+            .iter()
+            .filter(|e| in_range(&e.start))
+            .cloned()
+            .collect(),
+        daily: ds.daily.range(from..=to).map(|(_, m)| m.clone()).collect(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
-    #[test]
-    fn converts_to_local_time() {
-        let t = local(&json!("2026-10-23T17:55:56Z"), &json!("7200s")).unwrap();
-        assert_eq!(t.to_string(), "2026-10-23 19:55:56");
-    }
-
-    #[test]
-    fn parses_string_and_nan_numbers() {
-        assert_eq!(num(&json!("61")), Some(61.0));
-        assert_eq!(num(&json!(96.6)), Some(96.6));
-        assert_eq!(num(&json!("NaN")), None);
+    fn t(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap()
     }
 
     #[test]
     fn merges_split_night_and_skips_naps() {
-        let t = |s: &str| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap();
-        let sleep = |a, b, mins, main| Sleep {
+        let sleep = |a, b, mins| Sleep {
             start: t(a),
             end: t(b),
-            main,
             minutes_asleep: Some(mins),
             minutes_awake: None,
-            stage_minutes: BTreeMap::from([("DEEP".to_string(), mins / 4)]),
+            stage_minutes: BTreeMap::from([(StageType::Deep, mins / 4)]),
             stages: Vec::new(),
             restless: vec![Span {
                 start: t(a),
@@ -558,11 +565,11 @@ mod tests {
         };
         let ds = Dataset {
             sleep: vec![
-                sleep("2026-10-21 23:14", "2026-10-22 03:13", 233, true),
-                sleep("2026-10-22 05:18", "2026-10-22 08:57", 197, false),
+                sleep("2026-10-21 23:14", "2026-10-22 03:13", 233),
+                sleep("2026-10-22 05:18", "2026-10-22 08:57", 197),
                 // Naps: more than 3 hours after waking up, or after 14:00.
-                sleep("2026-10-22 12:30", "2026-10-22 13:10", 38, false),
-                sleep("2026-10-22 15:00", "2026-10-22 15:40", 35, false),
+                sleep("2026-10-22 12:30", "2026-10-22 13:10", 38),
+                sleep("2026-10-22 15:00", "2026-10-22 15:40", 35),
             ],
             ..Default::default()
         };
@@ -572,15 +579,144 @@ mod tests {
             (t("2026-10-21 23:14"), t("2026-10-22 08:57"))
         );
         assert_eq!(n.minutes_asleep, Some(430));
-        assert_eq!(n.stage_minutes["DEEP"], 58 + 49);
+        assert_eq!(n.stage_minutes[&StageType::Deep], 58 + 49);
         // 03:13–05:18 between the two sessions is awake.
         assert_eq!(n.minutes_awake, Some(125));
-        assert_eq!(n.stage_minutes["AWAKE"], 125);
+        assert_eq!(n.stage_minutes[&StageType::Awake], 125);
         assert_eq!(n.stages.len(), 1);
         assert_eq!(
             (n.stages[0].start, n.stages[0].end),
             (t("2026-10-22 03:13"), t("2026-10-22 05:18"))
         );
         assert_eq!(n.restless_minutes(), 4);
+    }
+
+    /// Column paths of a schema in deploy/schema/, nested records as `a.b`.
+    fn schema_columns(table: &str) -> Vec<String> {
+        fn walk(fields: &Value, prefix: &str, out: &mut Vec<String>) {
+            for f in fields.as_array().unwrap() {
+                let name = format!("{prefix}{}", f["name"].as_str().unwrap());
+                if let Some(sub) = f.get("fields") {
+                    walk(sub, &format!("{name}."), out);
+                }
+                out.push(name);
+            }
+        }
+        let path = format!("{}/deploy/schema/{table}.json", env!("CARGO_MANIFEST_DIR"));
+        let schema: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut out = Vec::new();
+        walk(&schema, "", &mut out);
+        out.sort();
+        out
+    }
+
+    /// Column paths of a serialized row; arrays contribute their first element's fields.
+    fn row_columns<R: Row>(row: &R) -> Vec<String> {
+        fn walk(v: &Value, prefix: &str, out: &mut Vec<String>) {
+            for (k, v) in v.as_object().unwrap() {
+                let name = format!("{prefix}{k}");
+                if let Some(first) = v.as_array().and_then(|a| a.first()) {
+                    walk(first, &format!("{name}."), out);
+                }
+                out.push(name);
+            }
+        }
+        let mut out = Vec::new();
+        walk(&serde_json::to_value(row).unwrap(), "", &mut out);
+        out.sort();
+        out
+    }
+
+    fn check<R: Row>(row: R) {
+        assert_eq!(row_columns(&row), schema_columns(R::TABLE), "{}", R::TABLE);
+    }
+
+    #[test]
+    fn rows_match_the_table_schemas() {
+        let d = t("2026-10-22 00:00").date();
+        let ts = t("2026-10-22 07:00");
+        check(HeartRateRow {
+            date: d,
+            ts,
+            bpm: 60.0,
+        });
+        check(Spo2Row {
+            date: d,
+            ts,
+            pct: 97.0,
+        });
+        check(HrvRow {
+            date: d,
+            ts,
+            rmssd_ms: 30.0,
+        });
+        check(ActivityRow {
+            date: d,
+            ts,
+            steps: None,
+            active_kcal: None,
+            azm: None,
+        });
+        check(NightRow {
+            date: d,
+            start: ts,
+            end: ts,
+            minutes_asleep: None,
+            minutes_awake: None,
+            deep_minutes: None,
+            light_minutes: None,
+            rem_minutes: None,
+            awake_minutes: None,
+            restless_minutes: None,
+            stages: vec![SleepStage {
+                start: ts,
+                end: ts,
+                stage: StageType::Deep,
+            }],
+            restless: vec![Span { start: ts, end: ts }],
+        });
+        check(Exercise {
+            date: d,
+            start: ts,
+            end: ts,
+            kind: String::new(),
+            name: String::new(),
+            active_minutes: None,
+            avg_hr: None,
+            kcal: None,
+            azm: None,
+        });
+        check(DailyMetrics {
+            date: d,
+            ..Default::default()
+        });
+    }
+
+    #[test]
+    fn rows_serialize_as_bigquery_values() {
+        let ts = t("2026-10-22 07:00");
+        let row = NightRow {
+            date: ts.date(),
+            start: ts,
+            end: ts + Duration::hours(1),
+            minutes_asleep: Some(60),
+            minutes_awake: None,
+            deep_minutes: None,
+            light_minutes: None,
+            rem_minutes: None,
+            awake_minutes: None,
+            restless_minutes: Some(0),
+            stages: vec![SleepStage {
+                start: ts,
+                end: ts,
+                stage: StageType::Rem,
+            }],
+            restless: vec![],
+        };
+        let v = serde_json::to_value(&row).unwrap();
+        assert_eq!(v["date"], "2026-10-22");
+        assert_eq!(v["end"], "2026-10-22T08:00:00");
+        assert_eq!(v["stages"][0]["stage"], "REM");
+        assert_eq!(v["minutes_asleep"], json!(60));
     }
 }

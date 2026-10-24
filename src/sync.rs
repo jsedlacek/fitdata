@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 use tracing::Instrument;
 
 use crate::api::{ApiError, HealthClient};
-use crate::datatypes::{DataType, Window};
-use crate::model::Raw;
+use crate::datatypes::{self, DataType, Window};
+use crate::health::{self, Point, Points};
 use crate::store::Store;
 
 /// Types fetched concurrently; requests within a type are sequential.
@@ -70,44 +70,58 @@ fn object_path(dt: &DataType, slot: &Slot) -> String {
     format!("raw/{}/{}.jsonl", dt.id, slot.key)
 }
 
-/// Reads the stored raw points of all data types for slots overlapping the
-/// civil date range `[from, to)`.
-pub async fn read_raw(store: &Store, from: NaiveDate, to: NaiveDate) -> Result<Raw> {
-    let reads = crate::datatypes::ALL.iter().map(|dt| async move {
-        let mut points = Vec::new();
+/// Reads and parses the stored raw points of the normalized data types for
+/// slots overlapping the civil date range `[from, to)`.
+///
+/// Points that do not parse (the API changed a field, say) are left out and
+/// reported as an error per data type, so the rest of the day still loads.
+pub async fn read_raw(store: &Store, from: NaiveDate, to: NaiveDate) -> Result<Points> {
+    let reads = health::NORMALIZED.iter().map(|id| async move {
+        let dt = datatypes::find(id).expect("normalized types are in the catalog");
+        let mut files = Vec::new();
         for slot in slots(dt, from, to) {
-            points.extend(
-                store
-                    .get_jsonl(&object_path(dt, &slot))
-                    .await?
-                    .into_iter()
-                    .filter_map(slim),
-            );
+            if let Some(data) = store.get(&object_path(dt, &slot)).await? {
+                files.push(data);
+            }
         }
-        Ok::<_, anyhow::Error>((dt.id.to_string(), points))
+        Ok::<_, anyhow::Error>((*id, files))
     });
     // A few types at a time: a week of heart rate alone is ~300k points.
-    stream::iter(reads).buffer_unordered(4).try_collect().await
-}
+    let read: Vec<(&str, Vec<Vec<u8>>)> = stream::iter(reads)
+        .buffer_unordered(4)
+        .try_collect()
+        .await?;
 
-/// Keeps only what normalization uses: the payload object (e.g. the value of
-/// `"heartRate"`) without the civil-time copies of each timestamp. Cuts the
-/// memory of a week of raw data several times over.
-fn slim(mut point: Value) -> Option<Value> {
-    let key = point
-        .as_object()?
-        .iter()
-        .find(|(k, v)| *k != "dataSource" && *k != "name" && v.is_object())
-        .map(|(k, _)| k.clone())?;
-    let mut p = point[&key].take();
-    if let Some(t) = p.get_mut("sampleTime").and_then(Value::as_object_mut) {
-        t.remove("civilTime");
+    let mut points = Points::default();
+    for (id, files) in read {
+        let (mut bad, mut example) = (0, None);
+        for data in files {
+            for line in std::str::from_utf8(&data)?
+                .lines()
+                .filter(|l| !l.is_empty())
+            {
+                let parsed = serde_json::from_str::<Point>(line)
+                    .map_err(|e| e.to_string())
+                    .and_then(|p| {
+                        points
+                            .add(p)
+                            .then_some(())
+                            .ok_or_else(|| "no known payload".to_string())
+                    });
+                if let Err(e) = parsed {
+                    bad += 1;
+                    example.get_or_insert(e);
+                }
+            }
+        }
+        if let Some(e) = example {
+            tracing::error!(
+                data_type = id,
+                "{bad} stored points could not be read, e.g.: {e}"
+            );
+        }
     }
-    if let Some(i) = p.get_mut("interval").and_then(Value::as_object_mut) {
-        i.remove("civilStartTime");
-        i.remove("civilEndTime");
-    }
-    Some(p)
+    Ok(points)
 }
 
 /// Fetches one slot and writes it; returns the number of points. A slot
@@ -333,27 +347,6 @@ mod tests {
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
-    }
-
-    #[test]
-    fn slim_keeps_only_the_payload() {
-        let p = json!({
-            "heartRate": {
-                "beatsPerMinute": "61",
-                "sampleTime": {"physicalTime": "2026-10-23T17:55:56Z", "utcOffset": "7200s", "civilTime": {"date": {}}}
-            },
-            "dataSource": {"device": {"displayName": "Fitbit Air"}}
-        });
-        assert_eq!(
-            slim(p).unwrap(),
-            json!({"beatsPerMinute": "61", "sampleTime": {"physicalTime": "2026-10-23T17:55:56Z", "utcOffset": "7200s"}})
-        );
-        let steps = json!({"steps": {"count": "5", "interval": {"startTime": "a", "civilStartTime": {}, "civilEndTime": {}}}});
-        assert_eq!(
-            slim(steps).unwrap(),
-            json!({"count": "5", "interval": {"startTime": "a"}})
-        );
-        assert!(slim(json!({"dataSource": {}})).is_none());
     }
 
     #[test]

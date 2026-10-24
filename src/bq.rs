@@ -7,8 +7,10 @@ use google_cloud_bigquery_v2::model::{
     DatasetReference, Job, JobConfiguration, JobConfigurationLoad, QueryRequest, TableFieldSchema,
     TableReference, query_request::JobCreationMode,
 };
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
+use crate::model::Row;
 use crate::store::Store;
 
 pub struct Bq {
@@ -36,7 +38,7 @@ impl Bq {
         format!("`{}.{}.{name}`", self.project, self.dataset)
     }
 
-    /// Replaces the rows of `table` whose `date` is in `[from, to]` with `rows`.
+    /// Replaces the rows of the table of `R` whose `date` is in `[from, to]` with `rows`.
     ///
     /// Rows are staged as NDJSON in GCS, loaded into a staging table of this
     /// call only (a copy of the table's schema) and swapped in with one
@@ -45,15 +47,15 @@ impl Bq {
     /// The staging table and object are removed afterwards; if the run dies
     /// first, the table expires after a day and the bucket's lifecycle rule
     /// deletes the object.
-    #[tracing::instrument(skip_all, fields(otel.name = format!("replace {table}"), table = %table, %from, %to))]
-    pub async fn replace_range(
+    #[tracing::instrument(skip_all, fields(otel.name = format!("replace {}", R::TABLE), table = R::TABLE, %from, %to))]
+    pub async fn replace_range<R: Row>(
         &self,
         store: &Store,
-        table: &str,
-        rows: &[Value],
+        rows: &[R],
         from: NaiveDate,
         to: NaiveDate,
     ) -> Result<()> {
+        let table = R::TABLE;
         let id = format!("{:016x}", rand::random::<u64>());
         let staging = format!("_staging_{table}_{id}");
         let path = format!("staging/{table}-{id}.jsonl");
@@ -113,6 +115,19 @@ impl Bq {
     /// Only interpolate trusted values (dates parsed by us) into `sql`.
     pub async fn query(&self, sql: String) -> Result<Vec<Value>> {
         self.run(QueryRequest::new().set_query(&sql)).await
+    }
+
+    /// Runs a query and deserializes its rows (see `query`).
+    pub async fn query_as<T: DeserializeOwned>(&self, sql: String) -> Result<Vec<T>> {
+        let first = first_line(&sql).to_string();
+        self.query(sql)
+            .await?
+            .into_iter()
+            .map(|r| {
+                serde_json::from_value(r)
+                    .with_context(|| format!("unexpected row from query: {first}"))
+            })
+            .collect()
     }
 
     /// Runs a query written by someone else (an MCP client). It is wrapped as

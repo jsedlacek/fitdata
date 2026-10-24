@@ -5,10 +5,14 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use chrono::NaiveDate;
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::datatypes::DataType;
+use crate::health::CivilDate;
 use crate::oauth::TokenSource;
 
 const BASE: &str = "https://health.googleapis.com/v4";
@@ -69,7 +73,7 @@ impl HealthClient {
         http.response.status_code = tracing::field::Empty,
         attempts = tracing::field::Empty,
     ))]
-    async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Value> {
+    async fn get<T: DeserializeOwned>(&self, path: &str, query: &[(&str, String)]) -> Result<T> {
         let url = format!("{BASE}/{path}");
         let mut attempt = 0;
         loop {
@@ -97,7 +101,10 @@ impl HealthClient {
             span.record("http.response.status_code", status);
             span.record("attempts", attempt);
             if (200..300).contains(&status) {
-                return Ok(resp.json().await?);
+                return resp
+                    .json()
+                    .await
+                    .with_context(|| format!("unexpected response from {path}"));
             }
             let body = resp.text().await.unwrap_or_default();
             match status {
@@ -119,6 +126,17 @@ impl HealthClient {
         self.get("users/me/profile", &[]).await
     }
 
+    /// The day the Fitbit / Google Health account was created.
+    pub async fn membership_start(&self) -> Result<Option<NaiveDate>> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Profile {
+            membership_start_date: Option<CivilDate>,
+        }
+        let p: Profile = self.get("users/me/profile", &[]).await?;
+        Ok(p.membership_start_date.map(|d| d.0))
+    }
+
     pub async fn paired_devices(&self) -> Result<Value> {
         self.get("users/me/pairedDevices", &[]).await
     }
@@ -138,7 +156,16 @@ impl HealthClient {
         if let Some(t) = page_token {
             q.push(("pageToken", t.to_string()));
         }
-        let v = self
+        /// Points stay JSON: they are stored exactly as the API returned them.
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Page {
+            #[serde(default)]
+            data_points: Vec<Value>,
+            #[serde(default)]
+            next_page_token: String,
+        }
+        let page: Page = self
             .get(
                 &format!(
                     "users/me/dataTypes/{}/dataPoints{}",
@@ -148,15 +175,8 @@ impl HealthClient {
                 &q,
             )
             .await?;
-        let points = match v.get("dataPoints") {
-            Some(Value::Array(a)) => a.clone(),
-            _ => Vec::new(),
-        };
-        let next = v["nextPageToken"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned);
-        Ok((points, next))
+        let next = Some(page.next_page_token).filter(|t| !t.is_empty());
+        Ok((page.data_points, next))
     }
 
     /// All data points matching `filter`, following pagination.

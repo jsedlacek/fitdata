@@ -4,6 +4,8 @@
 
 use anyhow::{Context, Result};
 use google_cloud_auth::credentials::{AccessTokenCredentials, Builder};
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 pub struct SyncJob {
@@ -26,38 +28,67 @@ impl SyncJob {
     }
 
     #[tracing::instrument(name = "Cloud Run API", skip_all, fields(otel.kind = "client"))]
-    async fn call(&self, req: reqwest::RequestBuilder) -> Result<Value> {
+    async fn call<T: DeserializeOwned>(&self, req: reqwest::RequestBuilder) -> Result<T> {
         let token = self.creds.access_token().await?.token;
         let resp = req.bearer_auth(token).send().await?;
         let status = resp.status();
-        let body: Value = resp.json().await.unwrap_or_default();
         if !status.is_success() {
-            anyhow::bail!("Cloud Run API: HTTP {status}: {}", body["error"]["message"]);
+            let body: ApiError = resp.json().await.unwrap_or_default();
+            anyhow::bail!("Cloud Run API: HTTP {status}: {}", body.error.message);
         }
-        Ok(body)
+        resp.json()
+            .await
+            .context("unexpected Cloud Run API response")
     }
 
     /// Whether the latest execution (manual or scheduled) has not finished yet.
     /// A new execution shows up here as soon as `run` returns.
     pub async fn running(&self) -> Result<bool> {
-        let job = self.call(self.http.get(&self.url)).await?;
-        Ok(is_running(&job))
+        let job: Job = self.call(self.http.get(&self.url)).await?;
+        Ok(job.running())
     }
 
     pub async fn run(&self) -> Result<()> {
-        self.call(
-            self.http
-                .post(format!("{}:run", self.url))
-                .json(&serde_json::json!({})),
-        )
-        .await?;
+        let _operation: Value = self
+            .call(
+                self.http
+                    .post(format!("{}:run", self.url))
+                    .json(&serde_json::json!({})),
+            )
+            .await?;
         Ok(())
     }
 }
 
-fn is_running(job: &Value) -> bool {
-    let latest = &job["latestCreatedExecution"];
-    latest.is_object() && latest["completionTime"].is_null()
+/// The parts of a Cloud Run v2 `Job` used here.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Job {
+    latest_created_execution: Option<ExecutionReference>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecutionReference {
+    completion_time: Option<String>,
+}
+
+impl Job {
+    fn running(&self) -> bool {
+        self.latest_created_execution
+            .as_ref()
+            .is_some_and(|e| e.completion_time.is_none())
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ApiError {
+    error: ApiErrorBody,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ApiErrorBody {
+    message: String,
 }
 
 #[cfg(test)]
@@ -65,12 +96,16 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn running(v: Value) -> bool {
+        serde_json::from_value::<Job>(v).unwrap().running()
+    }
+
     #[test]
     fn running_until_the_latest_execution_completes() {
-        assert!(!is_running(&json!({})));
-        assert!(is_running(&json!({"latestCreatedExecution": {
+        assert!(!running(json!({})));
+        assert!(running(json!({"latestCreatedExecution": {
             "name": "x", "completionStatus": "EXECUTION_PENDING"}})));
-        assert!(!is_running(&json!({"latestCreatedExecution": {
+        assert!(!running(json!({"latestCreatedExecution": {
             "name": "x", "completionTime": "2026-10-24T09:01:46Z"}})));
     }
 }

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use google_cloud_gax::error::rpc::Code;
 use google_cloud_storage::client::{Storage, StorageControl};
+use serde::Serialize;
 use serde_json::Value;
 
 pub enum Store {
@@ -156,28 +157,16 @@ impl Store {
     }
 
     /// Newline-delimited JSON, one record per line (loads directly into BigQuery).
-    pub async fn put_jsonl(&self, path: &str, rows: &[Value]) -> Result<()> {
+    pub async fn put_jsonl<T: Serialize>(&self, path: &str, rows: &[T]) -> Result<()> {
         self.put(path, to_jsonl(rows)?).await
     }
 
     pub async fn put_json(&self, path: &str, value: &Value) -> Result<()> {
         self.put(path, serde_json::to_vec_pretty(value)?).await
     }
-
-    /// Lines of a JSONL object; empty if the object does not exist.
-    pub async fn get_jsonl(&self, path: &str) -> Result<Vec<Value>> {
-        let Some(data) = self.get(path).await? else {
-            return Ok(Vec::new());
-        };
-        std::str::from_utf8(&data)?
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(|l| serde_json::from_str(l).with_context(|| format!("bad JSON line in {path}")))
-            .collect()
-    }
 }
 
-pub fn to_jsonl(rows: &[Value]) -> Result<Vec<u8>> {
+pub fn to_jsonl<T: Serialize>(rows: &[T]) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     for row in rows {
         serde_json::to_writer(&mut buf, row)?;
