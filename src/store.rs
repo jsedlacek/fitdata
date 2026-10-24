@@ -5,13 +5,15 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use google_cloud_gax::error::rpc::Code;
-use google_cloud_storage::client::Storage;
+use google_cloud_storage::client::{Storage, StorageControl};
 use serde_json::Value;
 
 pub enum Store {
     Local(PathBuf),
     Gcs {
         client: Box<Storage>,
+        /// Metadata and deletes.
+        control: Box<StorageControl>,
         bucket: String,
     },
 }
@@ -25,8 +27,13 @@ impl Store {
     pub async fn open(location: &str) -> Result<Self> {
         if let Some(bucket) = location.strip_prefix("gs://") {
             let client = Storage::builder().build().await.context("GCS client")?;
+            let control = StorageControl::builder()
+                .build()
+                .await
+                .context("GCS control client")?;
             return Ok(Self::Gcs {
                 client: Box::new(client),
+                control: Box::new(control),
                 bucket: bucket.trim_end_matches('/').to_string(),
             });
         }
@@ -58,7 +65,7 @@ impl Store {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
                 Err(e) => Err(e.into()),
             },
-            Self::Gcs { client, bucket } => {
+            Self::Gcs { client, bucket, .. } => {
                 let mut resp = match client
                     .read_object(format!("projects/_/buckets/{bucket}"), path)
                     .send()
@@ -82,8 +89,44 @@ impl Store {
     pub async fn exists(&self, path: &str) -> Result<bool> {
         match self {
             Self::Local(dir) => Ok(dir.join(path).exists()),
-            // Objects are small; reading is simpler than a metadata call.
-            Self::Gcs { .. } => Ok(self.get(path).await?.is_some()),
+            Self::Gcs {
+                control, bucket, ..
+            } => match control
+                .get_object()
+                .set_bucket(format!("projects/_/buckets/{bucket}"))
+                .set_object(path)
+                .send()
+                .await
+            {
+                Ok(_) => Ok(true),
+                Err(e) if is_not_found(&e) => Ok(false),
+                Err(e) => Err(e).with_context(|| format!("checking gs://{bucket}/{path}")),
+            },
+        }
+    }
+
+    /// Removes an object; a missing one is not an error.
+    #[tracing::instrument(name = "storage delete", skip(self), fields(otel.kind = "client"))]
+    pub async fn delete(&self, path: &str) -> Result<()> {
+        match self {
+            Self::Local(dir) => match std::fs::remove_file(dir.join(path)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+                _ => Ok(()),
+            },
+            Self::Gcs {
+                control, bucket, ..
+            } => match control
+                .delete_object()
+                .set_bucket(format!("projects/_/buckets/{bucket}"))
+                .set_object(path)
+                .send()
+                .await
+            {
+                Err(e) if !is_not_found(&e) => {
+                    Err(e).with_context(|| format!("deleting gs://{bucket}/{path}"))
+                }
+                _ => Ok(()),
+            },
         }
     }
 
@@ -97,7 +140,7 @@ impl Store {
                 }
                 std::fs::write(p, data)?;
             }
-            Self::Gcs { client, bucket } => {
+            Self::Gcs { client, bucket, .. } => {
                 client
                     .write_object(
                         format!("projects/_/buckets/{bucket}"),

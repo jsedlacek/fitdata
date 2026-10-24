@@ -110,7 +110,8 @@ fn slim(mut point: Value) -> Option<Value> {
     Some(p)
 }
 
-/// Fetches one slot and writes it; returns the number of points.
+/// Fetches one slot and writes it; returns the number of points. A slot
+/// without points has no file, so data deleted in the app goes away here too.
 async fn fetch_slot(
     client: &HealthClient,
     store: &Store,
@@ -119,8 +120,11 @@ async fn fetch_slot(
 ) -> Result<usize> {
     let filter = dt.filter(slot.from, slot.to);
     let points = client.list_all(dt, filter.as_deref()).await?;
-    if !points.is_empty() {
-        store.put_jsonl(&object_path(dt, slot), &points).await?;
+    let path = object_path(dt, slot);
+    if points.is_empty() {
+        store.delete(&path).await?;
+    } else {
+        store.put_jsonl(&path, &points).await?;
     }
     tracing::info!("{}: {} points", slot.key, points.len());
     Ok(points.len())
