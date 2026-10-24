@@ -34,7 +34,7 @@ OAuth Web client musí mít mezi *Authorized redirect URIs* adresu `https://fitd
 ## Data
 
 - **Raw (GCS):** odpovědi API beze změny. Job při každém běhu přepíše posledních 7 dní, protože hodinky synchronizují se zpožděním.
-- **BigQuery:** tabulky jsou partitionované podle lokálního data (`date`). `fitdata load` nahradí rozsah dní přes staging tabulku a transakci DELETE + INSERT, takže opakovaný běh nic nezdvojí.
+- **BigQuery:** tabulky jsou partitionované podle lokálního data (`date`). `fitdata load` nahradí rozsah dní přes staging tabulku a transakci DELETE + INSERT, takže opakovaný běh nic nezdvojí. Každé nahrání má vlastní staging tabulku (`_staging_<tabulka>_<id>`, po nahrání se smaže, jinak vyprší za den), takže se souběžné běhy nepomíchají.
 - **Noc** (`nights`) patří ke dni probuzení a spojuje všechny spánky, které skončily před 14:00.
 
 ## Bezpečnost

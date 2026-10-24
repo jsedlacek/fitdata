@@ -38,9 +38,13 @@ impl Bq {
 
     /// Replaces the rows of `table` whose `date` is in `[from, to]` with `rows`.
     ///
-    /// Rows are staged as NDJSON in GCS, loaded into `_staging_{table}` (same
-    /// schema, created by deploy/setup.sh) and swapped in with one
-    /// DELETE + INSERT transaction, so re-running a day never duplicates it.
+    /// Rows are staged as NDJSON in GCS, loaded into a staging table of this
+    /// call only (a copy of the table's schema) and swapped in with one
+    /// DELETE + INSERT transaction, so re-running a day never duplicates it
+    /// and overlapping runs (scheduled and "sync now") don't mix their rows.
+    /// The staging table and object are removed afterwards; if the run dies
+    /// first, the table expires after a day and the bucket's lifecycle rule
+    /// deletes the object.
     #[tracing::instrument(skip_all, fields(otel.name = format!("replace {table}"), table = %table, %from, %to))]
     pub async fn replace_range(
         &self,
@@ -50,12 +54,20 @@ impl Bq {
         from: NaiveDate,
         to: NaiveDate,
     ) -> Result<()> {
-        let staging = format!("_staging_{table}");
-        let path = format!("staging/{table}.jsonl");
+        let id = format!("{:016x}", rand::random::<u64>());
+        let staging = format!("_staging_{table}_{id}");
+        let path = format!("staging/{table}-{id}.jsonl");
         store.put_jsonl(&path, rows).await?;
         let uri = store
             .gs_uri(&path)
             .context("BigQuery loads need STORAGE=gs://...")?;
+        self.query(format!(
+            "CREATE TABLE {s} LIKE {t}
+             OPTIONS (expiration_timestamp = TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 1 DAY))",
+            t = self.table(table),
+            s = self.table(&staging),
+        ))
+        .await?;
 
         let load = JobConfigurationLoad::new()
             .set_source_uris([uri])
@@ -79,12 +91,16 @@ impl Bq {
         if let Some(err) = job.status.and_then(|s| s.error_result) {
             bail!("load job for {table} failed: {}", err.message);
         }
+        if let Err(e) = store.delete(&path).await {
+            tracing::warn!("{e:#}");
+        }
 
         self.query(format!(
             "BEGIN TRANSACTION;
              DELETE FROM {t} WHERE date BETWEEN '{from}' AND '{to}';
              INSERT INTO {t} SELECT * FROM {s};
-             COMMIT TRANSACTION;",
+             COMMIT TRANSACTION;
+             DROP TABLE {s};",
             t = self.table(table),
             s = self.table(&staging),
         ))
