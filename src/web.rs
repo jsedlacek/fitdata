@@ -2,6 +2,7 @@
 //! Google sign-in restricted to an allowlist of accounts. The same sign-in
 //! guards the MCP endpoint (`mcp.rs`) through a small OAuth server (`authz.rs`).
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,8 +15,8 @@ use axum::response::{Html, IntoResponse, Json, Redirect, Response};
 use axum::routing::{get, post};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -26,6 +27,8 @@ use crate::bq::Bq;
 use crate::claims::{self, Claims, Purpose};
 use crate::cloudrun::SyncJob;
 use crate::datatypes::READ_SCOPES;
+use crate::health::StageType;
+use crate::model::{DailyMetrics, Exercise, NightRow};
 use crate::oauth::{ClientCredentials, auth_request, exchange_code};
 use crate::secrets::SecretRef;
 use crate::{authz, mcp};
@@ -380,21 +383,43 @@ pub(crate) fn escape_html(s: &str) -> String {
 
 // --------------------------------------------------------------------- API
 
+/// The last run of the sync job; the page offers "reconnect" only when the
+/// token broke.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LastRun {
+    /// Local time, `YYYY-MM-DDTHH:MM:SS`.
+    pub run_at: String,
+    pub ok: bool,
+    pub auth_error: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Overview {
+    days: Vec<DailyMetrics>,
+    last_sync: Option<LastRun>,
+}
+
+/// The newest run in `sync_runs` (only successful ones if `ok_only`).
+pub(crate) async fn last_run(bq: &Bq, ok_only: bool) -> Result<Option<LastRun>> {
+    let runs = bq
+        .query_as(format!(
+            "SELECT FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%S', run_at, 'Europe/Prague') AS run_at, ok, auth_error
+             FROM {} {} ORDER BY run_at DESC LIMIT 1",
+            bq.table("sync_runs"),
+            if ok_only { "WHERE ok" } else { "" },
+        ))
+        .await?;
+    Ok(runs.into_iter().next())
+}
+
 async fn overview(State(cfg): State<Shared>) -> Response {
-    let days = cfg.bq.query(format!(
+    let days = cfg.bq.query_as(format!(
         "SELECT * FROM {} ORDER BY date",
         cfg.bq.table("daily")
     ));
-    let runs = cfg.bq.query(format!(
-        "SELECT FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%S', run_at, 'Europe/Prague') AS run_at, ok, auth_error
-         FROM {} ORDER BY run_at DESC LIMIT 1",
-        cfg.bq.table("sync_runs")
-    ));
-    match tokio::try_join!(days, runs) {
-        // `lastSync` lets the page offer "reconnect" only when the token broke.
-        Ok((days, runs)) => {
-            Json(json!({ "days": days, "lastSync": runs.into_iter().next() })).into_response()
-        }
+    match tokio::try_join!(days, last_run(&cfg.bq, false)) {
+        Ok((days, last_sync)) => Json(Overview { days, last_sync }).into_response(),
         Err(e) => internal(e),
     }
 }
@@ -430,99 +455,136 @@ async fn day(State(cfg): State<Shared>, Path(date): Path<NaiveDate>) -> Response
     }
 }
 
-fn dt(v: &Value) -> Option<NaiveDateTime> {
-    NaiveDateTime::parse_from_str(v.as_str()?, "%Y-%m-%dT%H:%M:%S").ok()
+/// Heart rate in one minute: `[time, min, mean, max]` in JSON.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(into = "(NaiveDateTime, f64, f64, f64)")]
+pub(crate) struct HrMinute {
+    pub t: NaiveDateTime,
+    pub lo: f64,
+    pub avg: f64,
+    pub hi: f64,
 }
 
-/// Rows of `[ts, value, ...]` arrays for the charts.
-fn tuples(rows: Vec<Value>, cols: &[&str]) -> Value {
-    Value::Array(
-        rows.iter()
-            .map(|r| Value::Array(cols.iter().map(|c| r[*c].clone()).collect()))
-            .collect(),
-    )
+impl From<HrMinute> for (NaiveDateTime, f64, f64, f64) {
+    fn from(m: HrMinute) -> Self {
+        (m.t, m.lo, m.avg, m.hi)
+    }
+}
+
+/// A timed value: `[time, value]` in JSON.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(into = "(NaiveDateTime, f64)")]
+pub(crate) struct Reading {
+    pub t: NaiveDateTime,
+    pub v: f64,
+}
+
+impl From<Reading> for (NaiveDateTime, f64) {
+    fn from(r: Reading) -> Self {
+        (r.t, r.v)
+    }
+}
+
+/// The night with its stage minutes keyed by stage, as the page shows them.
+#[derive(Debug, Serialize)]
+pub(crate) struct NightDetail {
+    #[serde(flatten)]
+    pub night: NightRow,
+    pub stage_minutes: BTreeMap<StageType, Option<i64>>,
+}
+
+/// Detail of one day for the day page and the `get_day` MCP tool.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DayDetail {
+    pub date: NaiveDate,
+    /// The time axis: from midnight, or from the start of the night if earlier.
+    pub range: [NaiveDateTime; 2],
+    pub metrics: Option<DailyMetrics>,
+    pub heart_rate: Vec<HrMinute>,
+    /// Steps per 15 minutes.
+    pub steps: Vec<Reading>,
+    pub spo2: Vec<Reading>,
+    pub hrv: Vec<Reading>,
+    pub sleep: Option<NightDetail>,
+    pub exercises: Vec<Exercise>,
 }
 
 /// Detail of one day. The time range starts at the beginning of the night
 /// before (if there was one) so the sleep that ended that morning is shown.
-///
-/// All queries run at once: the ones that depend on the night's window read
-/// it from the nights table themselves instead of waiting for it here.
-pub(crate) async fn day_detail(bq: &Bq, date: NaiveDate) -> Result<Value> {
+pub(crate) async fn day_detail(bq: &Bq, date: NaiveDate) -> Result<DayDetail> {
     let prev = date - Duration::days(1);
     let midnight = date.and_time(NaiveTime::MIN);
     let end = midnight + Duration::days(1);
     let t = |name| bq.table(name);
-    let fmt = |d: NaiveDateTime| d.format("%Y-%m-%dT%H:%M:%S").to_string();
-    let (m, e, m8) = (fmt(midnight), fmt(end), fmt(midnight + Duration::hours(8)));
-    // Scalar subqueries for the shown range start (`s`) and the night-only
-    // charts (`nf`..`nt`: the sleep window, or the small hours if none).
-    let night = format!(
-        "(SELECT AS STRUCT start, `end` FROM {} WHERE date = '{date}' ORDER BY start LIMIT 1)",
-        t("nights")
-    );
-    let s = format!("IFNULL(LEAST({night}.start, DATETIME '{m}'), DATETIME '{m}')");
-    let nf = format!("IFNULL({night}.start, DATETIME '{m}')");
-    let nt = format!("IFNULL({night}.`end`, DATETIME '{m8}')");
 
-    let (nights, metrics, hr, steps, spo2, hrv, exercises) = tokio::try_join!(
-        bq.query(format!(
-            "SELECT * FROM {} WHERE date = '{date}' ORDER BY start LIMIT 1",
+    let (nights, metrics) = tokio::try_join!(
+        bq.query_as::<NightRow>(format!(
+            "SELECT * FROM {} WHERE date = '{date}'",
             t("nights")
         )),
-        bq.query(format!(
+        bq.query_as::<DailyMetrics>(format!(
             "SELECT * FROM {} WHERE date = '{date}'",
             t("daily")
         )),
-        bq.query(format!(
+    )?;
+    let night = nights.into_iter().next();
+    let start = night.as_ref().map_or(midnight, |n| n.start.min(midnight));
+    // Night-only charts: the sleep window, or the small hours if no sleep was recorded.
+    let (nf, nt) = night
+        .as_ref()
+        .map_or((midnight, midnight + Duration::hours(8)), |n| {
+            (n.start, n.end)
+        });
+    let fmt = |d: NaiveDateTime| d.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let (s, e, nf, nt) = (fmt(start), fmt(end), fmt(nf), fmt(nt));
+
+    let (heart_rate, steps, spo2, hrv, exercises) = tokio::try_join!(
+        bq.query_as(format!(
             "SELECT DATETIME_TRUNC(ts, MINUTE) AS t, MIN(bpm) AS lo, ROUND(AVG(bpm), 1) AS avg, MAX(bpm) AS hi
-             FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= {s} AND ts < '{e}'
+             FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= '{s}' AND ts < '{e}'
              GROUP BY t ORDER BY t",
             t("heart_rate")
         )),
-        bq.query(format!(
+        bq.query_as(format!(
             "SELECT DATETIME_ADD(DATETIME_TRUNC(ts, HOUR), INTERVAL DIV(EXTRACT(MINUTE FROM ts), 15) * 15 MINUTE) AS t,
-                    SUM(steps) AS steps
+                    SUM(steps) AS v
              FROM {} WHERE date = '{date}' AND steps IS NOT NULL GROUP BY t ORDER BY t",
             t("activity")
         )),
-        bq.query(format!(
-            "SELECT ts, pct FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= {nf} AND ts < {nt} ORDER BY ts",
+        bq.query_as(format!(
+            "SELECT ts AS t, pct AS v FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= '{nf}' AND ts < '{nt}' ORDER BY ts",
             t("spo2")
         )),
-        bq.query(format!(
-            "SELECT ts, rmssd_ms FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= {nf} AND ts < {nt} ORDER BY ts",
+        bq.query_as(format!(
+            "SELECT ts AS t, rmssd_ms AS v FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= '{nf}' AND ts < '{nt}' ORDER BY ts",
             t("hrv")
         )),
-        bq.query(format!(
-            "SELECT * FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND start >= {s} AND start < '{e}' ORDER BY start",
+        bq.query_as(format!(
+            "SELECT * FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND start >= '{s}' AND start < '{e}' ORDER BY start",
             t("exercises")
         )),
     )?;
 
-    let night = nights.into_iter().next().map(|mut n| {
-        n["stage_minutes"] = json!({
-            "DEEP": n["deep_minutes"], "LIGHT": n["light_minutes"],
-            "REM": n["rem_minutes"], "AWAKE": n["awake_minutes"],
-        });
-        n
-    });
-    let start = night
-        .as_ref()
-        .and_then(|n| dt(&n["start"]))
-        .map_or(midnight, |s| s.min(midnight));
-
-    Ok(json!({
-        "date": date,
-        "range": [fmt(start), e],
-        "metrics": metrics.into_iter().next(),
-        "heartRate": tuples(hr, &["t", "lo", "avg", "hi"]),
-        "steps": tuples(steps, &["t", "steps"]),
-        "spo2": tuples(spo2, &["ts", "pct"]),
-        "hrv": tuples(hrv, &["ts", "rmssd_ms"]),
-        "sleep": night,
-        "exercises": exercises,
-    }))
+    Ok(DayDetail {
+        date,
+        range: [start, end],
+        metrics: metrics.into_iter().next(),
+        heart_rate,
+        steps,
+        spo2,
+        hrv,
+        sleep: night.map(|n| NightDetail {
+            stage_minutes: BTreeMap::from([
+                (StageType::Deep, n.deep_minutes),
+                (StageType::Light, n.light_minutes),
+                (StageType::Rem, n.rem_minutes),
+                (StageType::Awake, n.awake_minutes),
+            ]),
+            night: n,
+        }),
+        exercises,
+    })
 }
 
 #[cfg(test)]
