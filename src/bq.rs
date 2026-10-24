@@ -262,7 +262,12 @@ fn decode_value(field: &TableFieldSchema, v: &Value) -> Value {
     }
     match field.r#type.as_str() {
         "RECORD" | "STRUCT" => decode_record(&field.fields, v),
-        "INTEGER" | "INT64" | "FLOAT" | "FLOAT64" | "NUMERIC" | "BIGNUMERIC" => v
+        "INTEGER" | "INT64" => v
+            .as_str()
+            .and_then(|s| s.parse::<i64>().ok())
+            .map_or(Value::Null, Value::from),
+        // NUMERIC has more precision than f64, but nothing here needs it.
+        "FLOAT" | "FLOAT64" | "NUMERIC" | "BIGNUMERIC" => v
             .as_str()
             .and_then(|s| s.parse::<f64>().ok())
             .and_then(serde_json::Number::from_f64)
@@ -312,7 +317,7 @@ mod tests {
         ]});
         assert_eq!(
             decode_record(&fields, &row),
-            json!({"date": "2026-10-23", "bpm": 57.5, "missing": null, "stages": [{"stage": "DEEP", "n": 3.0}]})
+            json!({"date": "2026-10-23", "bpm": 57.5, "missing": null, "stages": [{"stage": "DEEP", "n": 3}]})
         );
     }
 }
