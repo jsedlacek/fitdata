@@ -10,6 +10,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/config.sh
+source deploy/schema.sh
 
 say() { printf '\n== %s\n' "$*"; }
 
@@ -35,21 +36,7 @@ if ! bq --project_id "$PROJECT" show "$DATASET" >/dev/null 2>&1; then
   bq --project_id "$PROJECT" --location "$REGION" mk --dataset \
     --description "Fitbit / Google Health data" "$PROJECT:$DATASET"
 fi
-for schema in deploy/schema/*.json; do
-  t=$(basename "$schema" .json)
-  for table in "$t" "_staging_$t"; do
-    if bq --project_id "$PROJECT" show "$DATASET.$table" >/dev/null 2>&1; then
-      # Adds new columns; BigQuery refuses incompatible changes.
-      bq --project_id "$PROJECT" update "$PROJECT:$DATASET.$table" "$schema" >/dev/null
-    elif [[ $table == _staging_* ]]; then
-      bq --project_id "$PROJECT" mk --table "$PROJECT:$DATASET.$table" "$schema" >/dev/null
-    else
-      bq --project_id "$PROJECT" mk --table --time_partitioning_field date --time_partitioning_type DAY \
-        "$PROJECT:$DATASET.$table" "$schema" >/dev/null
-    fi
-    echo "  $table"
-  done
-done
+apply_schemas
 
 say "Artifact Registry $REPO"
 if ! gcloud artifacts repositories describe "$REPO" --project "$PROJECT" --location "$REGION" >/dev/null 2>&1; then
@@ -96,9 +83,11 @@ for sa in "$JOB_SA" "$WEB_SA"; do
   done
 done
 # Dataset-level roles via DCL (`bq add-iam-policy-binding` needs allowlisting).
+# The deployer creates and updates the tables in deploy.sh.
 bq --project_id "$PROJECT" --location "$REGION" query --nouse_legacy_sql --quiet "
   GRANT \`roles/bigquery.dataEditor\` ON SCHEMA \`$PROJECT.$DATASET\` TO 'serviceAccount:$JOB_SA';
-  GRANT \`roles/bigquery.dataViewer\` ON SCHEMA \`$PROJECT.$DATASET\` TO 'serviceAccount:$WEB_SA';" >/dev/null
+  GRANT \`roles/bigquery.dataViewer\` ON SCHEMA \`$PROJECT.$DATASET\` TO 'serviceAccount:$WEB_SA';
+  GRANT \`roles/bigquery.dataEditor\` ON SCHEMA \`$PROJECT.$DATASET\` TO 'serviceAccount:$DEPLOY_SA';" >/dev/null
 
 say "Alerting ($ALERT_EMAIL)"
 # One e-mail channel and two policies: any failed run of the sync job opens an

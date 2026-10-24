@@ -6,6 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/config.sh
+source deploy/schema.sh
 
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)')
 # Google redirects to $PUBLIC_URL/auth/callback, which must be an authorized
@@ -27,6 +28,10 @@ else
   echo "== Build $IMAGE"
   gcloud builds submit --project "$PROJECT" --region "$REGION" --tag "$IMAGE" .
 fi
+
+# Before the job, so new code never writes to the old schema.
+echo "== BigQuery tables"
+apply_schemas
 
 echo "== Job $JOB_NAME"
 gcloud run jobs deploy "$JOB_NAME" --project "$PROJECT" --region "$REGION" \

@@ -20,7 +20,7 @@ deploy/deploy.sh   # build (Cloud Build), job + scheduler, web
 
 Každý push do `main` nasadí GitHub Actions ([.github/workflows/deploy.yml](../.github/workflows/deploy.yml)) spuštěním `deploy/deploy.sh`. Ručně jde workflow spustit v záložce Actions (Run workflow). Přihlašuje se bez klíče přes Workload Identity Federation (pool `github`) jako `fitdata-deployer`; token dostane jen workflow z `jsedlacek/fitdata` na `main`. Pool i role nastaví `setup.sh`. Image se staví znovu jen při změně `Dockerfile`, `.dockerignore`, `Cargo.*`, `src/` nebo `frontend/`, takže push samotných docs jen znovu nasadí stávající image. V Actions se image staví přímo na runneru (Buildx) a pushne do Artifact Registry; `deploy.sh` ho pak najde a Cloud Build přeskočí. Závislosti Rustu staví [cargo-chef](https://github.com/LukeMathWalker/cargo-chef) ve vlastní vrstvě, kterou drží cache GitHub Actions, takže se znovu kompilují jen při změně `Cargo.*`. Lokální `deploy.sh` staví dál v Cloud Buildu, bez cache.
 
-Nastavení je v [deploy/config.sh](../deploy/config.sh). Schémata tabulek jsou v [deploy/schema/](../deploy/schema/). Nový sloupec stačí přidat do schématu i do `model.rs` a spustit znovu `setup.sh`.
+Nastavení je v [deploy/config.sh](../deploy/config.sh). Schémata tabulek jsou v [deploy/schema/](../deploy/schema/). Nový sloupec stačí přidat do schématu i do `model.rs`; `deploy.sh` (i `setup.sh`) tabulky založí a nové sloupce přidá ještě před nasazením jobu, takže stačí push.
 
 OAuth Web client musí mít mezi *Authorized redirect URIs* adresu `https://fitdata.jakub.contact/auth/callback`.
 
