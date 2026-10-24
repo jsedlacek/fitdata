@@ -1,5 +1,6 @@
 mod api;
 mod bq;
+mod cloudrun;
 mod datatypes;
 mod model;
 mod oauth;
@@ -66,6 +67,9 @@ enum Cmd {
         /// Skip sign-in (local development only).
         #[arg(long, env = "AUTH_DISABLED", value_parser = clap::builder::BoolishValueParser::new())]
         auth_disabled: bool,
+        /// Cloud Run job the "sync now" button starts.
+        #[arg(long, env = "SYNC_JOB", default_value = "fitdata-sync")]
+        sync_job: String,
     },
     /// Interactive OAuth consent; stores a refresh token.
     Login {
@@ -261,6 +265,7 @@ async fn main() -> Result<()> {
         session_key,
         static_dir,
         auth_disabled,
+        sync_job,
     } = &cli.cmd
     {
         let session_key = SecretRef::parse(session_key, project)?
@@ -280,6 +285,12 @@ async fn main() -> Result<()> {
             creds,
             token_ref,
             bq: bq().await?,
+            sync_job: cloudrun::SyncJob::new(
+                http.clone(),
+                project.context("GCP_PROJECT is required")?,
+                &cli.region,
+                sync_job,
+            )?,
             http,
         })
         .await;

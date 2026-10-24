@@ -39,6 +39,11 @@ gcloud run jobs deploy "$JOB_NAME" --project "$PROJECT" --region "$REGION" \
 echo "== Schedule ($SCHEDULE $TIME_ZONE)"
 gcloud run jobs add-iam-policy-binding "$JOB_NAME" --project "$PROJECT" --region "$REGION" \
   --member "serviceAccount:$SCHEDULER_SA" --role roles/run.invoker >/dev/null
+# The dashboard's "sync now" button starts the job and watches its executions.
+for role in roles/run.jobsExecutor roles/run.viewer; do
+  gcloud run jobs add-iam-policy-binding "$JOB_NAME" --project "$PROJECT" --region "$REGION" \
+    --member "serviceAccount:$WEB_SA" --role "$role" >/dev/null
+done
 SCHEDULE_ARGS=(--project "$PROJECT" --location "$REGION" --schedule "$SCHEDULE" --time-zone "$TIME_ZONE"
   --uri "https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/$JOB_NAME:run"
   --http-method POST --oauth-service-account-email "$SCHEDULER_SA")
@@ -53,7 +58,7 @@ echo "== Service $SERVICE_NAME"
 gcloud run deploy "$SERVICE_NAME" --project "$PROJECT" --region "$REGION" \
   --image "$IMAGE" --args serve \
   --service-account "$WEB_SA" \
-  --set-env-vars "^;^${ENV//,/;};PUBLIC_URL=$PUBLIC_URL;ALLOWED_EMAILS=$ALLOWED_EMAILS" \
+  --set-env-vars "^;^${ENV//,/;};PUBLIC_URL=$PUBLIC_URL;ALLOWED_EMAILS=$ALLOWED_EMAILS;SYNC_JOB=$JOB_NAME" \
   --allow-unauthenticated --cpu 1 --memory 512Mi --min-instances 0 --max-instances 2
 
 if [[ -n $DOMAIN ]]; then

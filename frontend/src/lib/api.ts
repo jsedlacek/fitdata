@@ -29,6 +29,8 @@ export type Daily = {
 
 export type SyncRun = { run_at: string; ok: boolean; auth_error: boolean };
 
+export type SyncState = { running: boolean };
+
 export type Overview = { days: Daily[]; lastSync: SyncRun | null };
 
 export type Stage = 'DEEP' | 'LIGHT' | 'REM' | 'AWAKE';
@@ -70,8 +72,8 @@ export type DayDetail = {
 
 export class UnauthorizedError extends Error {}
 
-async function get<T>(url: string): Promise<T> {
-  const r = await fetch(url, { credentials: 'same-origin' });
+async function request<T>(url: string, method = 'GET'): Promise<T> {
+  const r = await fetch(url, { method, credentials: 'same-origin' });
   if (r.status === 401) {
     // Session expired: sign in again and come back.
     location.href = '/auth/login';
@@ -80,6 +82,8 @@ async function get<T>(url: string): Promise<T> {
   if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
   return r.json() as Promise<T>;
 }
+
+const get = <T,>(url: string) => request<T>(url);
 
 export const overviewQuery = {
   queryKey: ['overview'],
@@ -92,3 +96,13 @@ export const dayQuery = (date: string) => ({
   queryFn: () => get<DayDetail>(`/api/day/${date}`),
   staleTime: 5 * 60_000,
 });
+
+/** Whether a sync job runs; polled while it does. */
+export const syncQuery = {
+  queryKey: ['sync'],
+  queryFn: () => get<SyncState>('/api/sync'),
+  refetchInterval: (q: { state: { data?: SyncState } }) => (q.state.data?.running ? 5_000 : false),
+};
+
+/** Starts a sync job (or joins the one already running). */
+export const startSync = () => request<SyncState>('/api/sync', 'POST');

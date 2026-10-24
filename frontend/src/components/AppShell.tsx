@@ -1,8 +1,11 @@
 import { Link, Outlet } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
-import { Activity, CheckCircle2, Laptop, Moon, Sun, TriangleAlert } from 'lucide-react';
-import { overviewQuery, type SyncRun } from '@/lib/api';
+import { useEffect, useRef } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Activity, CheckCircle2, Laptop, Moon, RefreshCw, Sun, TriangleAlert } from 'lucide-react';
+import { overviewQuery, startSync, syncQuery, type SyncRun } from '@/lib/api';
 import { ago } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import { Button } from './ui/button';
 import { useThemeChoice, type ThemeChoice } from '@/lib/theme';
 import { Segmented } from './ui/segmented';
 import { ReconnectBanner } from './ReconnectBanner';
@@ -50,16 +53,51 @@ function NavLink({ to, children }: { to: '/' | '/trends'; children: React.ReactN
 }
 
 function SyncStatus({ run }: { run: SyncRun | null }) {
-  if (!run) return null;
-  const Icon = run.ok ? CheckCircle2 : TriangleAlert;
+  const queryClient = useQueryClient();
+  const sync = useQuery(syncQuery);
+  const start = useMutation({
+    mutationFn: startSync,
+    onSuccess: (state) => queryClient.setQueryData(syncQuery.queryKey, state),
+  });
+  const running = start.isPending || !!sync.data?.running;
+
+  // When a run (ours or the scheduled one) finishes, reload the data.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !running) {
+      void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'sync' });
+    }
+    wasRunning.current = running;
+  }, [running, queryClient]);
+
+  const Icon = run?.ok ? CheckCircle2 : TriangleAlert;
   return (
-    <div
-      className="hidden items-center gap-1.5 text-[13px] text-ink-2 md:flex"
-      title={`Poslední synchronizace ${new Date(run.run_at).toLocaleString('cs-CZ')}`}
-    >
-      <Icon className={run.ok ? 'size-4 text-good' : 'size-4 text-critical'} />
-      <span>{run.ok ? 'Synchronizováno' : 'Synchronizace selhala'}</span>
-      <span className="text-muted">{ago(run.run_at)}</span>
+    <div className="flex items-center gap-1.5 text-[13px] text-ink-2">
+      {running ? (
+        <span className="hidden md:inline">Synchronizuji…</span>
+      ) : (
+        run && (
+          <span
+            className="hidden items-center gap-1.5 md:flex"
+            title={`Poslední synchronizace ${new Date(run.run_at).toLocaleString('cs-CZ')}`}
+          >
+            <Icon className={run.ok ? 'size-4 text-good' : 'size-4 text-critical'} />
+            <span>{run.ok ? 'Synchronizováno' : 'Synchronizace selhala'}</span>
+            <span className="text-muted">{ago(run.run_at)}</span>
+          </span>
+        )
+      )}
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className={cn('text-ink-2 hover:text-ink disabled:opacity-100', start.isError && 'text-critical')}
+        disabled={running}
+        onClick={() => start.mutate()}
+        aria-label="Synchronizovat teď"
+        title={start.isError ? 'Synchronizaci se nepodařilo spustit, zkusit znovu' : running ? 'Synchronizace běží' : 'Synchronizovat teď'}
+      >
+        <RefreshCw className={cn(running && 'animate-spin')} />
+      </Button>
     </div>
   );
 }

@@ -40,7 +40,7 @@ OAuth Web client musí mít mezi *Authorized redirect URIs* adresu `https://fitd
 | Identita | Smí |
 |---|---|
 | `fitdata-job` | číst `oauth-client` a `refresh-token`, zapisovat do bucketu, zapisovat do datasetu |
-| `fitdata-web` | číst `oauth-client` a `session-key`, přidávat a vypínat verze `refresh-token` (číst ne), číst dataset |
+| `fitdata-web` | číst `oauth-client` a `session-key`, přidávat a vypínat verze `refresh-token` (číst ne), číst dataset, spustit job a číst jeho stav |
 | `fitdata-scheduler` | spustit job |
 
 Web je na Cloud Runu veřejný, ale každá stránka i API vyžaduje přihlášení Googlem s e-mailem z `ALLOWED_EMAILS`. Session je HMAC podepsaná cookie (klíč `session-key`, platnost 30 dní).
@@ -48,6 +48,8 @@ Web je na Cloud Runu veřejný, ale každá stránka i API vyžaduje přihláše
 Když přestane fungovat refresh token (odvolaný přístup), stačí na dashboardu kliknout na **Připojit Fitbit**.
 
 ## Provoz
+
+Synchronizaci jde spustit i ručně ikonou ⟳ vedle „Synchronizováno“ v hlavičce dashboardu. Web spustí job přes Cloud Run Admin API (`POST /api/sync`), ikona se točí, dokud běží poslední execution jobu (i plánovaná), a pak se data na stránce načtou znovu.
 
 Každý neúspěšný běh jobu otevře v Cloud Monitoring incident **fitdata-sync failed** a pošle e-mail na `ALERT_EMAIL` (`deploy/config.sh`). Při trvalé poruše přijde jeden e-mail, ne jeden za hodinu. Až běhy znovu projdou, incident se sám zavře. Politika je v [deploy/alert-policy.json](../deploy/alert-policy.json) a nastaví ji `setup.sh`.
 

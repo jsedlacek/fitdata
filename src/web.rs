@@ -22,6 +22,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::bq::Bq;
+use crate::cloudrun::SyncJob;
 use crate::datatypes::READ_SCOPES;
 use crate::oauth::{ClientCredentials, auth_request, exchange_code};
 use crate::secrets::SecretRef;
@@ -42,6 +43,8 @@ pub struct Config {
     /// Where "Connect Fitbit" stores a new Health API refresh token.
     pub token_ref: SecretRef,
     pub bq: Bq,
+    /// The Cloud Run job behind the "sync now" button.
+    pub sync_job: SyncJob,
     pub http: reqwest::Client,
 }
 
@@ -75,6 +78,7 @@ pub async fn serve(cfg: Config) -> Result<()> {
     let protected = Router::new()
         .route("/api/overview", get(overview))
         .route("/api/day/{date}", get(day))
+        .route("/api/sync", get(sync_status).post(start_sync))
         .route("/api/{*rest}", get(|| async { StatusCode::NOT_FOUND }))
         .route("/auth/fitbit", get(connect_fitbit))
         .nest_service("/assets", assets)
@@ -292,6 +296,30 @@ async fn overview(State(cfg): State<Shared>) -> Response {
         Ok((days, runs)) => {
             Json(json!({ "days": days, "lastSync": runs.into_iter().next() })).into_response()
         }
+        Err(e) => internal(e),
+    }
+}
+
+/// `{"running": bool}`: whether a sync (manual or scheduled) is in progress.
+async fn sync_status(State(cfg): State<Shared>) -> Response {
+    match cfg.sync_job.running().await {
+        Ok(running) => Json(json!({ "running": running })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+/// Starts a sync unless one is already running. The session cookie is
+/// SameSite=Lax, so other sites cannot trigger this.
+async fn start_sync(State(cfg): State<Shared>) -> Response {
+    let result = async {
+        if !cfg.sync_job.running().await? {
+            cfg.sync_job.run().await?;
+            tracing::info!("sync started from the dashboard");
+        }
+        Ok(())
+    };
+    match result.await {
+        Ok(()) => Json(json!({ "running": true })).into_response(),
         Err(e) => internal(e),
     }
 }
