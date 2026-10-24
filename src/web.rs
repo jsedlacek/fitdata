@@ -32,6 +32,16 @@ use crate::{authz, mcp};
 const SESSION_COOKIE: &str = "fd_session";
 const OAUTH_COOKIE: &str = "fd_oauth";
 const SESSION_DAYS: i64 = 30;
+/// Files from `frontend/public` served without sign-in.
+const PUBLIC_FILES: &[&str] = &[
+    "favicon.ico",
+    "favicon.svg",
+    "apple-touch-icon.png",
+    "icon-192.png",
+    "icon-512.png",
+    "icon-maskable-512.png",
+    "manifest.webmanifest",
+];
 
 pub struct Config {
     pub port: u16,
@@ -77,6 +87,21 @@ pub async fn serve(cfg: Config) -> Result<()> {
                 .fallback(ServeFile::new(state.static_dir.join("index.html"))),
         );
 
+    // Icons and the web manifest are fetched without the session cookie
+    // (manifest requests, connector icons in Claude/ChatGPT), so they're public.
+    let mut public_files = Router::new();
+    for name in PUBLIC_FILES {
+        public_files = public_files.route_service(
+            &format!("/{name}"),
+            ServiceBuilder::new()
+                .layer(SetResponseHeaderLayer::overriding(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=86400"),
+                ))
+                .service(ServeFile::new(state.static_dir.join(name))),
+        );
+    }
+
     let protected = Router::new()
         .route("/api/overview", get(overview))
         .route("/api/day/{date}", get(day))
@@ -92,6 +117,7 @@ pub async fn serve(cfg: Config) -> Result<()> {
 
     let app = Router::new()
         .merge(protected)
+        .merge(public_files)
         .route("/healthz", get(|| async { "ok" }))
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))

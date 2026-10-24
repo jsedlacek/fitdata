@@ -356,6 +356,7 @@ fn consent_page(name: &str, host: &str, email: &str, consent: &str) -> Response 
 <html lang="cs"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Přístup k datům · fitdata</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root {{ color-scheme: light dark; --bg: #f6f7f9; --card: #fff; --fg: #111827; --muted: #6b7280; --accent: #2563eb; --border: #e5e7eb; }}
   @media (prefers-color-scheme: dark) {{ :root {{ --bg: #0b0f17; --card: #131926; --fg: #e5e7eb; --muted: #9ca3af; --accent: #3b82f6; --border: #273042; }} }}
