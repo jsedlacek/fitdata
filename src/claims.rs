@@ -14,6 +14,10 @@ use sha2::Sha256;
 pub enum Claims {
     /// The dashboard sign-in cookie.
     Session {
+        /// Google account ID; empty in tokens issued before there were
+        /// several users (then looked up by `email`).
+        #[serde(default)]
+        uid: String,
         email: String,
     },
     /// A Google sign-in in progress (cookie between redirect and callback).
@@ -36,6 +40,9 @@ pub enum Claims {
         redirect_uri: String,
         state: Option<String>,
         challenge: String,
+        /// As in `Session`.
+        #[serde(default)]
+        uid: String,
         email: String,
     },
     /// An authorization code. Stateless, so it can be redeemed more than once
@@ -45,14 +52,23 @@ pub enum Claims {
         client_id: String,
         redirect_uri: String,
         challenge: String,
+        /// As in `Session`.
+        #[serde(default)]
+        uid: String,
         email: String,
     },
     Access {
+        /// As in `Session`.
+        #[serde(default)]
+        uid: String,
         email: String,
         aud: String,
     },
     Refresh {
         client_id: String,
+        /// As in `Session`.
+        #[serde(default)]
+        uid: String,
         email: String,
     },
 }
@@ -127,7 +143,13 @@ pub fn verify(key: &[u8], token: &str) -> Option<Claims> {
         Ok(s) => (s.claims, s.exp),
         Err(_) => {
             let s: LegacySession = serde_json::from_slice(&json).ok()?;
-            (Claims::Session { email: s.email }, s.exp)
+            (
+                Claims::Session {
+                    uid: String::new(),
+                    email: s.email,
+                },
+                s.exp,
+            )
         }
     };
     (exp > chrono::Utc::now().timestamp()).then_some(claims)
@@ -158,6 +180,7 @@ mod tests {
     fn round_trips_and_rejects_tampering() {
         let key = b"k";
         let session = Claims::Session {
+            uid: "1".into(),
             email: "a@b.c".into(),
         };
         let t = sign(key, session.clone(), in_a_minute());
@@ -171,6 +194,7 @@ mod tests {
         let expired = sign(
             key,
             Claims::Session {
+                uid: "1".into(),
                 email: "a@b.c".into(),
             },
             1,
@@ -208,6 +232,7 @@ mod tests {
         assert_eq!(
             verify(key, &session),
             Some(Claims::Session {
+                uid: String::new(),
                 email: "a@b.c".into()
             })
         );

@@ -4,7 +4,6 @@ PROJECT=${PROJECT:-fitdata-jsedlacek}
 # mappings, which e.g. europe-west3 lacks.
 REGION=${REGION:-europe-west1}
 BUCKET=${BUCKET:-$PROJECT-data}
-DATASET=${DATASET:-health}
 REPO=${REPO:-fitdata}
 TIME_ZONE=${TIME_ZONE:-Europe/Prague}
 # When the sync job runs (cron in TIME_ZONE); each run re-fetches the last 7 days.
@@ -12,13 +11,15 @@ SCHEDULE=${SCHEDULE:-"0 * * * *"}
 # Custom domain of the dashboard; must be verified for the gcloud account
 # (gcloud domains list-user-verified). Empty means the Cloud Run URL.
 DOMAIN=${DOMAIN:-fitdata.jakub.contact}
-# Google accounts allowed to sign in to the dashboard (comma separated).
+# Google accounts allowed to sign in (comma separated): the invitations.
 ALLOWED_EMAILS=${ALLOWED_EMAILS:-sedlacek.jakub@gmail.com}
-# Google account ID (`sub`) of the owner, whose data the job writes as Parquet
-# under u/$OWNER_ID/ (gcloud auth print-identity-token | jwt payload `sub`).
-OWNER_ID=${OWNER_ID:-102707141805967147144}
 # Where Cloud Monitoring sends an e-mail when a sync run fails.
 ALERT_EMAIL=${ALERT_EMAIL:-sedlacek.jakub@gmail.com}
+
+# Cloud KMS key that encrypts the users' refresh tokens (src/kms.rs).
+KMS_KEYRING=fitdata
+KMS_KEY_NAME=refresh-token
+KMS_KEY=projects/$PROJECT/locations/$REGION/keyRings/$KMS_KEYRING/cryptoKeys/$KMS_KEY_NAME
 
 JOB_SA=fitdata-job@$PROJECT.iam.gserviceaccount.com
 WEB_SA=fitdata-web@$PROJECT.iam.gserviceaccount.com
@@ -34,7 +35,7 @@ WIF_PROVIDER=github
 
 # Image tag: the last commit that touched what goes into the image, so changes
 # to deploy scripts or docs reuse the existing image.
-IMAGE_SOURCES=(Dockerfile .dockerignore Cargo.toml Cargo.lock src deploy/schema frontend)
+IMAGE_SOURCES=(Dockerfile .dockerignore Cargo.toml Cargo.lock src schema frontend)
 TAG=$(git log -1 --format=%h -- "${IMAGE_SOURCES[@]}")$(git diff --quiet HEAD -- "${IMAGE_SOURCES[@]}" || echo "-dirty")
 IMAGE=$REGION-docker.pkg.dev/$PROJECT/$REPO/fitdata:$TAG
 

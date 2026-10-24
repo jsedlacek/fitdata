@@ -164,8 +164,9 @@ pub async fn replace_range<R: Row>(
     Ok(())
 }
 
-/// Writes every table for `[from, to]`, then the manifest.
-pub async fn write_all(
+/// Writes every table for `[from, to]`; the manifest is the caller's (once
+/// after all ranges of a load).
+pub async fn write_tables(
     store: &Store,
     uid: &str,
     t: &Tables,
@@ -178,8 +179,7 @@ pub async fn write_all(
     replace_range(store, uid, &t.hrv, from, to).await?;
     replace_range(store, uid, &t.nights, from, to).await?;
     replace_range(store, uid, &t.exercises, from, to).await?;
-    replace_range(store, uid, &t.daily, from, to).await?;
-    write_manifest(store, uid).await
+    replace_range(store, uid, &t.daily, from, to).await
 }
 
 /// Every data file of a user with its generation, so readers can tell what
@@ -231,9 +231,7 @@ mod tests {
     }
 
     fn read(store: &Store, path: &str) -> Vec<(String, f64)> {
-        let Store::Local(dir) = store else {
-            unreachable!()
-        };
+        let dir = store.local_dir().unwrap();
         let conn = duck::open().unwrap();
         let file = dir.join("u/x/data").join(path);
         if !file.exists() {

@@ -260,6 +260,20 @@ async fn wait_for_callback(port: u16) -> Result<Url> {
     }
 }
 
+/// Revokes a refresh token (and the access it grants) at Google.
+pub async fn revoke(http: &reqwest::Client, refresh_token: &str) -> Result<()> {
+    let resp = http
+        .post("https://oauth2.googleapis.com/revoke")
+        .form(&[("token", refresh_token)])
+        .send()
+        .await?;
+    // 400 invalid_token: already revoked or expired, which is what we want.
+    if !resp.status().is_success() && resp.status() != reqwest::StatusCode::BAD_REQUEST {
+        bail!("revoking the token failed: HTTP {}", resp.status());
+    }
+    Ok(())
+}
+
 /// Hands out access tokens, refreshing them from the long-lived refresh token.
 pub struct TokenSource {
     http: reqwest::Client,

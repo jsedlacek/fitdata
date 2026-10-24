@@ -1,5 +1,5 @@
 //! DuckDB: in-memory connections over the Parquet tables, the table schemas
-//! (deploy/schema/, shared with the BigQuery tables until those go away) and
+//! (schema/) and
 //! query results as JSON.
 //!
 //! DuckDB is synchronous; callers run it in `spawn_blocking`.
@@ -30,7 +30,7 @@ pub struct Column {
 
 macro_rules! schemas {
     ($($t:literal),*) => {
-        [$(($t, include_str!(concat!("../deploy/schema/", $t, ".json")))),*]
+        [$(($t, include_str!(concat!("../schema/", $t, ".json")))),*]
     };
 }
 

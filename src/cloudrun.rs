@@ -1,6 +1,7 @@
 //! Starting the sync job from the dashboard and telling whether it runs,
 //! via the Cloud Run Admin API (the web service account needs
-//! `run.jobs.run` and `run.jobs.get` on the job; deploy/deploy.sh grants them).
+//! `run.jobs.runWithOverrides` and `run.jobs.get` on the job; deploy/deploy.sh
+//! grants them).
 
 use anyhow::{Context, Result};
 use google_cloud_auth::credentials::{AccessTokenCredentials, Builder};
@@ -48,13 +49,17 @@ impl SyncJob {
         Ok(job.running())
     }
 
-    pub async fn run(&self) -> Result<()> {
+    /// Starts an execution, of one user only if `user` is given (which
+    /// needs `run.jobs.runWithOverrides`).
+    pub async fn run(&self, user: Option<&str>) -> Result<()> {
+        let body = match user {
+            Some(uid) => serde_json::json!({ "overrides": { "containerOverrides": [{
+                "args": ["job", "--days=7", format!("--user={uid}")],
+            }]}}),
+            None => serde_json::json!({}),
+        };
         let _operation: Value = self
-            .call(
-                self.http
-                    .post(format!("{}:run", self.url))
-                    .json(&serde_json::json!({})),
-            )
+            .call(self.http.post(format!("{}:run", self.url)).json(&body))
             .await?;
         Ok(())
     }

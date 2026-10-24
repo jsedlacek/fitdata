@@ -69,7 +69,11 @@ export function DayPage({ date: wanted }: { date?: string }) {
   if (!date) {
     return (
       <Card>
-        <CardBody className="py-16 text-center text-sm text-muted">Zatím žádná data. Spusť synchronizaci tlačítkem vpravo nahoře.</CardBody>
+        <CardBody className="py-16 text-center text-sm text-muted">
+          {overview.data.user.connected
+            ? 'Zatím žádná data. Spusť synchronizaci tlačítkem vpravo nahoře.'
+            : 'Zatím žádná data. Po připojení Fitbitu se tu objeví.'}
+        </CardBody>
       </Card>
     );
   }

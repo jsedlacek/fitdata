@@ -6,7 +6,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/config.sh
-source deploy/schema.sh
 
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)')
 # Google redirects to $PUBLIC_URL/auth/callback, which must be an authorized
@@ -18,7 +17,7 @@ else
 fi
 
 # APP_VERSION tags traces and Error Reporting groups with the image.
-ENV=GCP_PROJECT=$PROJECT,GCP_REGION=$REGION,STORAGE=gs://$BUCKET,BQ_DATASET=$DATASET,OWNER_ID=$OWNER_ID,TZ=$TIME_ZONE,RUST_LOG=fitdata=info,APP_VERSION=$TAG
+ENV=GCP_PROJECT=$PROJECT,GCP_REGION=$REGION,STORAGE=gs://$BUCKET,KMS_KEY=$KMS_KEY,TZ=$TIME_ZONE,RUST_LOG=fitdata=info,APP_VERSION=$TAG
 
 # GitHub Actions builds and pushes the image itself (with a layer cache)
 # before running this, so there it is always found here.
@@ -29,10 +28,6 @@ else
   gcloud builds submit --project "$PROJECT" --region "$REGION" --tag "$IMAGE" .
 fi
 
-# Before the job, so new code never writes to the old schema.
-echo "== BigQuery tables"
-apply_schemas
-
 echo "== Job $JOB_NAME"
 gcloud run jobs deploy "$JOB_NAME" --project "$PROJECT" --region "$REGION" \
   --image "$IMAGE" --args job,--days=7 \
@@ -42,8 +37,9 @@ gcloud run jobs deploy "$JOB_NAME" --project "$PROJECT" --region "$REGION" \
 echo "== Schedule ($SCHEDULE $TIME_ZONE)"
 gcloud run jobs add-iam-policy-binding "$JOB_NAME" --project "$PROJECT" --region "$REGION" \
   --member "serviceAccount:$SCHEDULER_SA" --role roles/run.invoker >/dev/null
-# The dashboard's "sync now" button starts the job and watches its executions.
-for role in roles/run.jobsExecutor roles/run.viewer; do
+# The dashboard's "sync now" button starts the job for one user (with
+# overridden arguments) and watches its executions.
+for role in roles/run.jobsExecutorWithOverrides roles/run.viewer; do
   gcloud run jobs add-iam-policy-binding "$JOB_NAME" --project "$PROJECT" --region "$REGION" \
     --member "serviceAccount:$WEB_SA" --role "$role" >/dev/null
 done

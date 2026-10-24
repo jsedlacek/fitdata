@@ -602,7 +602,7 @@ mod tests {
                 out.push(name);
             }
         }
-        let path = format!("{}/deploy/schema/{table}.json", env!("CARGO_MANIFEST_DIR"));
+        let path = format!("{}/schema/{table}.json", env!("CARGO_MANIFEST_DIR"));
         let schema: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let mut out = Vec::new();
         walk(&schema, "", &mut out);

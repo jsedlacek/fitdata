@@ -31,7 +31,10 @@ export type SyncRun = { run_at: string; ok: boolean; auth_error: boolean };
 
 export type SyncState = { running: boolean };
 
-export type Overview = { days: Daily[]; lastSync: SyncRun | null };
+/** The signed-in user; `connected` once Fitbit data may be read. */
+export type Me = { email: string; connected: boolean };
+
+export type Overview = { days: Daily[]; lastSync: SyncRun | null; user: Me };
 
 export type Stage = 'DEEP' | 'LIGHT' | 'REM' | 'AWAKE';
 
@@ -109,3 +112,9 @@ export const syncQuery = {
 
 /** Starts a sync job (or joins the one already running). */
 export const startSync = () => request<SyncState>('/api/sync', 'POST');
+
+/** Deletes the account and all its data, then signs out. */
+export async function deleteAccount() {
+  await request<unknown>('/api/account', 'DELETE');
+  location.href = '/auth/logout';
+}

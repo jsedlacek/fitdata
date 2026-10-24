@@ -1,4 +1,4 @@
-//! Secrets (OAuth client, refresh token, session key) live in Secret Manager
+//! Secrets (OAuth client, session key) live in Secret Manager
 //! and are only held in memory. A local file path is accepted too, for tests.
 
 use std::path::PathBuf;
@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use google_cloud_gax::error::rpc::Code;
 use google_cloud_secretmanager_v1::client::SecretManagerService;
-use google_cloud_secretmanager_v1::model::SecretPayload;
 use tokio::sync::OnceCell;
 
 static CLIENT: OnceCell<SecretManagerService> = OnceCell::const_new();
@@ -71,56 +70,6 @@ impl SecretRef {
                     }
                     Err(e) => Err(e).with_context(|| format!("reading secret {name}")),
                 }
-            }
-        }
-    }
-
-    /// Stores `data` as the new latest version.
-    pub async fn write(&self, data: &[u8]) -> Result<()> {
-        match self {
-            Self::File(p) => {
-                if let Some(dir) = p.parent() {
-                    std::fs::create_dir_all(dir)?;
-                }
-                std::fs::write(p, data)?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600))?;
-                }
-                Ok(())
-            }
-            Self::Manager(name) => {
-                let sm = client().await?;
-                let added = sm
-                    .add_secret_version()
-                    .set_parent(name.clone())
-                    .set_payload(SecretPayload::new().set_data(bytes::Bytes::copy_from_slice(data)))
-                    .send()
-                    .await
-                    .with_context(|| format!("writing secret {name}"))?;
-                // Keep exactly one usable version: older tokens are disabled
-                // (recoverable with `gcloud secrets versions enable`).
-                let enabled = sm
-                    .list_secret_versions()
-                    .set_parent(name.clone())
-                    .set_filter("state:ENABLED")
-                    .set_page_size(100)
-                    .send()
-                    .await
-                    .with_context(|| format!("listing versions of {name}"))?;
-                for v in enabled
-                    .versions
-                    .into_iter()
-                    .filter(|v| v.name != added.name)
-                {
-                    sm.disable_secret_version()
-                        .set_name(&v.name)
-                        .send()
-                        .await
-                        .with_context(|| format!("disabling {}", v.name))?;
-                }
-                Ok(())
             }
         }
     }

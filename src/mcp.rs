@@ -21,11 +21,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tracing::Instrument;
 
-use crate::authz::{bearer_email, unauthorized};
+use crate::authz::{bearer_user, unauthorized};
 use crate::duck;
 use crate::model::{DailyMetrics, Exercise, NightRow};
 use crate::warehouse::Need;
-use crate::web::{Config, HrMinute, Shared, day_detail, last_run};
+use crate::web::{Config, HrMinute, Shared, SignedIn, day_detail, last_run};
 
 const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 /// Longest range the list tools return at once.
@@ -44,9 +44,9 @@ pub async fn no_stream() -> Response {
 }
 
 pub async fn handle(State(cfg): State<Shared>, headers: HeaderMap, body: Bytes) -> Response {
-    if !cfg.auth_disabled && bearer_email(&cfg, &headers).is_none() {
+    let Some(user) = bearer_user(&cfg, &headers).await else {
         return unauthorized(&cfg);
-    }
+    };
     let msg: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => return Json(Reply::error(Value::Null, -32700, e.to_string())).into_response(),
@@ -55,11 +55,11 @@ pub async fn handle(State(cfg): State<Shared>, headers: HeaderMap, body: Bytes) 
         Value::Array(batch) => {
             let mut out = Vec::new();
             for m in batch {
-                out.extend(dispatch(&cfg, m).await);
+                out.extend(dispatch(&cfg, &user, m).await);
             }
             (!out.is_empty()).then(|| json!(out))
         }
-        m => dispatch(&cfg, m).await.map(|r| json!(r)),
+        m => dispatch(&cfg, &user, m).await.map(|r| json!(r)),
     };
     match reply {
         Some(r) => Json(r).into_response(),
@@ -148,7 +148,7 @@ impl ToolResult {
     }
 }
 
-async fn dispatch(cfg: &Config, msg: Value) -> Option<Reply> {
+async fn dispatch(cfg: &Config, user: &SignedIn, msg: Value) -> Option<Reply> {
     let Ok(msg) = serde_json::from_value::<Message>(msg) else {
         return Some(Reply::error(
             Value::Null,
@@ -181,7 +181,7 @@ async fn dispatch(cfg: &Config, msg: Value) -> Option<Reply> {
         }
         "ping" => json!({}),
         "tools/list" => json!({ "tools": tools() }),
-        "tools/call" => json!(call(cfg, msg.params).await),
+        "tools/call" => json!(call(cfg, &user.uid, msg.params).await),
         _ => return Some(Reply::error(id, -32601, format!("unknown method {method}"))),
     };
     Some(Reply::result(id, result))
@@ -189,7 +189,7 @@ async fn dispatch(cfg: &Config, msg: Value) -> Option<Reply> {
 
 /// Runs a `tools/call`. Bad arguments and tool failures go to the model,
 /// which can fix its call.
-async fn call(cfg: &Config, mut params: Value) -> ToolResult {
+async fn call(cfg: &Config, uid: &str, mut params: Value) -> ToolResult {
     let name = params["name"].as_str().unwrap_or_default().to_string();
     if params.get("arguments").is_none_or(Value::is_null) {
         params["arguments"] = json!({});
@@ -197,7 +197,7 @@ async fn call(cfg: &Config, mut params: Value) -> ToolResult {
     let result = match serde_json::from_value::<ToolCall>(params) {
         Ok(tool) => {
             let span = tracing::info_span!("tool", otel.name = format!("tool {name}"));
-            call_tool(cfg, tool).instrument(span).await
+            call_tool(cfg, uid, tool).instrument(span).await
         }
         Err(e) => Err(anyhow::anyhow!("invalid call of tool {name:?}: {e}")),
     };
@@ -430,8 +430,8 @@ fn compact<T: Serialize>(value: T) -> Value {
     round(serde_json::to_value(value).unwrap_or_default())
 }
 
-async fn call_tool(cfg: &Config, tool: ToolCall) -> Result<Value> {
-    let (wh, uid) = (&cfg.warehouse, cfg.owner.as_str());
+async fn call_tool(cfg: &Config, uid: &str, tool: ToolCall) -> Result<Value> {
+    let wh = &cfg.warehouse;
     let in_range = |table: &str, (from, to): (NaiveDate, NaiveDate), order: &str| {
         format!(
             "SELECT * FROM {table} WHERE date BETWEEN DATE '{from}' AND DATE '{to}' ORDER BY {order}"
@@ -443,7 +443,7 @@ async fn call_tool(cfg: &Config, tool: ToolCall) -> Result<Value> {
             let days = wh.with(uid, Need::None, move |c| {
                 duck::query_as::<DailyMetrics>(c, &sql)
             });
-            let (days, run) = tokio::try_join!(days, last_run(&cfg.bq, true))?;
+            let (days, run) = tokio::try_join!(days, last_run(&cfg.store, uid, true))?;
             Ok(json!({
                 "lastSuccessfulSync": run.map(|r| r.run_at),
                 "days": compact(days),

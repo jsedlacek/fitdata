@@ -8,11 +8,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use axum::Router;
-use axum::extract::{MatchedPath, Path, Query, Request, State};
+use axum::extract::{Extension, MatchedPath, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Json, Redirect, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use serde::{Deserialize, Serialize};
@@ -23,16 +23,18 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::bq::Bq;
 use crate::claims::{self, Claims, Purpose};
 use crate::cloudrun::SyncJob;
 use crate::datatypes::READ_SCOPES;
 use crate::duck;
 use crate::health::StageType;
+use crate::kms::Kms;
 use crate::model::{DailyMetrics, Exercise, NightRow};
 use crate::oauth::{ClientCredentials, auth_request, exchange_code};
 use crate::query::QueryClient;
-use crate::secrets::SecretRef;
+use crate::status;
+use crate::store::Store;
+use crate::users::{self, User};
 use crate::warehouse::{Need, Warehouse};
 use crate::{authz, mcp};
 
@@ -55,20 +57,20 @@ pub struct Config {
     /// The built frontend (`frontend/dist`), served as a single-page app.
     pub static_dir: PathBuf,
     pub public_url: String,
+    /// Who may sign in (the invitations).
     pub allowed_emails: Vec<String>,
     pub session_key: Vec<u8>,
-    pub auth_disabled: bool,
+    /// Local development: no sign-in, every request is this user.
+    pub dev_user: Option<String>,
     pub creds: ClientCredentials,
-    /// Where "Connect Fitbit" stores a new Health API refresh token.
-    pub token_ref: SecretRef,
-    /// Only for the sync history (`sync_runs`).
-    pub bq: Bq,
+    /// The user registry and the users' data.
+    pub store: Arc<Store>,
     /// The users' tables.
     pub warehouse: Warehouse,
+    /// Encrypts the refresh token "Connect Fitbit" stores.
+    pub kms: Kms,
     /// Where MCP `query` SQL runs.
     pub query: QueryClient,
-    /// The one user whose data is shown (until there are more).
-    pub owner: String,
     /// The Cloud Run job behind the "sync now" button.
     pub sync_job: SyncJob,
     pub http: reqwest::Client,
@@ -77,8 +79,8 @@ pub struct Config {
 pub(crate) type Shared = Arc<Config>;
 
 pub async fn serve(cfg: Config) -> Result<()> {
-    if !cfg.auth_disabled && cfg.allowed_emails.is_empty() {
-        bail!("set ALLOWED_EMAILS (or AUTH_DISABLED=1 for local development)");
+    if cfg.dev_user.is_none() && cfg.allowed_emails.is_empty() {
+        bail!("set ALLOWED_EMAILS (or DEV_USER for local development)");
     }
     let port = cfg.port;
     let state = Arc::new(cfg);
@@ -120,6 +122,7 @@ pub async fn serve(cfg: Config) -> Result<()> {
         .route("/api/overview", get(overview))
         .route("/api/day/{date}", get(day))
         .route("/api/sync", get(sync_status).post(start_sync))
+        .route("/api/account", delete(delete_account))
         .route("/api/{*rest}", get(|| async { StatusCode::NOT_FOUND }))
         .route("/auth/fitbit", get(connect_fitbit))
         .nest_service("/assets", assets)
@@ -135,6 +138,7 @@ pub async fn serve(cfg: Config) -> Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
+        .route("/auth/logout", get(logout))
         .merge(authz::routes())
         .route("/mcp", post(mcp::handle).get(mcp::no_stream))
         .layer(middleware::from_fn(trace_request))
@@ -201,24 +205,62 @@ fn set_cookie(cfg: &Config, name: &str, value: &str, max_age: i64) -> String {
     format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
 }
 
-/// The signed-in user, if still allowed.
-pub(crate) fn session_email(cfg: &Config, headers: &HeaderMap) -> Option<String> {
-    session_of(&cfg.session_key, &cfg.allowed_emails, headers)
+/// A signed-in user.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SignedIn {
+    pub uid: String,
+    pub email: String,
 }
 
-fn session_of(key: &[u8], allowed: &[String], headers: &HeaderMap) -> Option<String> {
-    let Claims::Session { email } = claims::verify(key, cookie(headers, SESSION_COOKIE)?)? else {
+/// The user behind signed claims, if their e-mail is still allowed. Tokens
+/// issued before there were several users carry no ID; they are looked up
+/// by e-mail in the registry.
+pub(crate) async fn resolve(cfg: &Config, uid: &str, email: &str) -> Option<SignedIn> {
+    if !cfg.allowed_emails.iter().any(|e| e == email) {
         return None;
-    };
-    allowed.contains(&email).then_some(email)
+    }
+    if !uid.is_empty() {
+        return Some(SignedIn {
+            uid: uid.to_string(),
+            email: email.to_string(),
+        });
+    }
+    let all = users::list(&cfg.store).await.ok()?;
+    all.into_iter()
+        .find(|u| u.email == email && !u.deleted)
+        .map(|u| SignedIn {
+            uid: u.uid,
+            email: u.email,
+        })
+}
+
+/// The `(uid, email)` of a session cookie signed with `key`.
+fn session_claims(key: &[u8], headers: &HeaderMap) -> Option<(String, String)> {
+    match claims::verify(key, cookie(headers, SESSION_COOKIE)?)? {
+        Claims::Session { uid, email } => Some((uid, email)),
+        _ => None,
+    }
+}
+
+/// The signed-in user, if still allowed.
+pub(crate) async fn session_user(cfg: &Config, headers: &HeaderMap) -> Option<SignedIn> {
+    if let Some(uid) = &cfg.dev_user {
+        return Some(SignedIn {
+            uid: uid.clone(),
+            email: "dev@localhost".into(),
+        });
+    }
+    let (uid, email) = session_claims(&cfg.session_key, headers)?;
+    resolve(cfg, &uid, &email).await
 }
 
 fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
-async fn require_session(State(cfg): State<Shared>, req: Request, next: Next) -> Response {
-    if cfg.auth_disabled || session_email(&cfg, req.headers()).is_some() {
+async fn require_session(State(cfg): State<Shared>, mut req: Request, next: Next) -> Response {
+    if let Some(user) = session_user(&cfg, req.headers()).await {
+        req.extensions_mut().insert(user);
         return next.run(req).await;
     }
     if req.uri().path().starts_with("/api/") {
@@ -311,6 +353,8 @@ async fn callback(
 /// The claims of a Google ID token that sign-in uses (scopes `openid email`).
 #[derive(Deserialize)]
 struct IdToken {
+    /// The Google account ID: the user's ID here.
+    sub: String,
     email: String,
     #[serde(default)]
     email_verified: bool,
@@ -344,10 +388,15 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     let clear_oauth = set_cookie(cfg, OAUTH_COOKIE, "", 0);
 
     if purpose == Purpose::Health {
-        cfg.token_ref
-            .write(&tokens.into_stored()?.to_json()?)
-            .await?;
-        tracing::info!("stored a new Health API refresh token");
+        let user = session_user(cfg, headers).await.context("sign in first")?;
+        let token = tokens.into_stored()?;
+        users::save_token(&cfg.store, &cfg.kms, &user.uid, &user.email, &token).await?;
+        tracing::info!(uid = %user.uid, "stored a new Health API refresh token");
+        // Fetch the data now rather than at the next full hour; for a new
+        // user that is their whole history.
+        if let Err(e) = cfg.sync_job.run(Some(&user.uid)).await {
+            tracing::warn!("starting the sync failed: {e:#}");
+        }
         return Ok((
             [(header::SET_COOKIE, clear_oauth)],
             Redirect::to("/?fitbit=connected"),
@@ -366,9 +415,24 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     if !id.email_verified || !cfg.allowed_emails.contains(&email) {
         bail!("{email} is not allowed");
     }
+    users::check_uid(&id.sub)?;
+    match users::get(&cfg.store, &id.sub).await? {
+        Some(u) if u.email == email && !u.deleted => {}
+        Some(mut u) => {
+            // A changed address, or signing in again while a deletion waits.
+            u.email = email.clone();
+            u.deleted = false;
+            users::put(&cfg.store, &u).await?;
+        }
+        None => {
+            users::put(&cfg.store, &User::new(&id.sub, &email)).await?;
+            tracing::info!(uid = %id.sub, "new user");
+        }
+    }
     let session = claims::sign(
         &cfg.session_key,
         Claims::Session {
+            uid: id.sub,
             email: email.clone(),
         },
         now() + SESSION_DAYS * 86_400,
@@ -381,6 +445,22 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
         set_cookie(cfg, SESSION_COOKIE, &session, SESSION_DAYS * 86_400).parse()?,
     );
     Ok(resp)
+}
+
+/// Signs out and says so; going straight to the login would sign the
+/// browser right back in.
+async fn logout(State(cfg): State<Shared>) -> Response {
+    (
+        [(header::SET_COOKIE, set_cookie(&cfg, SESSION_COOKIE, "", 0))],
+        Html(
+            r#"<!doctype html><html lang="cs"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odhlášeno · fitdata</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0 16px}</style>
+<p>Odhlášeno. <a href="/auth/login">Přihlásit se znovu</a></p></html>"#,
+        ),
+    )
+        .into_response()
 }
 
 pub(crate) fn escape_html(s: &str) -> String {
@@ -408,46 +488,85 @@ pub(crate) struct LastRun {
 struct Overview {
     days: Vec<DailyMetrics>,
     last_sync: Option<LastRun>,
+    user: Me,
 }
 
-/// The newest run in `sync_runs` (only successful ones if `ok_only`).
-pub(crate) async fn last_run(bq: &Bq, ok_only: bool) -> Result<Option<LastRun>> {
-    let runs = bq
-        .query_as(format!(
-            "SELECT FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%S', run_at, 'Europe/Prague') AS run_at, ok, auth_error
-             FROM {} {} ORDER BY run_at DESC LIMIT 1",
-            bq.table("sync_runs"),
-            if ok_only { "WHERE ok" } else { "" },
-        ))
-        .await?;
-    Ok(runs.into_iter().next())
+/// The user's last sync run (or the last successful one), in local time.
+pub(crate) async fn last_run(store: &Store, uid: &str, ok_only: bool) -> Result<Option<LastRun>> {
+    let s = status::get(store, uid).await?;
+    let local = |t: chrono::DateTime<chrono::Utc>| {
+        t.with_timezone(&chrono::Local)
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    };
+    Ok(if ok_only {
+        s.last_ok.map(|t| LastRun {
+            run_at: local(t),
+            ok: true,
+            auth_error: false,
+        })
+    } else {
+        s.last_run.map(|r| LastRun {
+            run_at: local(r.at),
+            ok: r.ok,
+            auth_error: r.auth_error,
+        })
+    })
 }
 
-async fn overview(State(cfg): State<Shared>) -> Response {
-    let days = cfg.warehouse.with(&cfg.owner, Need::None, |c| {
+/// Who is signed in, for the page.
+#[derive(Serialize)]
+struct Me {
+    email: String,
+    /// Fitbit is connected (a refresh token is stored).
+    connected: bool,
+}
+
+async fn overview(State(cfg): State<Shared>, Extension(user): Extension<SignedIn>) -> Response {
+    let days = cfg.warehouse.with(&user.uid, Need::None, |c| {
         duck::query_as::<DailyMetrics>(c, "SELECT * FROM daily ORDER BY date")
     });
-    match tokio::try_join!(days, last_run(&cfg.bq, false)) {
-        Ok((days, last_sync)) => Json(Overview { days, last_sync }).into_response(),
+    let record = users::get(&cfg.store, &user.uid);
+    match tokio::try_join!(days, last_run(&cfg.store, &user.uid, false), record) {
+        Ok((days, last_sync, record)) => Json(Overview {
+            days,
+            last_sync,
+            user: Me {
+                email: user.email,
+                connected: record.is_some_and(|r| r.token.is_some()),
+            },
+        })
+        .into_response(),
         Err(e) => internal(e),
     }
 }
 
-/// `{"running": bool}`: whether a sync (manual or scheduled) is in progress.
-async fn sync_status(State(cfg): State<Shared>) -> Response {
-    match cfg.sync_job.running().await {
+/// `{"running": bool}`: whether a sync of the user (or a scheduled one) is in progress.
+async fn sync_status(State(cfg): State<Shared>, Extension(user): Extension<SignedIn>) -> Response {
+    match running(&cfg, &user.uid).await {
         Ok(running) => Json(json!({ "running": running })).into_response(),
         Err(e) => internal(e),
     }
 }
 
-/// Starts a sync unless one is already running. The session cookie is
-/// SameSite=Lax, so other sites cannot trigger this.
-async fn start_sync(State(cfg): State<Shared>) -> Response {
+async fn running(cfg: &Config, uid: &str) -> Result<bool> {
+    if status::get(&cfg.store, uid)
+        .await?
+        .running(chrono::Utc::now())
+    {
+        return Ok(true);
+    }
+    // A run that was just started has not written its status yet.
+    cfg.sync_job.running().await
+}
+
+/// Starts a sync of the user unless one is already running. The session
+/// cookie is SameSite=Lax, so other sites cannot trigger this.
+async fn start_sync(State(cfg): State<Shared>, Extension(user): Extension<SignedIn>) -> Response {
     let result = async {
-        if !cfg.sync_job.running().await? {
-            cfg.sync_job.run().await?;
-            tracing::info!("sync started from the dashboard");
+        if !running(&cfg, &user.uid).await? {
+            cfg.sync_job.run(Some(&user.uid)).await?;
+            tracing::info!(uid = %user.uid, "sync started from the dashboard");
         }
         Ok(())
     };
@@ -457,8 +576,37 @@ async fn start_sync(State(cfg): State<Shared>) -> Response {
     }
 }
 
-async fn day(State(cfg): State<Shared>, Path(date): Path<NaiveDate>) -> Response {
-    match day_detail(&cfg.warehouse, &cfg.owner, date).await {
+/// "Delete account": marks the user for deletion and starts the job, which
+/// revokes the Fitbit token and removes the data (the web may not).
+async fn delete_account(
+    State(cfg): State<Shared>,
+    Extension(user): Extension<SignedIn>,
+) -> Response {
+    let result = async {
+        if let Some(mut u) = users::get(&cfg.store, &user.uid).await? {
+            u.deleted = true;
+            users::put(&cfg.store, &u).await?;
+        }
+        cfg.sync_job.run(Some(&user.uid)).await?;
+        tracing::info!(uid = %user.uid, "account deletion requested");
+        Ok::<_, anyhow::Error>(())
+    };
+    match result.await {
+        Ok(()) => (
+            [(header::SET_COOKIE, set_cookie(&cfg, SESSION_COOKIE, "", 0))],
+            Json(json!({ "deleted": true })),
+        )
+            .into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn day(
+    State(cfg): State<Shared>,
+    Extension(user): Extension<SignedIn>,
+    Path(date): Path<NaiveDate>,
+) -> Response {
+    match day_detail(&cfg.warehouse, &user.uid, date).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => internal(e),
     }
@@ -622,21 +770,21 @@ mod tests {
     #[test]
     fn only_sessions_are_sessions() {
         let key = b"k";
-        let allowed = ["a@b.c".to_string()];
         let exp = now() + 60;
         let check = |c: Claims| {
             let mut h = HeaderMap::new();
             let c = format!("{SESSION_COOKIE}={}", claims::sign(key, c, exp));
             h.insert(header::COOKIE, c.parse().unwrap());
-            session_of(key, &allowed, &h)
+            session_claims(key, &h)
         };
-        let session = |email: &str| Claims::Session {
-            email: email.into(),
+        let session = Claims::Session {
+            uid: "1".into(),
+            email: "a@b.c".into(),
         };
-        assert_eq!(check(session("a@b.c")).as_deref(), Some("a@b.c"));
-        assert!(check(session("x@y.z")).is_none());
+        assert_eq!(check(session), Some(("1".into(), "a@b.c".into())));
         // OAuth tokens are signed with the same key.
         let access = Claims::Access {
+            uid: "1".into(),
             email: "a@b.c".into(),
             aud: "x".into(),
         };

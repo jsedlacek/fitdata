@@ -5,19 +5,17 @@
 #   deploy/setup.sh
 #
 # Prerequisites done by hand: the project with billing, the OAuth consent
-# screen and Web client (docs/setup.md), and the secrets `oauth-client` and
-# `refresh-token`.
+# screen and Web client (docs/setup.md), and the secret `oauth-client`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/config.sh
-source deploy/schema.sh
 
 say() { printf '\n== %s\n' "$*"; }
 
 say "APIs"
 gcloud services enable --project "$PROJECT" \
   run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
-  cloudscheduler.googleapis.com bigquery.googleapis.com storage.googleapis.com \
+  cloudscheduler.googleapis.com cloudkms.googleapis.com storage.googleapis.com \
   secretmanager.googleapis.com health.googleapis.com monitoring.googleapis.com \
   iamcredentials.googleapis.com sts.googleapis.com cloudresourcemanager.googleapis.com \
   logging.googleapis.com cloudtrace.googleapis.com telemetry.googleapis.com \
@@ -28,15 +26,15 @@ if ! gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" >/dev/n
   gcloud storage buckets create "gs://$BUCKET" --project "$PROJECT" --location "$REGION" \
     --uniform-bucket-level-access --public-access-prevention
 fi
-# Staged load files are only needed for the duration of a load job.
-gcloud storage buckets update "gs://$BUCKET" --lifecycle-file=deploy/bucket-lifecycle.json
 
-say "BigQuery dataset $DATASET"
-if ! bq --project_id "$PROJECT" show "$DATASET" >/dev/null 2>&1; then
-  bq --project_id "$PROJECT" --location "$REGION" mk --dataset \
-    --description "Fitbit / Google Health data" "$PROJECT:$DATASET"
+say "KMS key $KMS_KEY_NAME"
+if ! gcloud kms keyrings describe "$KMS_KEYRING" --project "$PROJECT" --location "$REGION" >/dev/null 2>&1; then
+  gcloud kms keyrings create "$KMS_KEYRING" --project "$PROJECT" --location "$REGION"
 fi
-apply_schemas
+if ! gcloud kms keys describe "$KMS_KEY_NAME" --keyring "$KMS_KEYRING" --project "$PROJECT" --location "$REGION" >/dev/null 2>&1; then
+  gcloud kms keys create "$KMS_KEY_NAME" --keyring "$KMS_KEYRING" --project "$PROJECT" --location "$REGION" \
+    --purpose encryption --rotation-period 365d --next-rotation-time "$(date -u -d '+365 days' +%Y-%m-%dT%H:%M:%SZ)"
+fi
 
 say "Artifact Registry $REPO"
 if ! gcloud artifacts repositories describe "$REPO" --project "$PROJECT" --location "$REGION" >/dev/null 2>&1; then
@@ -63,20 +61,28 @@ secret_role() { # secret member role
   gcloud secrets add-iam-policy-binding "$1" --project "$PROJECT" \
     --member "serviceAccount:$2" --role "$3" --condition=None >/dev/null
 }
-# Job: read the OAuth client + refresh token, raw data in the bucket, load into BigQuery.
+# Job: the OAuth client. Web: the OAuth client and the session key.
 secret_role oauth-client "$JOB_SA" roles/secretmanager.secretAccessor
-secret_role refresh-token "$JOB_SA" roles/secretmanager.secretAccessor
-# Web: sign-in needs the OAuth client and session key; "Connect Fitbit" adds a
-# refresh-token version and disables the older ones (it cannot read any).
 secret_role oauth-client "$WEB_SA" roles/secretmanager.secretAccessor
 secret_role session-key "$WEB_SA" roles/secretmanager.secretAccessor
-secret_role refresh-token "$WEB_SA" roles/secretmanager.secretVersionManager
+# Refresh tokens: "Connect Fitbit" on the web encrypts one, only the job
+# decrypts them (and encrypts with `fitdata import-user`).
+key_role() { # member role
+  gcloud kms keys add-iam-policy-binding "$KMS_KEY_NAME" --keyring "$KMS_KEYRING" \
+    --project "$PROJECT" --location "$REGION" --member "serviceAccount:$1" --role "$2" >/dev/null
+}
+key_role "$WEB_SA" roles/cloudkms.cryptoKeyEncrypter
+key_role "$JOB_SA" roles/cloudkms.cryptoKeyEncrypterDecrypter
 
 gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member "serviceAccount:$JOB_SA" --role roles/storage.objectAdmin >/dev/null
-# Web: reads the users' Parquet tables (src/warehouse.rs).
+# Web: reads the users' Parquet tables (src/warehouse.rs) and their status,
+# and writes only the user registry (users/).
 gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member "serviceAccount:$WEB_SA" --role roles/storage.objectViewer >/dev/null
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+  --member "serviceAccount:$WEB_SA" --role roles/storage.objectUser \
+  --condition "title=user-registry,expression=resource.name.startsWith(\"projects/_/buckets/$BUCKET/objects/users/\")" >/dev/null
 
 # The query service gets the data of one user with each request and must not
 # be able to read anything else: its service account has no role anywhere.
@@ -89,17 +95,9 @@ fi
 
 # Spans go to Cloud Trace via the Telemetry API (src/telemetry.rs).
 for sa in "$JOB_SA" "$WEB_SA"; do
-  for role in roles/bigquery.jobUser roles/telemetry.tracesWriter; do
-    gcloud projects add-iam-policy-binding "$PROJECT" \
-      --member "serviceAccount:$sa" --role "$role" --condition=None >/dev/null
-  done
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member "serviceAccount:$sa" --role roles/telemetry.tracesWriter --condition=None >/dev/null
 done
-# Dataset-level roles via DCL (`bq add-iam-policy-binding` needs allowlisting).
-# The deployer creates and updates the tables in deploy.sh.
-bq --project_id "$PROJECT" --location "$REGION" query --nouse_legacy_sql --quiet "
-  GRANT \`roles/bigquery.dataEditor\` ON SCHEMA \`$PROJECT.$DATASET\` TO 'serviceAccount:$JOB_SA';
-  GRANT \`roles/bigquery.dataViewer\` ON SCHEMA \`$PROJECT.$DATASET\` TO 'serviceAccount:$WEB_SA';
-  GRANT \`roles/bigquery.dataEditor\` ON SCHEMA \`$PROJECT.$DATASET\` TO 'serviceAccount:$DEPLOY_SA';" >/dev/null
 
 say "Alerting ($ALERT_EMAIL)"
 # One e-mail channel and two policies: any failed run of the sync job opens an

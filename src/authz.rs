@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::claims::{self, Claims, ClientAuth};
-use crate::web::{Config, Shared, escape_html, session_email};
+use crate::web::{Config, Shared, SignedIn, escape_html, resolve, session_user};
 
 const CODE_SECS: i64 = 300;
 const ACCESS_SECS: i64 = 3600;
@@ -91,21 +91,26 @@ fn verify_client(cfg: &Config, client_id: &str) -> Option<Client> {
     }
 }
 
-fn allowed(cfg: &Config, email: &str) -> bool {
-    cfg.allowed_emails.iter().any(|e| e == email)
-}
-
-/// The signed-in user behind a bearer access token, if it is still valid.
-pub fn bearer_email(cfg: &Config, headers: &HeaderMap) -> Option<String> {
+/// The user behind a bearer access token, if it is still valid.
+pub async fn bearer_user(cfg: &Config, headers: &HeaderMap) -> Option<SignedIn> {
+    if let Some(uid) = &cfg.dev_user {
+        return Some(SignedIn {
+            uid: uid.clone(),
+            email: "dev@localhost".into(),
+        });
+    }
     let token = headers
         .get(header::AUTHORIZATION)?
         .to_str()
         .ok()?
         .strip_prefix("Bearer ")?;
-    let Claims::Access { email, aud } = verify(cfg, token.trim())? else {
+    let Claims::Access { uid, email, aud } = verify(cfg, token.trim())? else {
         return None;
     };
-    (aud == resource(cfg) && allowed(cfg, &email)).then_some(email)
+    if aud != resource(cfg) {
+        return None;
+    }
+    resolve(cfg, &uid, &email).await
 }
 
 /// 401 that tells an MCP client where to find the authorization server.
@@ -337,7 +342,7 @@ async fn authorize(
         Err(Refusal::Page(msg)) => return bad_request(msg),
         Err(Refusal::Redirect(url)) => return Redirect::to(&url).into_response(),
     };
-    let Some(email) = session_email(&cfg, &headers) else {
+    let Some(user) = session_user(&cfg, &headers).await else {
         // Sign in with Google first, then come back here.
         let next = uri.path_and_query().map_or("/", |p| p.as_str());
         let login =
@@ -356,7 +361,8 @@ async fn authorize(
             redirect_uri: req.redirect_uri.clone(),
             state: req.state,
             challenge: req.challenge,
-            email: email.clone(),
+            uid: user.uid.clone(),
+            email: user.email.clone(),
         },
         now() + 600,
     );
@@ -369,7 +375,7 @@ async fn authorize(
     } else {
         req.client_name.clone()
     };
-    consent_page(&name, &host, &email, &consent)
+    consent_page(&name, &host, &user.email, &consent)
 }
 
 fn consent_page(name: &str, host: &str, email: &str, consent: &str) -> Response {
@@ -441,12 +447,13 @@ async fn approve(
         redirect_uri,
         state,
         challenge,
+        uid,
         email,
     }) = verify(&cfg, &d.consent)
     else {
         return bad_request("the request expired, start again from the app");
     };
-    if session_email(&cfg, &headers).as_ref() != Some(&email) {
+    if session_user(&cfg, &headers).await.map(|u| u.uid) != Some(uid.clone()) {
         return bad_request("signed in as a different user");
     }
     if d.decision != "allow" {
@@ -457,13 +464,14 @@ async fn approve(
         ))
         .into_response();
     }
-    tracing::info!("MCP client authorized by {email}");
+    tracing::info!(%uid, "MCP client authorized by {email}");
     let code = sign(
         &cfg,
         Claims::Code {
             client_id,
             redirect_uri: redirect_uri.clone(),
             challenge,
+            uid,
             email,
         },
         now() + CODE_SECS,
@@ -539,12 +547,13 @@ fn pkce_ok(verifier: &str, challenge: &str) -> bool {
         && URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())) == challenge
 }
 
-fn issue_tokens(cfg: &Config, client_id: &str, email: &str) -> Response {
+fn issue_tokens(cfg: &Config, client_id: &str, user: &SignedIn) -> Response {
     let t = now();
     let access = sign(
         cfg,
         Claims::Access {
-            email: email.to_string(),
+            uid: user.uid.clone(),
+            email: user.email.clone(),
             aud: resource(cfg),
         },
         t + ACCESS_SECS,
@@ -553,7 +562,8 @@ fn issue_tokens(cfg: &Config, client_id: &str, email: &str) -> Response {
         cfg,
         Claims::Refresh {
             client_id: client_id.to_string(),
-            email: email.to_string(),
+            uid: user.uid.clone(),
+            email: user.email.clone(),
         },
         t + REFRESH_SECS,
     );
@@ -585,18 +595,20 @@ async fn token(
                 client_id: for_client,
                 redirect_uri,
                 challenge,
+                uid,
                 email,
             }) => (for_client == client_id
                 && t.redirect_uri.as_ref().is_none_or(|u| *u == redirect_uri)
                 && pkce_ok(t.code_verifier.as_deref().unwrap_or_default(), &challenge))
-            .then_some(email),
+            .then_some((uid, email)),
             _ => None,
         },
         "refresh_token" => match t.refresh_token.as_deref().and_then(|r| verify(&cfg, r)) {
             Some(Claims::Refresh {
                 client_id: for_client,
+                uid,
                 email,
-            }) => (for_client == client_id).then_some(email),
+            }) => (for_client == client_id).then_some((uid, email)),
             _ => None,
         },
         _ => {
@@ -607,9 +619,14 @@ async fn token(
             );
         }
     };
-    match grant {
-        Some(email) if allowed(&cfg, &email) => issue_tokens(&cfg, &client_id, &email),
-        _ => oauth_error(
+    let user = match grant {
+        Some((uid, email)) => resolve(&cfg, &uid, &email).await,
+        None => None,
+    };
+    match user {
+        // Tokens issued before there were several users get the user ID now.
+        Some(user) => issue_tokens(&cfg, &client_id, &user),
+        None => oauth_error(
             StatusCode::BAD_REQUEST,
             "invalid_grant",
             "the code or refresh token is invalid or expired",

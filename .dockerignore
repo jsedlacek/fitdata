@@ -4,7 +4,7 @@
 !Cargo.toml
 !Cargo.lock
 !src/**
-!deploy/schema/**
+!schema/**
 !frontend/
 !frontend/**
 frontend/node_modules/
