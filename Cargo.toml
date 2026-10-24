@@ -19,7 +19,7 @@ google-cloud-auth = "1.18.0"
 google-cloud-gax = "1.15.0"
 google-cloud-secretmanager-v1 = "1.14.0"
 google-cloud-storage = "1.21.0"
-governor = "=0.10.4"
+governor = { version = "=0.10.4", default-features = false, features = ["std", "quanta"] }
 hmac = "0.13.0"
 http = "1"
 opentelemetry = { version = "0.33", default-features = false, features = ["trace"] }

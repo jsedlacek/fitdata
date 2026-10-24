@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
-use governor::{DefaultDirectRateLimiter, Jitter, Quota, RateLimiter};
+use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -76,10 +76,12 @@ impl HealthClient {
         loop {
             attempt += 1;
             let token = self.tokens.access_token().await?;
-            // Requests wait here in turn until the quota has room.
-            self.limiter
-                .until_ready_with_jitter(Jitter::up_to(Duration::from_millis(50)))
-                .await;
+            // Requests wait here in turn until the quota has room, then up to
+            // 50 ms more so they don't all leave at once. (Not governor's
+            // `jitter` feature: it turns on getrandom's `wasm_js`, and that
+            // feature change recompiles DataFusion and Arrow.)
+            self.limiter.until_ready().await;
+            tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % 50)).await;
             let resp = self
                 .http
                 .get(&url)
