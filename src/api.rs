@@ -63,6 +63,12 @@ impl HealthClient {
     }
 
     /// GET with bearer auth, retrying throttling and transient server errors.
+    #[tracing::instrument(skip_all, fields(
+        otel.name = format!("GET {path}"),
+        otel.kind = "client",
+        http.response.status_code = tracing::field::Empty,
+        attempts = tracing::field::Empty,
+    ))]
     async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Value> {
         let url = format!("{BASE}/{path}");
         let mut attempt = 0;
@@ -87,6 +93,9 @@ impl HealthClient {
                 Err(e) => return Err(e.into()),
             };
             let status = resp.status().as_u16();
+            let span = tracing::Span::current();
+            span.record("http.response.status_code", status);
+            span.record("attempts", attempt);
             if (200..300).contains(&status) {
                 return Ok(resp.json().await?);
             }

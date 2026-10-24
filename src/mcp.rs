@@ -9,6 +9,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use chrono::{Duration, NaiveDate};
 use serde_json::{Map, Value, json};
+use tracing::Instrument;
 
 use crate::authz::{bearer_email, unauthorized};
 use crate::web::{Config, Shared, day_detail};
@@ -86,7 +87,8 @@ async fn dispatch(cfg: &Config, msg: Value) -> Option<Value> {
         "tools/call" => {
             let name = params["name"].as_str().unwrap_or_default();
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            match call_tool(cfg, name, &args).await {
+            let span = tracing::info_span!("tool", otel.name = format!("tool {name}"));
+            match call_tool(cfg, name, &args).instrument(span).await {
                 Ok(v) => json!({ "content": [{ "type": "text", "text": v.to_string() }] }),
                 // Tool errors go to the model, which can fix its arguments.
                 Err(e) => {

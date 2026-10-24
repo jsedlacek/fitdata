@@ -25,6 +25,7 @@ impl SyncJob {
         })
     }
 
+    #[tracing::instrument(name = "Cloud Run API", skip_all, fields(otel.kind = "client"))]
     async fn call(&self, req: reqwest::RequestBuilder) -> Result<Value> {
         let token = self.creds.access_token().await?.token;
         let resp = req.bearer_auth(token).send().await?;

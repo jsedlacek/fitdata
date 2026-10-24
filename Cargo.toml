@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+async-trait = "0.1.92"
 axum = "0.8.9"
 base64 = "0.23.1"
 bytes = "1.12.1"
@@ -18,6 +19,11 @@ google-cloud-gax = "1.15.0"
 google-cloud-secretmanager-v1 = "1.14.0"
 google-cloud-storage = "1.21.0"
 hmac = "0.13.0"
+http = "1"
+opentelemetry = { version = "0.33", default-features = false, features = ["trace"] }
+opentelemetry-http = { version = "0.33", default-features = false }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "http-proto"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace"] }
 rand = "0.10.3"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "form", "query", "http2"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -27,5 +33,6 @@ tokio = { version = "1.54.1", features = ["full"] }
 tower = "0.5.3"
 tower-http = { version = "0.7.1", features = ["fs", "set-header"] }
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-opentelemetry = { version = "0.34", default-features = false }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"

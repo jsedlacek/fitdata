@@ -9,12 +9,16 @@ mod oauth;
 mod secrets;
 mod store;
 mod sync;
+mod telemetry;
 mod web;
+
+use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use chrono::{Days, NaiveDate};
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
+use tracing::Instrument;
 
 use api::HealthClient;
 use bq::Bq;
@@ -179,7 +183,7 @@ async fn job(
         today + Days::new(1),
     )
     .await?;
-    println!("Synced {from}..{today}: {n} data points");
+    tracing::info!("synced {from}..{today}: {n} data points");
     load(store, bq, from, today).await
 }
 
@@ -222,22 +226,38 @@ async fn load(store: &Store, bq: &Bq, from: NaiveDate, to: NaiveDate) -> Result<
     for (table, rows) in model::table_rows(&ds, from, to) {
         bq.replace_range(store, table, &rows, from, to).await?;
     }
-    println!("Loaded {from}..{to} into BigQuery dataset {}", bq.dataset);
+    tracing::info!("loaded {from}..{to} into BigQuery dataset {}", bq.dataset);
     Ok(())
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
     let _ = dotenvy::dotenv();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "fitdata=info".into()),
-        )
-        .with_target(false)
-        .init();
-
     let cli = Cli::parse();
+    let telemetry = telemetry::Telemetry::init();
+    // One trace per job run; the server makes one per request instead.
+    let span = match cli.cmd {
+        Cmd::Job { days } => tracing::info_span!("job", otel.name = "sync job", days),
+        _ => tracing::Span::none(),
+    };
+    let result = async {
+        let result = run(cli).await;
+        if let Err(e) = &result {
+            tracing::error!("{e:#}");
+        }
+        result
+    }
+    .instrument(span)
+    .await;
+    telemetry.shutdown().await;
+    if result.is_ok() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+async fn run(cli: Cli) -> Result<()> {
     let http = reqwest::Client::builder()
         .user_agent("fitdata/0.1")
         .build()?;

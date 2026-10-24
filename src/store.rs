@@ -50,6 +50,7 @@ impl Store {
         }
     }
 
+    #[tracing::instrument(name = "storage read", skip(self), fields(otel.kind = "client"))]
     pub async fn get(&self, path: &str) -> Result<Option<Vec<u8>>> {
         match self {
             Self::Local(dir) => match std::fs::read(dir.join(path)) {
@@ -86,6 +87,7 @@ impl Store {
         }
     }
 
+    #[tracing::instrument(name = "storage write", skip(self, data), fields(otel.kind = "client", bytes = data.len()))]
     pub async fn put(&self, path: &str, data: Vec<u8>) -> Result<()> {
         match self {
             Self::Local(dir) => {

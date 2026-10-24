@@ -41,8 +41,8 @@ OAuth Web client musí mít mezi *Authorized redirect URIs* adresu `https://fitd
 
 | Identita | Smí |
 |---|---|
-| `fitdata-job` | číst `oauth-client` a `refresh-token`, zapisovat do bucketu, zapisovat do datasetu |
-| `fitdata-web` | číst `oauth-client` a `session-key`, přidávat a vypínat verze `refresh-token` (číst ne), číst dataset, spustit job a číst jeho stav |
+| `fitdata-job` | číst `oauth-client` a `refresh-token`, zapisovat do bucketu, zapisovat do datasetu, zapisovat spany do Cloud Trace |
+| `fitdata-web` | číst `oauth-client` a `session-key`, přidávat a vypínat verze `refresh-token` (číst ne), číst dataset, spustit job a číst jeho stav, zapisovat spany do Cloud Trace |
 | `fitdata-scheduler` | spustit job |
 | `fitdata-deployer` | nasadit job, scheduler a web (GitHub Actions), číst projekt |
 
@@ -67,10 +67,21 @@ Synchronizaci jde spustit i ručně ikonou ⟳ vedle „Synchronizováno“ v hl
 
 Každý neúspěšný běh jobu otevře v Cloud Monitoring incident **fitdata-sync failed** a pošle e-mail na `ALERT_EMAIL` (`deploy/config.sh`). Při trvalé poruše přijde jeden e-mail, ne jeden za hodinu. Až běhy znovu projdou, incident se sám zavře. Politika je v [deploy/alert-policy.json](../deploy/alert-policy.json) a nastaví ji `setup.sh`.
 
+Druhá politika, **fitdata-web errors** ([deploy/alert-web-errors.json](../deploy/alert-web-errors.json)), pošle e-mail, když web zaloguje chybu nebo odpoví 5xx, nejvýš jednou za hodinu.
+
+### Logy, trace a chyby
+
+Nastavení je v [src/telemetry.rs](../src/telemetry.rs).
+
+- **Logy:** na Cloud Runu (`K_SERVICE` nebo `CLOUD_RUN_JOB`) píše binárka JSON řádky ve formátu Cloud Loggingu: `severity`, `message`, zdrojový řádek a pole události i nadřazených spanů (např. `data_type`, `table`, `http.route`) v `jsonPayload`. Lokálně je výstup čitelný text. Formát jde vynutit přes `LOG_FORMAT=json` nebo `LOG_FORMAT=text`, úroveň přes `RUST_LOG`.
+- **Trace:** spany se posílají přes OpenTelemetry (OTLP) do Cloud Trace (Telemetry API `telemetry.googleapis.com`). Každý HTTP požadavek na web je jeden trace, který navazuje na trace Cloud Runu (`traceparent`). Každý běh jobu je jeden trace `sync job` se spany pro datové typy, volání Health API, čtení a zápis v GCS a dotazy do BigQuery.
+- **Korelace:** každý log nese `logging.googleapis.com/trace` a `spanId`. V Logs Explorer se logy požadavku seskupí pod jeho request log a v Cloud Trace se u spanu zobrazí jeho logy.
+- **Error Reporting:** logy úrovně ERROR (i panic) mají typ `ReportedErrorEvent` a verzi image (`APP_VERSION`), takže je [Error Reporting](https://console.cloud.google.com/errors?project=fitdata-jsedlacek) seskupí.
+
 ```bash
 gcloud run jobs execute fitdata-sync --region europe-west1 --wait     # spustit job hned
 gcloud run jobs executions list --job fitdata-sync --region europe-west1
-gcloud logging read 'resource.type="cloud_run_job"' --limit 50 --format 'value(textPayload)'
+gcloud logging read 'resource.type="cloud_run_job"' --limit 50 --format 'value(severity, jsonPayload.message)'
 ```
 
 Načíst starší rozsah znovu (např. po změně normalizace), lokálně s ADC:

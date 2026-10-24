@@ -21,7 +21,8 @@ else
   PUBLIC_URL=https://$SERVICE_NAME-$PROJECT_NUMBER.$REGION.run.app
 fi
 
-ENV=GCP_PROJECT=$PROJECT,GCP_REGION=$REGION,STORAGE=gs://$BUCKET,BQ_DATASET=$DATASET,TZ=$TIME_ZONE,RUST_LOG=fitdata=info
+# APP_VERSION tags traces and Error Reporting groups with the image.
+ENV=GCP_PROJECT=$PROJECT,GCP_REGION=$REGION,STORAGE=gs://$BUCKET,BQ_DATASET=$DATASET,TZ=$TIME_ZONE,RUST_LOG=fitdata=info,APP_VERSION=$TAG
 
 if [[ $TAG != *-dirty ]] && gcloud artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   echo "== Image $IMAGE already built"

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use axum::Router;
-use axum::extract::{Path, Query, Request, State};
+use axum::extract::{MatchedPath, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Json, Redirect, Response};
@@ -21,6 +21,8 @@ use sha2::Sha256;
 use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
+use tracing::Instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::bq::Bq;
 use crate::cloudrun::SyncJob;
@@ -123,12 +125,43 @@ pub async fn serve(cfg: Config) -> Result<()> {
         .route("/auth/callback", get(callback))
         .merge(authz::routes())
         .route("/mcp", post(mcp::handle).get(mcp::no_stream))
+        .layer(middleware::from_fn(trace_request))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!("dashboard listening on 0.0.0.0:{port}");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// One server span per request, continuing the trace Cloud Run started
+/// (`traceparent`), so our spans and logs show up under its request.
+async fn trace_request(req: Request, next: Next) -> Response {
+    let route = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|p| p.as_str().to_owned());
+    let span = tracing::info_span!(
+        "request",
+        otel.name = format!("{} {}", req.method(), route.as_deref().unwrap_or("*")),
+        otel.kind = "server",
+        otel.status_code = tracing::field::Empty,
+        http.request.method = %req.method(),
+        http.route = route,
+        url.path = req.uri().path(),
+        http.response.status_code = tracing::field::Empty,
+    );
+    let parent = opentelemetry::global::get_text_map_propagator(|p| {
+        p.extract(&opentelemetry_http::HeaderExtractor(req.headers()))
+    });
+    let _ = span.set_parent(parent);
+    let resp = next.run(req).instrument(span.clone()).await;
+    let status = resp.status();
+    span.record("http.response.status_code", status.as_u16());
+    if status.is_server_error() {
+        span.record("otel.status_code", "ERROR");
+    }
+    resp
 }
 
 fn internal(e: anyhow::Error) -> Response {

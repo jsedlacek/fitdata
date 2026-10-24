@@ -7,6 +7,7 @@ use anyhow::Result;
 use chrono::{Datelike, Months, NaiveDate};
 use futures::{StreamExt, TryStreamExt, stream};
 use serde_json::{Value, json};
+use tracing::Instrument;
 
 use crate::api::{ApiError, HealthClient};
 use crate::datatypes::{DataType, Window};
@@ -121,8 +122,17 @@ async fn fetch_slot(
     if !points.is_empty() {
         store.put_jsonl(&object_path(dt, slot), &points).await?;
     }
-    tracing::info!("{:<36} {:<10} {:>6} points", dt.id, slot.key, points.len());
+    tracing::info!("{}: {} points", slot.key, points.len());
     Ok(points.len())
+}
+
+/// Groups the requests and logs of one data type.
+fn type_span(dt: &DataType) -> tracing::Span {
+    tracing::info_span!(
+        "fetch",
+        otel.name = format!("fetch {}", dt.id),
+        data_type = dt.id
+    )
 }
 
 /// Treats "no access / unsupported for this account" as no data instead of failing the run.
@@ -141,19 +151,22 @@ pub async fn fetch_range(
     to: NaiveDate,
 ) -> Result<usize> {
     let totals: Vec<usize> = stream::iter(types.iter().copied())
-        .map(|dt| async move {
-            let mut n = 0;
-            for slot in slots(dt, from, to) {
-                match fetch_slot(client, store, dt, &slot).await {
-                    Ok(c) => n += c,
-                    Err(e) if is_unavailable(&e) => {
-                        tracing::warn!("{}: skipped ({e})", dt.id);
-                        break;
+        .map(|dt| {
+            async move {
+                let mut n = 0;
+                for slot in slots(dt, from, to) {
+                    match fetch_slot(client, store, dt, &slot).await {
+                        Ok(c) => n += c,
+                        Err(e) if is_unavailable(&e) => {
+                            tracing::warn!("skipped ({e})");
+                            break;
+                        }
+                        Err(e) => return Err(e.context(format!("{} {}", dt.id, slot.key))),
                     }
-                    Err(e) => return Err(e.context(format!("{} {}", dt.id, slot.key))),
                 }
+                Ok::<_, anyhow::Error>(n)
             }
-            Ok::<_, anyhow::Error>(n)
+            .instrument(type_span(dt))
         })
         .buffer_unordered(CONCURRENCY)
         .try_collect()
@@ -172,15 +185,18 @@ pub async fn backfill(
     max_empty_months: u32,
 ) -> Result<usize> {
     let totals: Vec<usize> = stream::iter(types.iter().copied())
-        .map(|dt| async move {
-            match backfill_type(client, store, dt, since, max_empty_months).await {
-                Ok(n) => Ok(n),
-                Err(e) if is_unavailable(&e) => {
-                    tracing::warn!("{}: skipped ({e})", dt.id);
-                    Ok(0)
+        .map(|dt| {
+            async move {
+                match backfill_type(client, store, dt, since, max_empty_months).await {
+                    Ok(n) => Ok(n),
+                    Err(e) if is_unavailable(&e) => {
+                        tracing::warn!("skipped ({e})");
+                        Ok(0)
+                    }
+                    Err(e) => Err(e.context(dt.id)),
                 }
-                Err(e) => Err(e.context(dt.id)),
             }
+            .instrument(type_span(dt))
         })
         .buffer_unordered(CONCURRENCY)
         .try_collect()
@@ -196,7 +212,7 @@ async fn backfill_type(
     max_empty_months: u32,
 ) -> Result<usize> {
     let Some(newest) = client.newest(dt, None).await? else {
-        tracing::info!("{:<36} no data", dt.id);
+        tracing::info!("no data");
         return Ok(0);
     };
     if dt.window == Window::All {
@@ -225,7 +241,7 @@ async fn backfill_type(
             }
         } else {
             empty_streak += 1;
-            tracing::info!("{:<36} {:<10} empty", dt.id, month.format("%Y-%m"));
+            tracing::info!("{}: empty", month.format("%Y-%m"));
         }
         month = month - Months::new(1);
     }

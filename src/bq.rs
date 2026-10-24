@@ -41,6 +41,7 @@ impl Bq {
     /// Rows are staged as NDJSON in GCS, loaded into `_staging_{table}` (same
     /// schema, created by deploy/setup.sh) and swapped in with one
     /// DELETE + INSERT transaction, so re-running a day never duplicates it.
+    #[tracing::instrument(skip_all, fields(otel.name = format!("replace {table}"), table, %from, %to))]
     pub async fn replace_range(
         &self,
         store: &Store,
@@ -88,7 +89,7 @@ impl Bq {
             s = self.table(&staging),
         ))
         .await?;
-        tracing::info!("{table:<12} {from}..{to} {:>7} rows", rows.len());
+        tracing::info!("replaced {from}..{to}: {} rows", rows.len());
         Ok(())
     }
 
@@ -123,6 +124,11 @@ impl Bq {
         .await
     }
 
+    #[tracing::instrument(name = "bigquery query", skip_all, fields(
+        otel.kind = "client",
+        db.system.name = "bigquery",
+        db.query.text = %req.query,
+    ))]
     async fn run(&self, req: QueryRequest) -> Result<Vec<Value>> {
         let sql = req.query.clone();
         let mut resp = self

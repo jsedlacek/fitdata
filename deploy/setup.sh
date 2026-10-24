@@ -18,7 +18,9 @@ gcloud services enable --project "$PROJECT" \
   run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
   cloudscheduler.googleapis.com bigquery.googleapis.com storage.googleapis.com \
   secretmanager.googleapis.com health.googleapis.com monitoring.googleapis.com \
-  iamcredentials.googleapis.com sts.googleapis.com cloudresourcemanager.googleapis.com
+  iamcredentials.googleapis.com sts.googleapis.com cloudresourcemanager.googleapis.com \
+  logging.googleapis.com cloudtrace.googleapis.com telemetry.googleapis.com \
+  clouderrorreporting.googleapis.com
 
 say "Bucket gs://$BUCKET"
 if ! gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" >/dev/null 2>&1; then
@@ -86,9 +88,12 @@ secret_role refresh-token "$WEB_SA" roles/secretmanager.secretVersionManager
 gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member "serviceAccount:$JOB_SA" --role roles/storage.objectAdmin >/dev/null
 
+# Spans go to Cloud Trace via the Telemetry API (src/telemetry.rs).
 for sa in "$JOB_SA" "$WEB_SA"; do
-  gcloud projects add-iam-policy-binding "$PROJECT" \
-    --member "serviceAccount:$sa" --role roles/bigquery.jobUser --condition=None >/dev/null
+  for role in roles/bigquery.jobUser roles/telemetry.tracesWriter; do
+    gcloud projects add-iam-policy-binding "$PROJECT" \
+      --member "serviceAccount:$sa" --role "$role" --condition=None >/dev/null
+  done
 done
 # Dataset-level roles via DCL (`bq add-iam-policy-binding` needs allowlisting).
 bq --project_id "$PROJECT" --location "$REGION" query --nouse_legacy_sql --quiet "
@@ -96,26 +101,32 @@ bq --project_id "$PROJECT" --location "$REGION" query --nouse_legacy_sql --quiet
   GRANT \`roles/bigquery.dataViewer\` ON SCHEMA \`$PROJECT.$DATASET\` TO 'serviceAccount:$WEB_SA';" >/dev/null
 
 say "Alerting ($ALERT_EMAIL)"
-# One e-mail channel and one policy: any failed run of the sync job opens an
-# incident (one mail), which closes itself once runs succeed again.
+# One e-mail channel and two policies: any failed run of the sync job opens an
+# incident (one mail), which closes itself once runs succeed again; an ERROR
+# log of the web service (incl. 5xx requests) mails at most once an hour.
 channel=$(gcloud beta monitoring channels list --project "$PROJECT" \
   --filter='displayName="fitdata alerts" AND type="email"' --format='value(name)' | head -1)
 if [[ -z $channel ]]; then
   channel=$(gcloud beta monitoring channels create --project "$PROJECT" --display-name 'fitdata alerts' \
     --type email --channel-labels "email_address=$ALERT_EMAIL" --format='value(name)')
 fi
-policy_file=$(mktemp)
-sed -e "s|__CHANNEL__|$channel|; s|__JOB__|$JOB_NAME|g; s|__PROJECT__|$PROJECT|g; s|__REGION__|$REGION|g; s|__DOMAIN__|$DOMAIN|g" \
-  deploy/alert-policy.json > "$policy_file"
-policy=$(gcloud beta monitoring policies list --project "$PROJECT" \
-  --filter='displayName="fitdata-sync failed"' --format='value(name)' | head -1)
-if [[ -n $policy ]]; then
-  gcloud beta monitoring policies update "$policy" --project "$PROJECT" --policy-from-file "$policy_file" >/dev/null
-else
-  gcloud beta monitoring policies create --project "$PROJECT" --policy-from-file "$policy_file" >/dev/null
-fi
-rm -f "$policy_file"
-echo "  policy 'fitdata-sync failed' -> $channel"
+apply_policy() { # display name, template
+  local file policy
+  file=$(mktemp)
+  sed -e "s|__CHANNEL__|$channel|; s|__JOB__|$JOB_NAME|g; s|__SERVICE__|$SERVICE_NAME|g; s|__PROJECT__|$PROJECT|g; s|__REGION__|$REGION|g; s|__DOMAIN__|$DOMAIN|g" \
+    "$2" > "$file"
+  policy=$(gcloud beta monitoring policies list --project "$PROJECT" \
+    --filter="displayName=\"$1\"" --format='value(name)' | head -1)
+  if [[ -n $policy ]]; then
+    gcloud beta monitoring policies update "$policy" --project "$PROJECT" --policy-from-file "$file" >/dev/null
+  else
+    gcloud beta monitoring policies create --project "$PROJECT" --policy-from-file "$file" >/dev/null
+  fi
+  rm -f "$file"
+  echo "  policy '$1' -> $channel"
+}
+apply_policy "fitdata-sync failed" deploy/alert-policy.json
+apply_policy "fitdata-web errors" deploy/alert-web-errors.json
 
 say "GitHub Actions deploy ($GITHUB_REPO)"
 # Deployer: what deploy/deploy.sh needs. roles/viewer is needed to stream logs
