@@ -1,12 +1,11 @@
 //! Thin client for the Google Health API v4 (https://health.googleapis.com/).
 
+use std::num::NonZeroU32;
 use std::time::Duration;
-
-use tokio::sync::Mutex;
-use tokio::time::Instant;
 
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
+use governor::{DefaultDirectRateLimiter, Jitter, Quota, RateLimiter};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -17,8 +16,18 @@ use crate::oauth::TokenSource;
 
 const BASE: &str = "https://health.googleapis.com/v4";
 const MAX_ATTEMPTS: u32 = 8;
-/// The API allows 300 requests per minute per user; stay at 240.
-const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(250);
+/// The API allows 300 requests per minute per user, counted over a rolling
+/// minute. A burst of `BURST` goes out at once, then `PER_MINUTE` spread
+/// evenly: at most BURST + PER_MINUTE = 280 in any minute.
+const PER_MINUTE: u32 = 240;
+const BURST: u32 = 40;
+
+/// The per-user limit as a rate limiter (GCRA). It only sees this process,
+/// so the job syncs a user in one process at a time (`job::Lock`).
+fn limiter() -> DefaultDirectRateLimiter {
+    let n = |v| NonZeroU32::new(v).expect("non-zero");
+    RateLimiter::direct(Quota::per_minute(n(PER_MINUTE)).allow_burst(n(BURST)))
+}
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -42,8 +51,7 @@ impl std::fmt::Display for ApiError {
 pub struct HealthClient {
     http: reqwest::Client,
     tokens: TokenSource,
-    /// Earliest instant the next request may be sent.
-    next_slot: Mutex<Instant>,
+    limiter: DefaultDirectRateLimiter,
 }
 
 impl HealthClient {
@@ -51,19 +59,8 @@ impl HealthClient {
         Self {
             http,
             tokens,
-            next_slot: Mutex::new(Instant::now()),
+            limiter: limiter(),
         }
-    }
-
-    /// Spaces requests evenly so concurrent fetches stay under the per-user quota.
-    async fn pace(&self) {
-        let slot = {
-            let mut next = self.next_slot.lock().await;
-            let slot = (*next).max(Instant::now());
-            *next = slot + MIN_REQUEST_INTERVAL;
-            slot
-        };
-        tokio::time::sleep_until(slot).await;
     }
 
     /// GET with bearer auth, retrying throttling and transient server errors.
@@ -79,7 +76,10 @@ impl HealthClient {
         loop {
             attempt += 1;
             let token = self.tokens.access_token().await?;
-            self.pace().await;
+            // Requests wait here in turn until the quota has room.
+            self.limiter
+                .until_ready_with_jitter(Jitter::up_to(Duration::from_millis(50)))
+                .await;
             let resp = self
                 .http
                 .get(&url)
@@ -109,7 +109,14 @@ impl HealthClient {
             let body = resp.text().await.unwrap_or_default();
             match status {
                 401 if attempt < MAX_ATTEMPTS => self.tokens.invalidate().await,
-                429 | 500 | 502 | 503 | 504 if attempt < MAX_ATTEMPTS => {
+                // The minute is rolling, so room comes back within seconds;
+                // a 429 means something else used the user's quota too.
+                429 if attempt < MAX_ATTEMPTS => {
+                    tracing::warn!("HTTP 429 on {path}, retrying");
+                    let pause = 2_000 + rand::random::<u64>() % 3_000;
+                    tokio::time::sleep(Duration::from_millis(pause)).await;
+                }
+                500 | 502 | 503 | 504 if attempt < MAX_ATTEMPTS => {
                     tracing::warn!("HTTP {status} on {path}, retrying");
                     tokio::time::sleep(backoff(attempt)).await;
                 }

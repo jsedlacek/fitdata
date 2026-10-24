@@ -1,9 +1,10 @@
 //! The sync state of a user, `u/{uid}/status.json`: the last run, the last
-//! successful one, and whether a run is in progress. The job writes it; the
-//! dashboard reads it to show "synced 5 min ago" or offer reconnecting.
+//! successful one, whether a run is in progress, and what the job learned
+//! to plan the next runs (`job.rs`). The job writes it; the dashboard reads
+//! it to show "synced 5 min ago" or offer reconnecting.
 
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::store::Store;
@@ -17,6 +18,17 @@ pub struct Status {
     pub last_run: Option<Run>,
     pub last_ok: Option<DateTime<Utc>>,
     pub running_since: Option<DateTime<Utc>>,
+    /// The last run that refreshed every day of the window and probed every
+    /// data type.
+    #[serde(default)]
+    pub last_full: Option<DateTime<Utc>>,
+    /// Data types with no data at all at the last full run; runs in between
+    /// skip them.
+    #[serde(default)]
+    pub absent: Vec<String>,
+    /// The day the account was created; there is nothing to fetch before it.
+    #[serde(default)]
+    pub since: Option<NaiveDate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,9 +70,16 @@ pub async fn started(store: &Store, uid: &str, at: DateTime<Utc>) -> Result<()> 
     put(store, uid, &s).await
 }
 
-pub async fn finished(store: &Store, uid: &str, run: Run) -> Result<()> {
+/// Records a finished run; `update` adds what the run learned.
+pub async fn finished(
+    store: &Store,
+    uid: &str,
+    run: Run,
+    update: impl FnOnce(&mut Status),
+) -> Result<()> {
     let mut s = get(store, uid).await?;
     s.running_since = None;
+    update(&mut s);
     if run.ok {
         s.last_ok = Some(run.at);
     }
@@ -98,8 +117,8 @@ mod tests {
             error: (!ok).then(|| "revoked".into()),
             skipped: vec![],
         };
-        finished(&store, "1", run(true)).await.unwrap();
-        finished(&store, "1", run(false)).await.unwrap();
+        finished(&store, "1", run(true), |_| {}).await.unwrap();
+        finished(&store, "1", run(false), |_| {}).await.unwrap();
         let s = get(&store, "1").await.unwrap();
         assert!(!s.running(t0));
         assert_eq!(s.last_ok, Some(t0));

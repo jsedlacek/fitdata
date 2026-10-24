@@ -96,7 +96,14 @@ Když přestane fungovat refresh token (odvolaný přístup), dashboard to uživ
 
 Synchronizaci jde spustit i ručně ikonou ⟳ vedle „Synchronizováno“ v hlavičce dashboardu. Web spustí job jen pro přihlášeného uživatele (`job --user <uid>` přes Cloud Run Admin API, `POST /api/sync`), ikona se točí, dokud uživatelův běh (nebo poslední execution jobu) neskončí, a pak se data na stránce načtou znovu.
 
-Job zpracuje uživatele postupně a selhání jednoho neshodí ostatní. Při větším počtu uživatelů jde job pustit ve víc taskách (`--tasks N`); uživatelé se rozdělí podle hashe ID (`CLOUD_RUN_TASK_INDEX`).
+Job zpracuje až 8 uživatelů najednou a selhání jednoho neshodí ostatní. Při větším počtu uživatelů jde job pustit ve víc taskách (`--tasks N`); uživatelé se rozdělí podle hashe ID (`CLOUD_RUN_TASK_INDEX`).
+
+**Kvóta Health API** je 300 požadavků za minutu na uživatele (klouzavé okno; odpověď 429 neříká, kdy čekat), 120 000 za minutu na projekt. Proto ([src/job.rs](../src/job.rs), [src/api.rs](../src/api.rs)):
+
+- Uživatele synchronizuje vždy jen jeden proces: zámek `u/{uid}/lock` vzniká atomicky (GCS `ifGenerationMatch=0`), druhý běh uživatele přeskočí, zámek starší než 45 min se převezme.
+- Požadavky jednoho uživatele hlídá rate limiter (`governor`, GCRA): burst 40, pak 240 za minutu, tedy v libovolné minutě nejvýš 280. Kdyby přesto přišla 429, požadavek počká 2–5 s.
+- Hodinový běh stahuje jen včerejšek a dnešek a přeskakuje datové typy, pro které uživatel nemá žádná data. Jednou za 20 h je běh plný: celé okno 7 dní a u každého typu jeden dotaz, jestli data má (`status.json`: `last_full`, `absent`). Dny před založením účtu se nestahují (`since`).
+- Na tvém účtu: hodinový běh 51 požadavků, plný 121 (dřív 173 každou hodinu).
 
 Každý neúspěšný běh jobu (chyba u kteréhokoli uživatele kromě odvolaného tokenu) otevře v Cloud Monitoring incident **fitdata-sync failed** a pošle e-mail na `ALERT_EMAIL` (`deploy/config.sh`). Při trvalé poruše přijde jeden e-mail, ne jeden za hodinu. Až běhy znovu projdou, incident se sám zavře. Politika je v [deploy/alert-policy.json](../deploy/alert-policy.json) a nastaví ji `setup.sh`.
 

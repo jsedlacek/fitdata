@@ -34,6 +34,19 @@ fn is_not_found(e: &google_cloud_storage::Error) -> bool {
     e.http_status_code() == Some(404) || e.status().is_some_and(|s| s.code == Code::NotFound)
 }
 
+/// An `if_generation_match` that did not hold.
+fn is_precondition_failed(e: &google_cloud_storage::Error) -> bool {
+    e.http_status_code() == Some(412)
+        || e.status()
+            .is_some_and(|s| s.code == Code::FailedPrecondition)
+}
+
+/// A local file's stand-in for a GCS generation: its modification time.
+fn local_generation(p: &std::path::Path) -> Result<i64> {
+    let modified = std::fs::metadata(p)?.modified()?;
+    Ok(modified.duration_since(std::time::UNIX_EPOCH)?.as_nanos() as i64)
+}
+
 impl Store {
     /// `gs://bucket` or a local directory path.
     pub async fn open(location: &str) -> Result<Self> {
@@ -147,6 +160,108 @@ impl Store {
         }
     }
 
+    /// Creates an object only if it does not exist yet (atomically in GCS);
+    /// returns its generation, or `None` if it already existed.
+    pub async fn create_new(&self, path: &str, data: Vec<u8>) -> Result<Option<i64>> {
+        let key = self.key(path);
+        match &*self.backend {
+            Backend::Local(dir) => {
+                use std::io::Write;
+                let p = dir.join(&key);
+                if let Some(parent) = p.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&p)
+                {
+                    Ok(mut f) => {
+                        f.write_all(&data)?;
+                        Ok(Some(local_generation(&p)?))
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            }
+            Backend::Gcs { client, bucket, .. } => {
+                match client
+                    .write_object(
+                        format!("projects/_/buckets/{bucket}"),
+                        &key,
+                        bytes::Bytes::from(data),
+                    )
+                    .set_if_generation_match(0)
+                    .send_buffered()
+                    .await
+                {
+                    Ok(o) => Ok(Some(o.generation)),
+                    Err(e) if is_precondition_failed(&e) => Ok(None),
+                    Err(e) => Err(e).with_context(|| format!("creating gs://{bucket}/{key}")),
+                }
+            }
+        }
+    }
+
+    /// The generation of an object, if it exists.
+    pub async fn generation(&self, path: &str) -> Result<Option<i64>> {
+        let key = self.key(path);
+        match &*self.backend {
+            Backend::Local(dir) => {
+                let p = dir.join(&key);
+                if p.exists() {
+                    Ok(Some(local_generation(&p)?))
+                } else {
+                    Ok(None)
+                }
+            }
+            Backend::Gcs {
+                control, bucket, ..
+            } => match control
+                .get_object()
+                .set_bucket(format!("projects/_/buckets/{bucket}"))
+                .set_object(&key)
+                .send()
+                .await
+            {
+                Ok(o) => Ok(Some(o.generation)),
+                Err(e) if is_not_found(&e) => Ok(None),
+                Err(e) => Err(e).with_context(|| format!("checking gs://{bucket}/{key}")),
+            },
+        }
+    }
+
+    /// Removes an object only if it is still at `generation`; returns
+    /// whether it was removed.
+    pub async fn delete_generation(&self, path: &str, generation: i64) -> Result<bool> {
+        let key = self.key(path);
+        match &*self.backend {
+            Backend::Local(dir) => {
+                let p = dir.join(&key);
+                if p.exists() && local_generation(&p)? == generation {
+                    std::fs::remove_file(p)?;
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            Backend::Gcs {
+                control, bucket, ..
+            } => match control
+                .delete_object()
+                .set_bucket(format!("projects/_/buckets/{bucket}"))
+                .set_object(&key)
+                .set_if_generation_match(generation)
+                .send()
+                .await
+            {
+                Ok(_) => Ok(true),
+                Err(e) if is_not_found(&e) || is_precondition_failed(&e) => Ok(false),
+                Err(e) => Err(e).with_context(|| format!("deleting gs://{bucket}/{key}")),
+            },
+        }
+    }
+
     /// Removes an object; a missing one is not an error.
     #[tracing::instrument(name = "storage delete", skip(self), fields(otel.kind = "client"))]
     pub async fn delete(&self, path: &str) -> Result<()> {
@@ -221,9 +336,7 @@ impl Store {
                             walk(root, &p, out)?;
                         } else {
                             let name = p.strip_prefix(root)?.to_string_lossy().replace('\\', "/");
-                            let modified = std::fs::metadata(&p)?.modified()?;
-                            let nanos = modified.duration_since(std::time::UNIX_EPOCH)?.as_nanos();
-                            out.push((name, nanos as i64));
+                            out.push((name, local_generation(&p)?));
                         }
                     }
                     Ok(())
@@ -319,5 +432,27 @@ mod tests {
         assert_eq!(names, ["u/1/raw/x.jsonl"]);
         user.delete("raw/x.jsonl").await.unwrap();
         assert!(root.list("").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn creates_only_new_objects_and_deletes_by_generation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(tmp.path().to_str().unwrap()).await.unwrap();
+        let g = store
+            .create_new("lock", b"a".to_vec())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            store
+                .create_new("lock", b"b".to_vec())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(store.generation("lock").await.unwrap(), Some(g));
+        assert!(!store.delete_generation("lock", g + 1).await.unwrap());
+        assert!(store.delete_generation("lock", g).await.unwrap());
+        assert!(store.generation("lock").await.unwrap().is_none());
     }
 }
