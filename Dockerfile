@@ -24,6 +24,8 @@ COPY --from=planner /src/recipe.json recipe.json
 RUN cargo chef cook --release --locked --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY src src
+# Table schemas, compiled in (src/duck.rs).
+COPY deploy/schema deploy/schema
 RUN cargo build --release --locked
 
 # Runtime: distroless (glibc, libstdc++ for DuckDB, CA certs, tzdata).
