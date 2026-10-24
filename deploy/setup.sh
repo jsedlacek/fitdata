@@ -18,7 +18,7 @@ gcloud services enable --project "$PROJECT" \
   run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
   cloudscheduler.googleapis.com bigquery.googleapis.com storage.googleapis.com \
   secretmanager.googleapis.com health.googleapis.com monitoring.googleapis.com \
-  iamcredentials.googleapis.com sts.googleapis.com
+  iamcredentials.googleapis.com sts.googleapis.com cloudresourcemanager.googleapis.com
 
 say "Bucket gs://$BUCKET"
 if ! gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" >/dev/null 2>&1; then
