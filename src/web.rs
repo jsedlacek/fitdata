@@ -1,4 +1,4 @@
-//! Dashboard: JSON API over the BigQuery tables plus a single page, behind
+//! Dashboard: JSON API over the users' Parquet tables (`warehouse.rs`) plus a single page, behind
 //! Google sign-in restricted to an allowlist of accounts. The same sign-in
 //! guards the MCP endpoint (`mcp.rs`) through a small OAuth server (`authz.rs`).
 
@@ -27,10 +27,13 @@ use crate::bq::Bq;
 use crate::claims::{self, Claims, Purpose};
 use crate::cloudrun::SyncJob;
 use crate::datatypes::READ_SCOPES;
+use crate::duck;
 use crate::health::StageType;
 use crate::model::{DailyMetrics, Exercise, NightRow};
 use crate::oauth::{ClientCredentials, auth_request, exchange_code};
+use crate::query::QueryClient;
 use crate::secrets::SecretRef;
+use crate::warehouse::{Need, Warehouse};
 use crate::{authz, mcp};
 
 const SESSION_COOKIE: &str = "fd_session";
@@ -58,7 +61,14 @@ pub struct Config {
     pub creds: ClientCredentials,
     /// Where "Connect Fitbit" stores a new Health API refresh token.
     pub token_ref: SecretRef,
+    /// Only for the sync history (`sync_runs`).
     pub bq: Bq,
+    /// The users' tables.
+    pub warehouse: Warehouse,
+    /// Where MCP `query` SQL runs.
+    pub query: QueryClient,
+    /// The one user whose data is shown (until there are more).
+    pub owner: String,
     /// The Cloud Run job behind the "sync now" button.
     pub sync_job: SyncJob,
     pub http: reqwest::Client,
@@ -414,10 +424,9 @@ pub(crate) async fn last_run(bq: &Bq, ok_only: bool) -> Result<Option<LastRun>> 
 }
 
 async fn overview(State(cfg): State<Shared>) -> Response {
-    let days = cfg.bq.query_as(format!(
-        "SELECT * FROM {} ORDER BY date",
-        cfg.bq.table("daily")
-    ));
+    let days = cfg.warehouse.with(&cfg.owner, Need::None, |c| {
+        duck::query_as::<DailyMetrics>(c, "SELECT * FROM daily ORDER BY date")
+    });
     match tokio::try_join!(days, last_run(&cfg.bq, false)) {
         Ok((days, last_sync)) => Json(Overview { days, last_sync }).into_response(),
         Err(e) => internal(e),
@@ -449,7 +458,7 @@ async fn start_sync(State(cfg): State<Shared>) -> Response {
 }
 
 async fn day(State(cfg): State<Shared>, Path(date): Path<NaiveDate>) -> Response {
-    match day_detail(&cfg.bq, date).await {
+    match day_detail(&cfg.warehouse, &cfg.owner, date).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => internal(e),
     }
@@ -512,23 +521,31 @@ pub(crate) struct DayDetail {
 
 /// Detail of one day. The time range starts at the beginning of the night
 /// before (if there was one) so the sleep that ended that morning is shown.
-pub(crate) async fn day_detail(bq: &Bq, date: NaiveDate) -> Result<DayDetail> {
+pub(crate) async fn day_detail(wh: &Warehouse, uid: &str, date: NaiveDate) -> Result<DayDetail> {
+    let prev = date - Duration::days(1);
+    wh.with(uid, Need::Range(prev, date), move |c| {
+        day_detail_sql(c, date)
+    })
+    .await
+}
+
+fn day_detail_sql(c: &duckdb::Connection, date: NaiveDate) -> Result<DayDetail> {
     let prev = date - Duration::days(1);
     let midnight = date.and_time(NaiveTime::MIN);
     let end = midnight + Duration::days(1);
-    let t = |name| bq.table(name);
 
-    let (nights, metrics) = tokio::try_join!(
-        bq.query_as::<NightRow>(format!(
-            "SELECT * FROM {} WHERE date = '{date}'",
-            t("nights")
-        )),
-        bq.query_as::<DailyMetrics>(format!(
-            "SELECT * FROM {} WHERE date = '{date}'",
-            t("daily")
-        )),
-    )?;
-    let night = nights.into_iter().next();
+    let night = duck::query_as::<NightRow>(
+        c,
+        &format!("SELECT * FROM nights WHERE date = DATE '{date}'"),
+    )?
+    .into_iter()
+    .next();
+    let metrics = duck::query_as::<DailyMetrics>(
+        c,
+        &format!("SELECT * FROM daily WHERE date = DATE '{date}'"),
+    )?
+    .into_iter()
+    .next();
     let start = night.as_ref().map_or(midnight, |n| n.start.min(midnight));
     // Night-only charts: the sleep window, or the small hours if no sleep was recorded.
     let (nf, nt) = night
@@ -536,40 +553,51 @@ pub(crate) async fn day_detail(bq: &Bq, date: NaiveDate) -> Result<DayDetail> {
         .map_or((midnight, midnight + Duration::hours(8)), |n| {
             (n.start, n.end)
         });
-    let fmt = |d: NaiveDateTime| d.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let fmt = |d: NaiveDateTime| d.format("%Y-%m-%d %H:%M:%S").to_string();
     let (s, e, nf, nt) = (fmt(start), fmt(end), fmt(nf), fmt(nt));
+    let days = format!("date BETWEEN DATE '{prev}' AND DATE '{date}'");
 
-    let (heart_rate, steps, spo2, hrv, exercises) = tokio::try_join!(
-        bq.query_as(format!(
-            "SELECT DATETIME_TRUNC(ts, MINUTE) AS t, MIN(bpm) AS lo, ROUND(AVG(bpm), 1) AS avg, MAX(bpm) AS hi
-             FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= '{s}' AND ts < '{e}'
-             GROUP BY t ORDER BY t",
-            t("heart_rate")
-        )),
-        bq.query_as(format!(
-            "SELECT DATETIME_ADD(DATETIME_TRUNC(ts, HOUR), INTERVAL DIV(EXTRACT(MINUTE FROM ts), 15) * 15 MINUTE) AS t,
-                    SUM(steps) AS v
-             FROM {} WHERE date = '{date}' AND steps IS NOT NULL GROUP BY t ORDER BY t",
-            t("activity")
-        )),
-        bq.query_as(format!(
-            "SELECT ts AS t, pct AS v FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= '{nf}' AND ts < '{nt}' ORDER BY ts",
-            t("spo2")
-        )),
-        bq.query_as(format!(
-            "SELECT ts AS t, rmssd_ms AS v FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= '{nf}' AND ts < '{nt}' ORDER BY ts",
-            t("hrv")
-        )),
-        bq.query_as(format!(
-            "SELECT * FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND start >= '{s}' AND start < '{e}' ORDER BY start",
-            t("exercises")
-        )),
+    let heart_rate = duck::query_as(
+        c,
+        &format!(
+            "SELECT date_trunc('minute', ts) AS t, MIN(bpm) AS lo, ROUND(AVG(bpm), 1) AS avg, MAX(bpm) AS hi
+             FROM heart_rate WHERE {days} AND ts >= TIMESTAMP '{s}' AND ts < TIMESTAMP '{e}'
+             GROUP BY t ORDER BY t"
+        ),
+    )?;
+    let steps = duck::query_as(
+        c,
+        &format!(
+            "SELECT time_bucket(INTERVAL 15 MINUTE, ts) AS t, SUM(steps) AS v
+             FROM activity WHERE date = DATE '{date}' AND steps IS NOT NULL GROUP BY t ORDER BY t"
+        ),
+    )?;
+    let spo2 = duck::query_as(
+        c,
+        &format!(
+            "SELECT ts AS t, pct AS v FROM spo2
+             WHERE {days} AND ts >= TIMESTAMP '{nf}' AND ts < TIMESTAMP '{nt}' ORDER BY ts"
+        ),
+    )?;
+    let hrv = duck::query_as(
+        c,
+        &format!(
+            "SELECT ts AS t, rmssd_ms AS v FROM hrv
+             WHERE {days} AND ts >= TIMESTAMP '{nf}' AND ts < TIMESTAMP '{nt}' ORDER BY ts"
+        ),
+    )?;
+    let exercises = duck::query_as(
+        c,
+        &format!(
+            "SELECT * FROM exercises
+             WHERE {days} AND start >= TIMESTAMP '{s}' AND start < TIMESTAMP '{e}' ORDER BY start"
+        ),
     )?;
 
     Ok(DayDetail {
         date,
         range: [start, end],
-        metrics: metrics.into_iter().next(),
+        metrics,
         heart_rate,
         steps,
         spo2,

@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 use chrono::NaiveDate;
 use google_cloud_bigquery_v2::client::JobService;
 use google_cloud_bigquery_v2::model::{
-    DatasetReference, Job, JobConfiguration, JobConfigurationLoad, QueryRequest, TableFieldSchema,
-    TableReference, query_request::JobCreationMode,
+    Job, JobConfiguration, JobConfigurationLoad, QueryRequest, TableFieldSchema, TableReference,
+    query_request::JobCreationMode,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -128,54 +128,6 @@ impl Bq {
                     .with_context(|| format!("unexpected row from query: {first}"))
             })
             .collect()
-    }
-
-    /// Runs a query written by someone else (an MCP client). It is wrapped as
-    /// a subquery, so it must be a single SELECT; unqualified table names
-    /// resolve to the dataset; it may scan at most `max_bytes` and returns at
-    /// most `max_rows + 1` rows (the extra one tells the caller it was cut).
-    ///
-    /// The wrapping alone can be escaped (`SELECT 1); DELETE ...; SELECT (1`
-    /// makes a script), so a dry run first checks that the final text is one
-    /// SELECT. Writes are also prevented by IAM: the web service can only
-    /// read the dataset.
-    pub async fn query_untrusted(
-        &self,
-        sql: &str,
-        max_bytes: i64,
-        max_rows: usize,
-    ) -> Result<Vec<Value>> {
-        let sql = sql.trim().trim_end_matches(';');
-        let req = QueryRequest::new()
-            .set_query(format!("SELECT * FROM (\n{sql}\n) LIMIT {}", max_rows + 1))
-            .set_default_dataset(
-                DatasetReference::new()
-                    .set_project_id(&self.project)
-                    .set_dataset_id(&self.dataset),
-            )
-            .set_maximum_bytes_billed(max_bytes);
-        let statement = self.statement_type(req.clone()).await?;
-        if statement != "SELECT" {
-            bail!("only a single SELECT statement is allowed (got {statement})");
-        }
-        self.run(req).await
-    }
-
-    /// The statement type (`SELECT`, `SCRIPT`, `INSERT`...) of a query, from a dry run.
-    async fn statement_type(&self, req: QueryRequest) -> Result<String> {
-        let resp = self
-            .jobs
-            .query()
-            .set_project_id(&self.project)
-            .set_query_request(
-                req.set_dry_run(true)
-                    .set_use_legacy_sql(false)
-                    .set_location(&self.location),
-            )
-            .send()
-            .await
-            .context("query is not valid")?;
-        Ok(resp.statement_type)
     }
 
     #[tracing::instrument(name = "bigquery query", skip_all, fields(

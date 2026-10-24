@@ -1,3 +1,6 @@
+// Layout of the deeply nested MCP handler futures (mcp::handle).
+#![recursion_limit = "256"]
+
 mod api;
 mod authz;
 mod bq;
@@ -9,11 +12,13 @@ mod health;
 mod mcp;
 mod model;
 mod oauth;
+mod query;
 mod secrets;
 mod store;
 mod sync;
 mod tables;
 mod telemetry;
+mod warehouse;
 mod web;
 
 use std::process::ExitCode;
@@ -83,6 +88,17 @@ enum Cmd {
         /// Cloud Run job the "sync now" button starts.
         #[arg(long, env = "SYNC_JOB", default_value = "fitdata-sync")]
         sync_job: String,
+        /// The service that runs MCP `query` SQL (`fitdata query-serve`).
+        #[arg(long, env = "QUERY_URL", default_value = "http://localhost:8081")]
+        query_url: String,
+        /// Where the users' tables are cached (on Cloud Run: memory).
+        #[arg(long, env = "CACHE_DIR", default_value = "/tmp/fitdata-cache")]
+        cache_dir: std::path::PathBuf,
+    },
+    /// Runs MCP `query` SQL against the files sent with each request.
+    QueryServe {
+        #[arg(long, env = "PORT", default_value_t = 8081)]
+        port: u16,
     },
     /// Interactive OAuth consent; stores a refresh token.
     Login {
@@ -280,6 +296,10 @@ async fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    // Needs nothing else: no secrets, storage or credentials (see query.rs).
+    if let Cmd::QueryServe { port } = cli.cmd {
+        return query::serve(port).await;
+    }
     let http = reqwest::Client::builder()
         .user_agent("fitdata/0.1")
         .build()?;
@@ -310,6 +330,8 @@ async fn run(cli: Cli) -> Result<()> {
         static_dir,
         auth_disabled,
         sync_job,
+        query_url,
+        cache_dir,
     } = &cli.cmd
     {
         let session_key = SecretRef::parse(session_key, project)?
@@ -329,6 +351,12 @@ async fn run(cli: Cli) -> Result<()> {
             creds,
             token_ref,
             bq: bq().await?,
+            warehouse: warehouse::Warehouse::new(std::sync::Arc::new(store), cache_dir.clone()),
+            query: query::QueryClient::new(http.clone(), query_url),
+            owner: cli
+                .owner_id
+                .clone()
+                .context("OWNER_ID is required to serve the dashboard")?,
             sync_job: cloudrun::SyncJob::new(
                 http.clone(),
                 project.context("GCP_PROJECT is required")?,
@@ -374,7 +402,11 @@ async fn run(cli: Cli) -> Result<()> {
     let client = health_client(&http, creds, &token_ref).await?;
 
     match cli.cmd {
-        Cmd::Login { .. } | Cmd::Serve { .. } | Cmd::Load { .. } | Cmd::Job { .. } => {
+        Cmd::Login { .. }
+        | Cmd::Serve { .. }
+        | Cmd::QueryServe { .. }
+        | Cmd::Load { .. }
+        | Cmd::Job { .. } => {
             unreachable!()
         }
         Cmd::Whoami => {

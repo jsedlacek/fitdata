@@ -1,5 +1,5 @@
 //! MCP server (Streamable HTTP, stateless, JSON responses only) with
-//! read-only tools over the BigQuery tables, for Claude and ChatGPT
+//! read-only tools over the user's tables, for Claude and ChatGPT
 //! connectors. Clients authenticate with access tokens from `authz.rs`.
 //!
 //! Tool arguments are serde types, so validation and its error messages (for
@@ -22,17 +22,19 @@ use serde_json::{Map, Value, json};
 use tracing::Instrument;
 
 use crate::authz::{bearer_email, unauthorized};
+use crate::duck;
 use crate::model::{DailyMetrics, Exercise, NightRow};
+use crate::warehouse::Need;
 use crate::web::{Config, HrMinute, Shared, day_detail, last_run};
 
 const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 /// Longest range the list tools return at once.
 const MAX_DAYS: i64 = 400;
-const QUERY_MAX_BYTES: i64 = 1 << 30;
-const QUERY_MAX_ROWS: usize = 1000;
+/// Default and longest stretch of the minute tables a `query` can read.
+const QUERY_DEFAULT_DAYS: i64 = 90;
 
-const INSTRUCTIONS: &str = "Personal health data from the user's Fitbit, synced every hour into \
-BigQuery. Dates and times are local (Europe/Prague). A night belongs to the date the user woke up. \
+const INSTRUCTIONS: &str = "Personal health data from the user's Fitbit, synced every hour. \
+Dates and times are local (Europe/Prague). A night belongs to the date the user woke up. \
 Start with get_daily_metrics for trends and get_day for one day in detail; for anything else read \
 get_schema and use query.";
 
@@ -272,8 +274,34 @@ struct DayArgs {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct QueryArgs {
-    /// A single SELECT statement
+    /// A single SELECT statement (DuckDB SQL)
     sql: String,
+    /// First day of heart_rate, activity, spo2 and hrv to load, YYYY-MM-DD. Default: 90 days
+    /// before `to`. The other tables are always complete.
+    #[serde(default)]
+    #[schemars(with = "Date")]
+    from: Option<Date>,
+    /// Last day of the minute tables to load, YYYY-MM-DD. Default: today.
+    #[serde(default)]
+    #[schemars(with = "Date")]
+    to: Option<Date>,
+}
+
+impl QueryArgs {
+    /// The days of the minute tables to load; checked like `RangeArgs`.
+    fn range(&self) -> Result<(NaiveDate, NaiveDate)> {
+        let to = self
+            .to
+            .map_or_else(|| chrono::Local::now().date_naive(), |d| d.0);
+        let from = self
+            .from
+            .map_or(to - Duration::days(QUERY_DEFAULT_DAYS - 1), |d| d.0);
+        RangeArgs {
+            from: Some(Date(from)),
+            to: Some(Date(to)),
+        }
+        .range()
+    }
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -348,15 +376,16 @@ fn tools() -> Vec<Tool> {
         tool(
             "get_schema",
             "Table schema",
-            "Tables and columns of the BigQuery dataset, for writing `query` SQL.",
+            "Tables and columns, for writing `query` SQL.",
             input_schema::<NoArgs>(),
         ),
         tool(
             "query",
             "SQL query",
-            "Runs one read-only GoogleSQL SELECT over the dataset; refer to tables by bare name \
-             (e.g. `daily`, `heart_rate`). Filter on `date` (the partition column) to keep scans \
-             small. Returns at most 1000 rows; aggregate rather than fetch raw minute data.",
+            "Runs one read-only SELECT in DuckDB SQL over the user's tables, by bare name (e.g. \
+             `daily`, `heart_rate`). daily, nights and exercises are complete; heart_rate, \
+             activity, spo2 and hrv hold only the days `from`..`to` (default: the last 90 days, \
+             at most 400). Returns at most 1000 rows; aggregate rather than fetch raw readings.",
             input_schema::<QueryArgs>(),
         ),
     ]
@@ -401,37 +430,27 @@ fn compact<T: Serialize>(value: T) -> Value {
     round(serde_json::to_value(value).unwrap_or_default())
 }
 
-/// A column from INFORMATION_SCHEMA, for `get_schema`.
-#[derive(Deserialize, Serialize)]
-struct Column {
-    #[serde(skip_serializing)]
-    table_name: String,
-    column: String,
-    data_type: String,
-    description: Option<String>,
-}
-
 async fn call_tool(cfg: &Config, tool: ToolCall) -> Result<Value> {
-    let bq = &cfg.bq;
+    let (wh, uid) = (&cfg.warehouse, cfg.owner.as_str());
     let in_range = |table: &str, (from, to): (NaiveDate, NaiveDate), order: &str| {
         format!(
-            "SELECT * FROM {} WHERE date BETWEEN '{from}' AND '{to}' ORDER BY {order}",
-            bq.table(table)
+            "SELECT * FROM {table} WHERE date BETWEEN DATE '{from}' AND DATE '{to}' ORDER BY {order}"
         )
     };
     match tool {
         ToolCall::GetDailyMetrics(args) => {
-            let (days, run) = tokio::try_join!(
-                bq.query_as::<DailyMetrics>(in_range("daily", args.range()?, "date")),
-                last_run(bq, true),
-            )?;
+            let sql = in_range("daily", args.range()?, "date");
+            let days = wh.with(uid, Need::None, move |c| {
+                duck::query_as::<DailyMetrics>(c, &sql)
+            });
+            let (days, run) = tokio::try_join!(days, last_run(&cfg.bq, true))?;
             Ok(json!({
                 "lastSuccessfulSync": run.map(|r| r.run_at),
                 "days": compact(days),
             }))
         }
         ToolCall::GetDay(DayArgs { date }) => {
-            let d = day_detail(bq, date.0).await?;
+            let d = day_detail(wh, uid, date.0).await?;
             Ok(json!({
                 "date": d.date,
                 "metrics": compact(d.metrics),
@@ -444,57 +463,61 @@ async fn call_tool(cfg: &Config, tool: ToolCall) -> Result<Value> {
             }))
         }
         ToolCall::GetSleep(args) => {
-            let rows = bq
-                .query_as::<NightRow>(in_range("nights", args.range()?, "date"))
+            let sql = in_range("nights", args.range()?, "date");
+            let rows = wh
+                .with(uid, Need::None, move |c| {
+                    duck::query_as::<NightRow>(c, &sql)
+                })
                 .await?;
             Ok(json!({ "nights": compact(rows) }))
         }
         ToolCall::GetExercises(args) => {
-            let rows = bq
-                .query_as::<Exercise>(in_range("exercises", args.range()?, "start"))
+            let sql = in_range("exercises", args.range()?, "start");
+            let rows = wh
+                .with(uid, Need::None, move |c| {
+                    duck::query_as::<Exercise>(c, &sql)
+                })
                 .await?;
             Ok(json!({ "exercises": compact(rows) }))
         }
-        ToolCall::GetSchema(NoArgs {}) => {
-            let columns = bq
-                .query_as::<Column>(format!(
-                    "SELECT table_name, field_path AS column, data_type, description
-                     FROM `{}.{}`.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS
-                     WHERE NOT STARTS_WITH(table_name, '_') ORDER BY table_name",
-                    bq.project, bq.dataset
-                ))
-                .await?;
-            let mut tables: Map<String, Value> = Map::new();
-            for c in columns {
-                let cols = tables
-                    .entry(c.table_name.clone())
-                    .or_insert_with(|| json!([]));
-                if let Value::Array(a) = cols {
-                    a.push(compact(c));
-                }
-            }
-            Ok(json!({
-                "notes": "All tables are partitioned by `date` (local date). DATETIME columns are \
-                          local wall-clock time (Europe/Prague). `daily` has one row per day; \
-                          heart_rate has a reading every few seconds, so aggregate it.",
-                "tables": tables,
-            }))
-        }
-        ToolCall::Query(QueryArgs { sql }) => {
-            let mut rows = bq
-                .query_untrusted(&sql, QUERY_MAX_BYTES, QUERY_MAX_ROWS)
-                .await?;
-            let truncated = rows.len() > QUERY_MAX_ROWS;
-            rows.truncate(QUERY_MAX_ROWS);
-            let mut out = json!({ "rows": compact(rows) });
-            if truncated {
-                out["note"] = json!(format!(
-                    "Only the first {QUERY_MAX_ROWS} rows; aggregate to see everything."
-                ));
+        ToolCall::GetSchema(NoArgs {}) => Ok(schema()),
+        ToolCall::Query(args) => {
+            let (from, to) = args.range()?;
+            let snapshot = wh.snapshot(uid, Need::Range(from, to)).await?;
+            let result = cfg.query.run(&args.sql, &snapshot).await?;
+            let mut out = json!({ "rows": compact(result.rows) });
+            if result.truncated {
+                out["note"] = json!("Only the first rows; aggregate to see everything.");
             }
             Ok(out)
         }
     }
+}
+
+/// `get_schema`: every table with its columns, types and descriptions.
+fn schema() -> Value {
+    let tables: Map<String, Value> = duck::TABLES
+        .iter()
+        .map(|t| {
+            let cols: Vec<Value> = duck::schema(t)
+                .iter()
+                .map(|c| {
+                    compact(json!({
+                        "column": c.name,
+                        "type": duck::duck_type(c),
+                        "description": c.description,
+                    }))
+                })
+                .collect();
+            (t.to_string(), Value::Array(cols))
+        })
+        .collect();
+    json!({
+        "notes": "DuckDB SQL. Every table has `date` (local date); TIMESTAMP columns are local \
+                  wall-clock time (Europe/Prague). `daily` has one row per day; heart_rate has a \
+                  reading every few seconds, so aggregate it.",
+        "tables": tables,
+    })
 }
 
 /// Minute rows merged into 15-minute buckets: `(start, min, mean, max)`.

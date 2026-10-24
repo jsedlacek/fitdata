@@ -51,7 +51,7 @@ if ! gcloud secrets describe session-key --project "$PROJECT" >/dev/null 2>&1; t
 fi
 
 say "Service accounts"
-for sa in "$JOB_SA" "$WEB_SA" "$SCHEDULER_SA" "$DEPLOY_SA"; do
+for sa in "$JOB_SA" "$WEB_SA" "$SCHEDULER_SA" "$QUERY_SA" "$DEPLOY_SA"; do
   name=${sa%%@*}
   if ! gcloud iam service-accounts describe "$sa" --project "$PROJECT" >/dev/null 2>&1; then
     gcloud iam service-accounts create "$name" --project "$PROJECT" --display-name "fitdata $name"
@@ -74,6 +74,18 @@ secret_role refresh-token "$WEB_SA" roles/secretmanager.secretVersionManager
 
 gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member "serviceAccount:$JOB_SA" --role roles/storage.objectAdmin >/dev/null
+# Web: reads the users' Parquet tables (src/warehouse.rs).
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+  --member "serviceAccount:$WEB_SA" --role roles/storage.objectViewer >/dev/null
+
+# The query service gets the data of one user with each request and must not
+# be able to read anything else: its service account has no role anywhere.
+# Fails setup if one was added by hand.
+if gcloud projects get-iam-policy "$PROJECT" --format=json | grep -q "serviceAccount:$QUERY_SA" ||
+  gcloud storage buckets get-iam-policy "gs://$BUCKET" --format=json | grep -q "serviceAccount:$QUERY_SA"; then
+  echo "ERROR: $QUERY_SA has a role in the project or the bucket; remove it" >&2
+  exit 1
+fi
 
 # Spans go to Cloud Trace via the Telemetry API (src/telemetry.rs).
 for sa in "$JOB_SA" "$WEB_SA"; do
@@ -131,7 +143,7 @@ gcloud storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" \
 # Run the job and web as their SAs, schedule as the scheduler SA, and run
 # Cloud Build as its default (compute) SA.
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)')
-for sa in "$JOB_SA" "$WEB_SA" "$SCHEDULER_SA" "$PROJECT_NUMBER-compute@developer.gserviceaccount.com"; do
+for sa in "$JOB_SA" "$WEB_SA" "$SCHEDULER_SA" "$QUERY_SA" "$PROJECT_NUMBER-compute@developer.gserviceaccount.com"; do
   gcloud iam service-accounts add-iam-policy-binding "$sa" --project "$PROJECT" \
     --member "serviceAccount:$DEPLOY_SA" --role roles/iam.serviceAccountUser >/dev/null
 done

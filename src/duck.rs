@@ -4,9 +4,6 @@
 //!
 //! DuckDB is synchronous; callers run it in `spawn_blocking`.
 
-// The readers (dashboard, MCP) move over from BigQuery in the next change.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
@@ -110,6 +107,43 @@ pub fn ident(s: &str) -> String {
 /// A quoted string literal.
 pub fn literal(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
+}
+
+/// A SELECT of `table`'s columns, in schema order, over Parquet `files`.
+/// Columns that none of the files have (added to the schema later) come
+/// back NULL; without files the result is empty but typed.
+pub fn select_table(conn: &Connection, table: &str, files: &[String]) -> Result<String> {
+    let schema = schema(table);
+    if files.is_empty() {
+        let typed: Vec<String> = schema
+            .iter()
+            .map(|c| format!("NULL::{} AS {}", duck_type(c), ident(&c.name)))
+            .collect();
+        return Ok(format!("SELECT {} WHERE false", typed.join(", ")));
+    }
+    let source = format!(
+        "read_parquet([{}], union_by_name = true)",
+        files
+            .iter()
+            .map(|f| literal(f))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let present: Vec<String> = rows(conn, &format!("DESCRIBE SELECT * FROM {source}"))?
+        .into_iter()
+        .filter_map(|r| r["column_name"].as_str().map(String::from))
+        .collect();
+    let cols: Vec<String> = schema
+        .iter()
+        .map(|c| {
+            if present.contains(&c.name) {
+                ident(&c.name)
+            } else {
+                format!("NULL::{} AS {}", duck_type(c), ident(&c.name))
+            }
+        })
+        .collect();
+    Ok(format!("SELECT {} FROM {source}", cols.join(", ")))
 }
 
 /// An in-memory database that only reads files it is pointed at: extensions
