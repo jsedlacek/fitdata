@@ -89,6 +89,9 @@ pub struct DailyMetrics {
     pub exercise_minutes: Option<f64>,
 }
 
+/// Longest wake-up between two sleep sessions that still makes them one night.
+const MAX_NIGHT_GAP: Duration = Duration::hours(3);
+
 #[derive(Default)]
 pub struct Dataset {
     /// (local time, bpm), sorted.
@@ -387,17 +390,25 @@ impl Dataset {
         Ok(())
     }
 
-    /// The night before `d`: all sleep sessions that ended on `d` before 14:00,
-    /// merged. Google sometimes splits one night into several sessions (e.g.
-    /// after waking up for an hour); later sessions are naps and don't count.
-    /// Gaps between the sessions count as awake, as in Google Health.
+    /// The night before `d`: the first sleep session that ended on `d` before
+    /// 14:00, merged with the sessions that follow it within `MAX_NIGHT_GAP`.
+    /// Google sometimes splits one night into several sessions (e.g. after
+    /// waking up for an hour); a later session after a longer gap is a nap and
+    /// doesn't count. Gaps between merged sessions count as awake, as in Google Health.
     pub fn night_before(&self, d: NaiveDate) -> Option<Sleep> {
         let cutoff = d.and_hms_opt(14, 0, 0)?;
-        let parts: Vec<&Sleep> = self
+        let mut parts: Vec<&Sleep> = Vec::new();
+        for s in self
             .sleep
             .iter()
             .filter(|s| s.end.date() == d && s.end < cutoff)
-            .collect();
+        {
+            let end = parts.iter().map(|p| p.end).max();
+            if end.is_some_and(|e| s.start - e > MAX_NIGHT_GAP) {
+                break;
+            }
+            parts.push(s);
+        }
         let first = parts.first()?;
         let mut night = Sleep {
             start: first.start,
@@ -549,6 +560,8 @@ mod tests {
             sleep: vec![
                 sleep("2026-10-21 23:14", "2026-10-22 03:13", 233, true),
                 sleep("2026-10-22 05:18", "2026-10-22 08:57", 197, false),
+                // Naps: more than 3 hours after waking up, or after 14:00.
+                sleep("2026-10-22 12:30", "2026-10-22 13:10", 38, false),
                 sleep("2026-10-22 15:00", "2026-10-22 15:40", 35, false),
             ],
             ..Default::default()
