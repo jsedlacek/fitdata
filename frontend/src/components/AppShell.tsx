@@ -1,5 +1,5 @@
 import { Link, Outlet } from '@tanstack/react-router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, CheckCircle2, Laptop, Moon, RefreshCw, Sun, TriangleAlert } from 'lucide-react';
 import { overviewQuery, startSync, syncQuery, type SyncRun } from '@/lib/api';
@@ -69,6 +69,13 @@ function SyncStatus({ run }: { run: SyncRun | null }) {
     }
     wasRunning.current = running;
   }, [running, queryClient]);
+
+  // Re-render every minute so "před 5 min" keeps counting.
+  const [, tick] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    const id = setInterval(tick, 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const Icon = run?.ok ? CheckCircle2 : TriangleAlert;
   return (

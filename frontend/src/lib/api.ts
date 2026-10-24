@@ -100,11 +100,11 @@ export const dayQuery = (date: string) => ({
   staleTime: 5 * 60_000,
 });
 
-/** Whether a sync job runs; polled while it does. */
+/** Whether a sync job runs: polled often while it does, otherwise now and then to notice the scheduled one. */
 export const syncQuery = {
   queryKey: ['sync'],
   queryFn: () => get<SyncState>('/api/sync'),
-  refetchInterval: (q: { state: { data?: SyncState } }) => (q.state.data?.running ? 5_000 : false),
+  refetchInterval: (q: { state: { data?: SyncState } }) => (q.state.data?.running ? 5_000 : 5 * 60_000),
 };
 
 /** Starts a sync job (or joins the one already running). */

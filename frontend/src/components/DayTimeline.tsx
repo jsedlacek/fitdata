@@ -4,6 +4,7 @@ import { chrome, row } from '@/lib/chart';
 import { clock, num } from '@/lib/format';
 import { useResolvedTheme } from '@/lib/theme';
 import { EChart } from './EChart';
+import { exerciseLabel } from './ExerciseList';
 import { Card, CardBody, CardHeader } from './ui/card';
 
 /** Break lines where the tracker recorded nothing (e.g. while charging). */
@@ -24,7 +25,7 @@ export function DayTimeline({ day }: { day: DayDetail }) {
     const { c } = t;
     const rows = withGaps(day.heartRate, 5);
     const sleepArea = day.sleep ? [[{ xAxis: day.sleep.start, name: 'Spánek' }, { xAxis: day.sleep.end }]] : [];
-    const exerciseAreas = day.exercises.map((e) => [{ xAxis: e.start, name: e.name || e.kind }, { xAxis: e.end }]);
+    const exerciseAreas = day.exercises.map((e) => [{ xAxis: e.start, name: exerciseLabel(e) }, { xAxis: e.end }]);
     const midnight = `${day.date}T00:00:00`;
     const x = { ...t.timeAxis, min: day.range[0], max: day.range[1] };
     return {

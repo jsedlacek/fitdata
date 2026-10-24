@@ -75,6 +75,14 @@ export function TrendsPage({ range }: { range: Range }) {
   );
 }
 
+/** Bounds and step snapped to 1/2/5 × 10ⁿ, so the edge labels sit on grid lines (about 3 steps). */
+function niceRange(lo: number, hi: number, cap = Infinity) {
+  const raw = (hi - lo) / 3 || 1;
+  const p = 10 ** Math.floor(Math.log10(raw));
+  const interval = [1, 2, 5, 10].map((f) => f * p).find((s) => s >= raw)!;
+  return { min: Math.floor(lo / interval) * interval, max: Math.min(cap, Math.ceil(hi / interval) * interval), interval };
+}
+
 function TrendCard({ metric: m, days }: { metric: Metric; days: Daily[] }) {
   const theme = useResolvedTheme();
   const values = days.map((d) => d[m.key]);
@@ -88,7 +96,7 @@ function TrendCard({ metric: m, days }: { metric: Metric; days: Daily[] }) {
     const mu = mean(present) ?? 0;
     const pad = Math.abs(mu) * 0.1;
     const yRange = m.kind === 'line' && present.length
-      ? { min: Math.floor(Math.min(...present, mu - pad)), max: Math.min(m.max ?? Infinity, Math.ceil(Math.max(...present, mu + pad))) }
+      ? niceRange(Math.min(...present, mu - pad), Math.max(...present, mu + pad), m.max)
       : { min: 0 };
     return {
       animation: false,
@@ -108,7 +116,7 @@ function TrendCard({ metric: m, days }: { metric: Metric; days: Daily[] }) {
         type: 'category', data: days.map((d) => weekdayShort(d.date)), axisLabel: { ...t.axisLabel, hideOverlap: true },
         axisLine: { lineStyle: { color: t.c.axis } }, axisTick: { show: false },
       },
-      yAxis: { ...t.valueAxis, ...yRange, axisLabel: { ...t.axisLabel, formatter: (v: number) => (v >= 10000 ? `${v / 1000}k` : num(v)) } },
+      yAxis: { ...t.valueAxis, ...yRange, axisLabel: { ...t.axisLabel, formatter: (v: number) => (v >= 10000 ? `${v / 1000}k` : num(v, 'interval' in yRange && yRange.interval < 1 ? 1 : 0)) } },
       series: [
         m.kind === 'bar'
           ? { type: 'bar', data: values, barMaxWidth: 26, itemStyle: { color, borderRadius: [4, 4, 0, 0] } }
@@ -215,6 +223,7 @@ function SleepTrend({ days }: { days: Daily[] }) {
 }
 
 function DaysTable({ days }: { days: Daily[] }) {
+  const navigate = useNavigate();
   const cols: [string, (d: Daily) => string][] = [
     ['Spánek', (d) => hm(d.sleep_minutes)],
     ['Klidový tep', (d) => num(d.resting_hr)],
@@ -233,14 +242,18 @@ function DaysTable({ days }: { days: Daily[] }) {
         <table className="w-full text-sm tabular-nums">
           <thead>
             <tr className="border-b text-xs text-ink-2">
-              <th className="px-5 py-2 text-left font-medium">Den</th>
+              <th className="sticky left-0 bg-surface px-5 py-2 text-left font-medium">Den</th>
               {cols.map(([h]) => <th key={h} className="whitespace-nowrap px-3 py-2 text-right font-medium">{h}</th>)}
             </tr>
           </thead>
           <tbody>
             {[...days].reverse().map((d) => (
-              <tr key={d.date} className="border-b last:border-0 hover:bg-shade">
-                <td className="whitespace-nowrap px-5 py-2">
+              <tr
+                key={d.date}
+                className="group cursor-pointer border-b last:border-0 hover:bg-surface-2"
+                onClick={() => navigate({ to: '/', search: { date: d.date } })}
+              >
+                <td className="sticky left-0 whitespace-nowrap bg-surface px-5 py-2 group-hover:bg-surface-2">
                   <Link to="/" search={{ date: d.date }} className="font-medium hover:text-s1">{weekdayShort(d.date)}</Link>
                 </td>
                 {cols.map(([h, f]) => <td key={h} className="whitespace-nowrap px-3 py-2 text-right">{f(d)}</td>)}

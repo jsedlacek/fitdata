@@ -5,8 +5,9 @@ import { RouterProvider } from '@tanstack/react-router';
 import { router } from './router';
 import './index.css';
 
+// Stale queries refetch when the tab comes back into focus, so a dashboard left open catches up.
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+  defaultOptions: { queries: { retry: 1 } },
 });
 
 createRoot(document.getElementById('root')!).render(

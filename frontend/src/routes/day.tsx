@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { Activity, BedDouble, Flame, Footprints, HeartPulse, RefreshCw, Waves, Wind, Zap } from 'lucide-react';
 import { dayQuery, overviewQuery, type Daily } from '@/lib/api';
@@ -13,15 +14,17 @@ import { SleepCard } from '@/components/SleepCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 
-type Kpi = { key: MetricKey; label: string; icon: typeof Activity; unit?: string; digits?: number; accent: string; time?: boolean };
+/** `better`: which direction of change is good (1 = up, -1 = down); unset for neutral metrics. */
+type Kpi = { key: MetricKey; label: string; icon: typeof Activity; unit?: string; digits?: number; accent: string; time?: boolean; better?: 1 | -1 };
 
 const KPIS: Kpi[] = [
-  { key: 'sleep_minutes', label: 'Spánek', icon: BedDouble, accent: 'var(--s7)', time: true },
-  { key: 'resting_hr', label: 'Klidový tep', icon: HeartPulse, unit: 'bpm', accent: 'var(--s5)' },
-  { key: 'hrv_ms', label: 'HRV', icon: Activity, unit: 'ms', digits: 1, accent: 'var(--s1)' },
-  { key: 'steps', label: 'Kroky', icon: Footprints, accent: 'var(--s3)' },
-  { key: 'azm', label: 'Aktivní zóny', icon: Zap, unit: 'min', accent: 'var(--s2)' },
+  { key: 'sleep_minutes', label: 'Spánek', icon: BedDouble, accent: 'var(--s7)', time: true, better: 1 },
+  { key: 'resting_hr', label: 'Klidový tep', icon: HeartPulse, unit: 'bpm', accent: 'var(--s5)', better: -1 },
+  { key: 'hrv_ms', label: 'HRV', icon: Activity, unit: 'ms', digits: 1, accent: 'var(--s1)', better: 1 },
+  { key: 'steps', label: 'Kroky', icon: Footprints, accent: 'var(--s3)', better: 1 },
+  { key: 'azm', label: 'Aktivní zóny', icon: Zap, unit: 'min', accent: 'var(--s2)', better: 1 },
   { key: 'spo2_avg', label: 'SpO₂', icon: Waves, unit: '%', digits: 1, accent: 'var(--s1)' },
   { key: 'respiratory_rate', label: 'Dech', icon: Wind, unit: '/min', digits: 1, accent: 'var(--s3)' },
   { key: 'active_kcal', label: 'Aktivní kcal', icon: Flame, unit: 'kcal', accent: 'var(--s2)' },
@@ -35,20 +38,43 @@ export function DayPage({ date: wanted }: { date?: string }) {
   const overview = useQuery(overviewQuery);
   const days = withData(overview.data?.days ?? []);
   const date = wanted && days.some((d) => d.date === wanted) ? wanted : days.at(-1)?.date;
-  const day = useQuery({ ...dayQuery(date ?? ''), enabled: !!date });
+  // Keep the previous day on screen while the next one loads, so the page doesn't jump.
+  const day = useQuery({ ...dayQuery(date ?? ''), enabled: !!date, placeholderData: keepPreviousData });
+  const queryClient = useQueryClient();
+  const idx = date ? days.findIndex((d) => d.date === date) : -1;
+  const prev = idx > 0 ? days[idx - 1].date : undefined;
+  const next = idx >= 0 && idx < days.length - 1 ? days[idx + 1].date : undefined;
+  const go = (d: string) => navigate({ to: '/', search: { date: d } });
+
+  useEffect(() => {
+    for (const d of [prev, next]) if (d) void queryClient.prefetchQuery(dayQuery(d));
+  }, [prev, next, queryClient]);
+
+  // ← / → step between days with data, unless a control (e.g. the theme toggle) uses the arrows itself.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if ((e.target as HTMLElement).closest('input, textarea, select, [role="group"], [role="radiogroup"], [role="dialog"]')) return;
+      const to = e.key === 'ArrowLeft' ? prev : e.key === 'ArrowRight' ? next : undefined;
+      if (!to) return;
+      e.preventDefault();
+      void navigate({ to: '/', search: { date: to } });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [prev, next, navigate]);
 
   if (overview.isError) return <ErrorCard onRetry={() => overview.refetch()} />;
   if (overview.isPending) return <DaySkeleton />;
   if (!date) {
     return (
       <Card>
-        <CardBody className="py-16 text-center text-sm text-muted">Zatím žádná data. Spusť synchronizaci (`fitdata job`).</CardBody>
+        <CardBody className="py-16 text-center text-sm text-muted">Zatím žádná data. Spusť synchronizaci tlačítkem vpravo nahoře.</CardBody>
       </Card>
     );
   }
 
-  const metrics = days.find((d) => d.date === date)!;
-  const go = (d: string) => navigate({ to: '/', search: { date: d } });
+  const metrics = days[idx];
 
   return (
     <div className="space-y-5">
@@ -65,6 +91,8 @@ export function DayPage({ date: wanted }: { date?: string }) {
           const diff = v != null && avg != null ? v - avg : null;
           const fmt = (x: number) => (k.time ? duration(x) : num(x, k.digits ?? 0));
           const delta = diff == null ? null : `${diff >= 0 ? '+' : '−'}${fmt(Math.abs(diff))}`;
+          // Changes within 5 % of the average are noise, not worth a color.
+          const tone = diff == null || avg == null || !k.better || Math.abs(diff) < Math.abs(avg) * 0.05 ? undefined : Math.sign(diff) === k.better ? 'good' : 'bad';
           const spark = days.filter((d) => d.date <= date).slice(-14).map((d) => d[k.key]);
           return (
             <KpiCard
@@ -74,6 +102,7 @@ export function DayPage({ date: wanted }: { date?: string }) {
               value={v == null ? '–' : k.time ? hm(v) : num(v, k.digits ?? 0)}
               unit={k.time ? 'h' : k.unit}
               delta={delta}
+              tone={tone}
               baselineLabel={`vs. Ø ${base.length} ${plural(base.length, 'dne', 'dnů', 'dnů')}`}
               spark={spark}
               accent={k.accent}
@@ -90,7 +119,7 @@ export function DayPage({ date: wanted }: { date?: string }) {
           <Skeleton className="h-[360px] rounded-xl" />
         </>
       ) : (
-        <>
+        <div className={cn('space-y-5 transition-opacity', day.isPlaceholderData && 'opacity-60')} aria-busy={day.isPlaceholderData}>
           <DayTimeline day={day.data} />
           <div className="grid gap-5 lg:grid-cols-5">
             <div className="lg:col-span-3">
@@ -102,7 +131,7 @@ export function DayPage({ date: wanted }: { date?: string }) {
             </div>
           </div>
           <NightVitals day={day.data} />
-        </>
+        </div>
       )}
     </div>
   );

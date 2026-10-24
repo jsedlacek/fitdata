@@ -2,13 +2,14 @@ import { ArrowDownRight, ArrowUpRight, Minus } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-/** Headline number with a 14-day sparkline and the change against the recent average. */
+/** Headline number with a 14-day sparkline and the change against the recent average (`tone` colors it). */
 export function KpiCard({
   icon: Icon,
   label,
   value,
   unit,
   delta,
+  tone,
   baselineLabel,
   spark,
   accent = 'var(--s1)',
@@ -18,6 +19,7 @@ export function KpiCard({
   value: string;
   unit?: string;
   delta?: string | null;
+  tone?: 'good' | 'bad';
   baselineLabel?: string;
   spark: (number | null)[];
   accent?: string;
@@ -37,11 +39,16 @@ export function KpiCard({
         </div>
         <Sparkline values={spark} color={accent} />
       </div>
-      <div className={cn('flex min-h-4 items-center gap-1 text-xs tabular-nums text-muted')}>
+      <div className="flex min-h-4 items-center gap-1 text-xs tabular-nums text-muted">
         {delta && (
           <>
-            <Arrow className="size-3.5" />
-            <span className="text-ink-2">{delta}</span>
+            <span
+              className={cn('inline-flex items-center gap-1', tone === 'good' ? 'text-good' : tone === 'bad' ? 'text-critical' : 'text-ink-2')}
+              title={tone === 'good' ? 'Lepší než průměr' : tone === 'bad' ? 'Horší než průměr' : undefined}
+            >
+              <Arrow className="size-3.5" />
+              {delta}
+            </span>
             <span>{baselineLabel}</span>
           </>
         )}
