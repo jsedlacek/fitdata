@@ -4,5 +4,6 @@
   {"name": "ok", "type": "BOOLEAN", "mode": "REQUIRED"},
   {"name": "auth_error", "type": "BOOLEAN", "mode": "REQUIRED", "description": "The refresh token no longer works; reconnect on the dashboard"},
   {"name": "error", "type": "STRING", "mode": "NULLABLE"},
-  {"name": "days", "type": "INTEGER", "mode": "NULLABLE"}
+  {"name": "days", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "skipped", "type": "STRING", "mode": "REPEATED", "description": "Data types skipped as not readable (HTTP 403/404), e.g. a scope missing from the refresh token"}
 ]

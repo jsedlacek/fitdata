@@ -135,10 +135,20 @@ fn type_span(dt: &DataType) -> tracing::Span {
     )
 }
 
-/// Treats "no access / unsupported for this account" as no data instead of failing the run.
+/// Treats "no access / unsupported for this account" as no data instead of
+/// failing the run. A 400 is not among them: it means a bad request (e.g. a
+/// filter the API no longer accepts), which must not pass silently.
 fn is_unavailable(e: &anyhow::Error) -> bool {
     e.downcast_ref::<ApiError>()
-        .is_some_and(|e| matches!(e.status, 400 | 403 | 404))
+        .is_some_and(|e| matches!(e.status, 403 | 404))
+}
+
+/// What `fetch_range` did.
+#[derive(Debug, Default)]
+pub struct Fetched {
+    pub points: usize,
+    /// Data types skipped because they are not readable (see `is_unavailable`).
+    pub skipped: Vec<&'static str>,
 }
 
 /// Re-fetches every slot overlapping `[from, to)`, overwriting stored files.
@@ -149,8 +159,8 @@ pub async fn fetch_range(
     types: &[&'static DataType],
     from: NaiveDate,
     to: NaiveDate,
-) -> Result<usize> {
-    let totals: Vec<usize> = stream::iter(types.iter().copied())
+) -> Result<Fetched> {
+    let per_type: Vec<(&'static str, usize, bool)> = stream::iter(types.iter().copied())
         .map(|dt| {
             async move {
                 let mut n = 0;
@@ -159,19 +169,27 @@ pub async fn fetch_range(
                         Ok(c) => n += c,
                         Err(e) if is_unavailable(&e) => {
                             tracing::warn!("skipped ({e})");
-                            break;
+                            return Ok((dt.id, n, true));
                         }
                         Err(e) => return Err(e.context(format!("{} {}", dt.id, slot.key))),
                     }
                 }
-                Ok::<_, anyhow::Error>(n)
+                Ok::<_, anyhow::Error>((dt.id, n, false))
             }
             .instrument(type_span(dt))
         })
         .buffer_unordered(CONCURRENCY)
         .try_collect()
         .await?;
-    Ok(totals.into_iter().sum())
+    let mut out = Fetched::default();
+    for (id, n, skipped) in per_type {
+        out.points += n;
+        if skipped {
+            out.skipped.push(id);
+        }
+    }
+    out.skipped.sort_unstable();
+    Ok(out)
 }
 
 /// Walks back month by month from the newest data point of each type until

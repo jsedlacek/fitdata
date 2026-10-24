@@ -164,6 +164,7 @@ async fn health_client(
 }
 
 /// The daily job: re-fetch the last `days` days, then rebuild them in BigQuery.
+/// Returns the data types that were skipped as not readable.
 async fn job(
     http: &reqwest::Client,
     creds: ClientCredentials,
@@ -171,11 +172,11 @@ async fn job(
     store: &Store,
     bq: &Bq,
     days: u64,
-) -> Result<()> {
+) -> Result<Vec<&'static str>> {
     let client = health_client(http, creds, token_ref).await?;
     let today = chrono::Local::now().date_naive();
     let from = today - Days::new(days);
-    let n = sync::fetch_range(
+    let fetched = sync::fetch_range(
         &client,
         store,
         &select_types(&[])?,
@@ -183,8 +184,13 @@ async fn job(
         today + Days::new(1),
     )
     .await?;
-    tracing::info!("synced {from}..{today}: {n} data points");
-    load(store, bq, from, today).await
+    tracing::info!("synced {from}..{today}: {} data points", fetched.points);
+    if !fetched.skipped.is_empty() {
+        // Usually a scope missing from the refresh token: reconnect Fitbit.
+        tracing::warn!("data types not readable: {}", fetched.skipped.join(", "));
+    }
+    load(store, bq, from, today).await?;
+    Ok(fetched.skipped)
 }
 
 /// Appends the outcome of a job run to the `sync_runs` table.
@@ -192,23 +198,28 @@ async fn record_run(
     bq: &Bq,
     started: chrono::DateTime<chrono::Utc>,
     days: u64,
-    result: &Result<()>,
+    result: &Result<Vec<&'static str>>,
 ) -> Result<()> {
     let auth_error = result
         .as_ref()
         .err()
         .is_some_and(|e| e.chain().any(|c| c.is::<oauth::AuthError>()));
     let error = match result {
-        Ok(()) => "NULL".to_string(),
+        Ok(_) => "NULL".to_string(),
         Err(e) => bq::string_literal(&format!("{e:#}")),
     };
+    let skipped: Vec<String> = result
+        .as_ref()
+        .map(|s| s.iter().map(|id| bq::string_literal(id)).collect())
+        .unwrap_or_default();
     let local = started.with_timezone(&chrono::Local);
     bq.query(format!(
-        "INSERT INTO {} (date, run_at, ok, auth_error, error, days) VALUES ('{}', '{}', {}, {auth_error}, {error}, {days})",
+        "INSERT INTO {} (date, run_at, ok, auth_error, error, days, skipped) VALUES ('{}', '{}', {}, {auth_error}, {error}, {days}, ARRAY<STRING>[{}])",
         bq.table("sync_runs"),
         local.date_naive(),
         started.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
         result.is_ok(),
+        skipped.join(", "),
     ))
     .await?;
     Ok(())
@@ -337,7 +348,7 @@ async fn run(cli: Cli) -> Result<()> {
         if let Err(e) = record_run(&bq, started, days, &result).await {
             tracing::error!("recording the run failed: {e:#}");
         }
-        return result;
+        return result.map(drop);
     }
 
     let client = health_client(&http, creds, &token_ref).await?;
@@ -408,8 +419,12 @@ async fn run(cli: Cli) -> Result<()> {
             if from >= to {
                 bail!("--from must be before --to");
             }
-            let n = sync::fetch_range(&client, &store, &select_types(&types)?, from, to).await?;
-            println!("Sync {from}..{to} done: {n} data points");
+            let fetched =
+                sync::fetch_range(&client, &store, &select_types(&types)?, from, to).await?;
+            println!("Sync {from}..{to} done: {} data points", fetched.points);
+            if !fetched.skipped.is_empty() {
+                println!("Not readable: {}", fetched.skipped.join(", "));
+            }
         }
     }
     Ok(())
