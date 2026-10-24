@@ -1,0 +1,5 @@
+# Upload only the prebuilt binary and dashboard.
+*
+!target/release/fitdata
+!frontend/dist/
+!frontend/dist/**

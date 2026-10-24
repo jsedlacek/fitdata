@@ -18,7 +18,9 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    # Pinned: the binary is built here and must run on the image's glibc
+    # (Dockerfile.ci).
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -35,8 +37,8 @@ jobs:
         with:
           install_components: beta
       # The image is built here rather than in Cloud Build: the runner would
-      # only wait for it anyway, and the GitHub Actions cache keeps the layer
-      # with the compiled dependencies (cargo-chef) between deploys.
+      # only wait for it anyway, and rust-cache keeps the compiled crates
+      # between deploys, so a changed dependency rebuilds only what uses it.
       - id: image
         run: |
           source deploy/config.sh
@@ -45,6 +47,21 @@ jobs:
           if gcloud artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           fi
+      - if: steps.image.outputs.exists != 'true'
+        uses: dtolnay/rust-toolchain@1.99
+      - if: steps.image.outputs.exists != 'true'
+        uses: Swatinem/rust-cache@v2
+      - if: steps.image.outputs.exists != 'true'
+        run: cargo build --release --locked
+      - if: steps.image.outputs.exists != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - if: steps.image.outputs.exists != 'true'
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund && npm run build
       - if: steps.image.outputs.exists != 'true'
         uses: docker/login-action@v3
         with:
@@ -57,10 +74,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile.ci
           push: true
           tags: ${{ steps.image.outputs.image }}
           # A plain image manifest, without an attestation index.
           provenance: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
       - run: deploy/deploy.sh

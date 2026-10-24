@@ -1,0 +1,9 @@
+# Image for GitHub Actions: the workflow builds the binary and the dashboard
+# itself (with a per-crate rust-cache), so this only packs them. Built on
+# ubuntu-24.04 (glibc 2.39), hence the Debian 13 runtime (glibc 2.41).
+# deploy/deploy.sh builds the full Dockerfile when run elsewhere.
+FROM gcr.io/distroless/cc-debian13
+COPY target/release/fitdata /fitdata
+COPY frontend/dist /static
+ENV STATIC_DIR=/static
+ENTRYPOINT ["/fitdata"]

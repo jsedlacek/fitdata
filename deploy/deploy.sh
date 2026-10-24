@@ -19,8 +19,9 @@ fi
 # APP_VERSION tags traces and Error Reporting groups with the image.
 ENV=GCP_PROJECT=$PROJECT,GCP_REGION=$REGION,STORAGE=gs://$BUCKET,KMS_KEY=$KMS_KEY,TZ=$TIME_ZONE,RUST_LOG=fitdata=info,APP_VERSION=$TAG
 
-# GitHub Actions builds and pushes the image itself (with a layer cache)
-# before running this, so there it is always found here.
+# GitHub Actions builds and pushes the image itself
+# (Dockerfile.ci, with a rust-cache) before running this, so there it is
+# always found here.
 if [[ $TAG != *-dirty ]] && gcloud artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   echo "== Image $IMAGE already built"
 else

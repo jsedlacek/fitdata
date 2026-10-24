@@ -1615,7 +1615,6 @@ dependencies = [
  "dotenvy",
  "futures",
  "google-cloud-auth",
- "google-cloud-bigquery-v2",
  "google-cloud-gax",
  "google-cloud-secretmanager-v1",
  "google-cloud-storage",
@@ -1872,28 +1871,6 @@ dependencies = [
  "time",
  "tokio",
  "url",
-]
-
-[[package]]
-name = "google-cloud-bigquery-v2"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f18fee7e5c3802602ab71c10da5e9ffdedc1f4fcc49b4f9bdaac99c807769442"
-dependencies = [
- "async-trait",
- "bytes",
- "google-cloud-gax",
- "google-cloud-gax-internal",
- "google-cloud-lro",
- "google-cloud-type",
- "google-cloud-wkt",
- "serde",
- "serde_json",
- "serde_with",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
