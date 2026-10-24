@@ -14,10 +14,8 @@ use axum::response::{Html, IntoResponse, Json, Redirect, Response};
 use axum::routing::{get, post};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
-use hmac::{Hmac, KeyInit, Mac};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::Sha256;
 use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -25,6 +23,7 @@ use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::bq::Bq;
+use crate::claims::{self, Claims, Purpose};
 use crate::cloudrun::SyncJob;
 use crate::datatypes::READ_SCOPES;
 use crate::oauth::{ClientCredentials, auth_request, exchange_code};
@@ -171,26 +170,6 @@ fn internal(e: anyhow::Error) -> Response {
 
 // ---------------------------------------------------------------- sessions
 
-/// `base64(json) . base64(hmac)`; the JSON carries an `exp` unix timestamp.
-pub(crate) fn sign(key: &[u8], payload: &Value) -> String {
-    let body = URL_SAFE_NO_PAD.encode(payload.to_string());
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
-    mac.update(body.as_bytes());
-    format!(
-        "{body}.{}",
-        URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
-    )
-}
-
-pub(crate) fn verify(key: &[u8], token: &str) -> Option<Value> {
-    let (body, sig) = token.split_once('.')?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).ok()?;
-    mac.update(body.as_bytes());
-    mac.verify_slice(&URL_SAFE_NO_PAD.decode(sig).ok()?).ok()?;
-    let v: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(body).ok()?).ok()?;
-    (v["exp"].as_i64()? > chrono::Utc::now().timestamp()).then_some(v)
-}
-
 fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers
         .get_all(header::COOKIE)
@@ -209,23 +188,20 @@ fn set_cookie(cfg: &Config, name: &str, value: &str, max_age: i64) -> String {
     format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
 }
 
-/// The signed-in user. Every token signed with the session key carries an
-/// `exp`, so a session is recognised by having an `email` and no `kind`
-/// (OAuth codes and tokens have one; the pending sign-in cookie has no email).
+/// The signed-in user, if still allowed.
 pub(crate) fn session_email(cfg: &Config, headers: &HeaderMap) -> Option<String> {
     session_of(&cfg.session_key, &cfg.allowed_emails, headers)
 }
 
 fn session_of(key: &[u8], allowed: &[String], headers: &HeaderMap) -> Option<String> {
-    let v = verify(key, cookie(headers, SESSION_COOKIE)?)?;
-    if v.get("kind").is_some() {
+    let Claims::Session { email } = claims::verify(key, cookie(headers, SESSION_COOKIE)?)? else {
         return None;
-    }
-    let email = v["email"].as_str()?;
-    allowed
-        .iter()
-        .any(|e| e == email)
-        .then(|| email.to_string())
+    };
+    allowed.contains(&email).then_some(email)
+}
+
+fn now() -> i64 {
+    chrono::Utc::now().timestamp()
 }
 
 async fn require_session(State(cfg): State<Shared>, req: Request, next: Next) -> Response {
@@ -239,12 +215,10 @@ async fn require_session(State(cfg): State<Shared>, req: Request, next: Next) ->
     }
 }
 
-/// Starts an OAuth flow; `purpose` is "login" (who are you) or "health"
-/// (consent to read Health data, yielding a new refresh token). After a
-/// login the browser returns to `next`.
+/// Starts a Google OAuth flow. After a login the browser returns to `next`.
 fn start_oauth(
     cfg: &Config,
-    purpose: &str,
+    purpose: Purpose,
     scopes: &[&str],
     offline: bool,
     next: &str,
@@ -254,14 +228,17 @@ fn start_oauth(
         Ok(r) => r,
         Err(e) => return internal(e),
     };
-    let pending = json!({
-        "state": req.state, "verifier": req.verifier, "purpose": purpose, "next": next,
-        "exp": chrono::Utc::now().timestamp() + 600,
-    });
+    let pending = Claims::Pending {
+        state: req.state,
+        verifier: req.verifier,
+        purpose,
+        next: next.to_string(),
+    };
+    let pending = claims::sign(&cfg.session_key, pending, now() + 600);
     (
         [(
             header::SET_COOKIE,
-            set_cookie(cfg, OAUTH_COOKIE, &sign(&cfg.session_key, &pending), 600),
+            set_cookie(cfg, OAUTH_COOKIE, &pending, 600),
         )],
         Redirect::to(req.url.as_str()),
     )
@@ -283,11 +260,11 @@ fn local_path(next: Option<&str>) -> &str {
 
 async fn login(State(cfg): State<Shared>, Query(p): Query<LoginParams>) -> Response {
     let next = local_path(p.next.as_deref());
-    start_oauth(&cfg, "login", &["openid", "email"], false, next)
+    start_oauth(&cfg, Purpose::Login, &["openid", "email"], false, next)
 }
 
 async fn connect_fitbit(State(cfg): State<Shared>) -> Response {
-    start_oauth(&cfg, "health", READ_SCOPES, true, "/")
+    start_oauth(&cfg, Purpose::Health, READ_SCOPES, true, "/")
 }
 
 #[derive(Deserialize)]
@@ -318,14 +295,28 @@ async fn callback(
     }
 }
 
+/// The claims of a Google ID token that sign-in uses (scopes `openid email`).
+#[derive(Deserialize)]
+struct IdToken {
+    email: String,
+    #[serde(default)]
+    email_verified: bool,
+}
+
 async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -> Result<Response> {
     if let Some(e) = p.error {
         bail!("Google returned {e}");
     }
-    let pending = cookie(headers, OAUTH_COOKIE)
-        .and_then(|t| verify(&cfg.session_key, t))
-        .context("sign-in expired")?;
-    if p.state.as_deref() != pending["state"].as_str() {
+    let Some(Claims::Pending {
+        state,
+        verifier,
+        purpose,
+        next,
+    }) = cookie(headers, OAUTH_COOKIE).and_then(|t| claims::verify(&cfg.session_key, t))
+    else {
+        bail!("sign-in expired");
+    };
+    if p.state.as_deref() != Some(state.as_str()) {
         bail!("state mismatch");
     }
     let redirect_uri = format!("{}/auth/callback", cfg.public_url);
@@ -334,12 +325,12 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
         &cfg.creds,
         p.code.as_deref().context("missing code")?,
         &redirect_uri,
-        pending["verifier"].as_str().unwrap_or_default(),
+        &verifier,
     )
     .await?;
     let clear_oauth = set_cookie(cfg, OAUTH_COOKIE, "", 0);
 
-    if pending["purpose"] == "health" {
+    if purpose == Purpose::Health {
         cfg.token_ref
             .write(&tokens.into_stored()?.to_json()?)
             .await?;
@@ -354,27 +345,27 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     // The ID token comes straight from Google's token endpoint over TLS, so
     // its claims can be trusted without verifying the signature.
     let id_token = tokens.id_token.context("no ID token")?;
-    let claims: Value = serde_json::from_slice(
+    let id: IdToken = serde_json::from_slice(
         &URL_SAFE_NO_PAD.decode(id_token.split('.').nth(1).context("bad ID token")?)?,
-    )?;
-    let email = claims["email"].as_str().unwrap_or_default().to_lowercase();
-    if claims["email_verified"] != json!(true) || !cfg.allowed_emails.contains(&email) {
+    )
+    .context("bad ID token")?;
+    let email = id.email.to_lowercase();
+    if !id.email_verified || !cfg.allowed_emails.contains(&email) {
         bail!("{email} is not allowed");
     }
-    let session =
-        json!({ "email": email, "exp": chrono::Utc::now().timestamp() + SESSION_DAYS * 86_400 });
-    let mut resp = Redirect::to(local_path(pending["next"].as_str())).into_response();
+    let session = claims::sign(
+        &cfg.session_key,
+        Claims::Session {
+            email: email.clone(),
+        },
+        now() + SESSION_DAYS * 86_400,
+    );
+    let mut resp = Redirect::to(local_path(Some(&next))).into_response();
     let h = resp.headers_mut();
     h.append(header::SET_COOKIE, clear_oauth.parse()?);
     h.append(
         header::SET_COOKIE,
-        set_cookie(
-            cfg,
-            SESSION_COOKIE,
-            &sign(&cfg.session_key, &session),
-            SESSION_DAYS * 86_400,
-        )
-        .parse()?,
+        set_cookie(cfg, SESSION_COOKIE, &session, SESSION_DAYS * 86_400).parse()?,
     );
     Ok(resp)
 }
@@ -539,39 +530,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn signed_tokens_round_trip_and_reject_tampering() {
-        let key = b"k";
-        let exp = chrono::Utc::now().timestamp() + 60;
-        let t = sign(key, &json!({"email": "a@b.c", "exp": exp}));
-        assert_eq!(verify(key, &t).unwrap()["email"], "a@b.c");
-        assert!(verify(b"other", &t).is_none());
-        let (body, sig) = t.split_once('.').unwrap();
-        let forged = URL_SAFE_NO_PAD.encode(json!({"email": "x@y.z", "exp": exp}).to_string());
-        assert!(verify(key, &format!("{forged}.{sig}")).is_none());
-        assert!(verify(key, body).is_none());
-        let expired = sign(key, &json!({"email": "a@b.c", "exp": 1}));
-        assert!(verify(key, &expired).is_none());
-    }
-
-    #[test]
     fn only_sessions_are_sessions() {
         let key = b"k";
         let allowed = ["a@b.c".to_string()];
-        let exp = chrono::Utc::now().timestamp() + 60;
-        let check = |v: Value| {
+        let exp = now() + 60;
+        let check = |c: Claims| {
             let mut h = HeaderMap::new();
-            let c = format!("{SESSION_COOKIE}={}", sign(key, &v));
+            let c = format!("{SESSION_COOKIE}={}", claims::sign(key, c, exp));
             h.insert(header::COOKIE, c.parse().unwrap());
             session_of(key, &allowed, &h)
         };
-        assert_eq!(
-            check(json!({"email": "a@b.c", "exp": exp})).as_deref(),
-            Some("a@b.c")
-        );
-        assert!(check(json!({"email": "x@y.z", "exp": exp})).is_none());
-        // The pending sign-in cookie and OAuth tokens are signed with the same key.
-        assert!(check(json!({"state": "s", "purpose": "login", "exp": exp})).is_none());
-        assert!(check(json!({"kind": "access", "email": "a@b.c", "exp": exp})).is_none());
+        let session = |email: &str| Claims::Session {
+            email: email.into(),
+        };
+        assert_eq!(check(session("a@b.c")).as_deref(), Some("a@b.c"));
+        assert!(check(session("x@y.z")).is_none());
+        // OAuth tokens are signed with the same key.
+        let access = Claims::Access {
+            email: "a@b.c".into(),
+            aud: "x".into(),
+        };
+        assert!(check(access).is_none());
     }
 
     #[test]

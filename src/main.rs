@@ -1,6 +1,7 @@
 mod api;
 mod authz;
 mod bq;
+mod claims;
 mod cloudrun;
 mod datatypes;
 mod mcp;

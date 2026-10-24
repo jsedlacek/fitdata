@@ -2,8 +2,9 @@
 //!
 //! Users sign in with the dashboard's Google login and then approve the
 //! client on a consent page. Nothing is stored: client IDs, codes and tokens
-//! are all HMAC-signed with the session key, each with its own `kind`, so
-//! rotating `session-key` revokes every client and token at once.
+//! are all signed claims (`claims.rs`), so rotating `session-key` revokes
+//! every client and token at once. The price is that codes are not single
+//! use and tokens cannot be revoked one by one.
 //!
 //! Metadata: RFC 9728 (protected resource), RFC 8414 (authorization server);
 //! clients register themselves (RFC 7591) and must use PKCE (S256).
@@ -21,7 +22,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::web::{Config, Shared, escape_html, session_email, sign, verify};
+use crate::claims::{self, Claims, ClientAuth};
+use crate::web::{Config, Shared, escape_html, session_email};
 
 const CODE_SECS: i64 = 300;
 const ACCESS_SECS: i64 = 3600;
@@ -59,9 +61,34 @@ pub fn resource(cfg: &Config) -> String {
     format!("{}/mcp", cfg.public_url)
 }
 
-/// Verifies a signed token of the given `kind`.
-fn verify_kind(cfg: &Config, token: &str, kind: &str) -> Option<Value> {
-    verify(&cfg.session_key, token).filter(|v| v["kind"] == kind)
+fn verify(cfg: &Config, token: &str) -> Option<Claims> {
+    claims::verify(&cfg.session_key, token)
+}
+
+fn sign(cfg: &Config, c: Claims, exp: i64) -> String {
+    claims::sign(&cfg.session_key, c, exp)
+}
+
+/// The registration behind a client ID.
+struct Client {
+    redirect_uris: Vec<String>,
+    name: String,
+    auth: ClientAuth,
+}
+
+fn verify_client(cfg: &Config, client_id: &str) -> Option<Client> {
+    match verify(cfg, client_id)? {
+        Claims::Client {
+            redirect_uris,
+            name,
+            auth,
+        } => Some(Client {
+            redirect_uris,
+            name,
+            auth,
+        }),
+        _ => None,
+    }
 }
 
 fn allowed(cfg: &Config, email: &str) -> bool {
@@ -75,9 +102,10 @@ pub fn bearer_email(cfg: &Config, headers: &HeaderMap) -> Option<String> {
         .to_str()
         .ok()?
         .strip_prefix("Bearer ")?;
-    let v = verify_kind(cfg, token.trim(), "access")?;
-    let email = v["email"].as_str()?;
-    (v["aud"] == resource(cfg) && allowed(cfg, email)).then(|| email.to_string())
+    let Claims::Access { email, aud } = verify(cfg, token.trim())? else {
+        return None;
+    };
+    (aud == resource(cfg) && allowed(cfg, &email)).then_some(email)
 }
 
 /// 401 that tells an MCP client where to find the authorization server.
@@ -115,7 +143,7 @@ async fn server_metadata(State(cfg): State<Shared>) -> Json<Value> {
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["none", "client_secret_post", "client_secret_basic"],
+        "token_endpoint_auth_methods_supported": ClientAuth::ALL.map(ClientAuth::as_str),
     }))
 }
 
@@ -163,14 +191,14 @@ async fn register(State(cfg): State<Shared>, Json(r): Json<Registration>) -> Res
             "redirect URIs must be https (or http on localhost)",
         );
     }
-    let method = r.token_endpoint_auth_method.unwrap_or("none".into());
-    if !["none", "client_secret_post", "client_secret_basic"].contains(&method.as_str()) {
+    let Some(auth) = ClientAuth::parse(r.token_endpoint_auth_method.as_deref().unwrap_or("none"))
+    else {
         return oauth_error(
             StatusCode::BAD_REQUEST,
             "invalid_client_metadata",
             "unsupported token_endpoint_auth_method",
         );
-    }
+    };
     let name: String = r
         .client_name
         .unwrap_or_default()
@@ -180,23 +208,25 @@ async fn register(State(cfg): State<Shared>, Json(r): Json<Registration>) -> Res
         .collect();
     let issued = now();
     let client_id = sign(
-        &cfg.session_key,
-        &json!({
-            "kind": "client", "redirect_uris": r.redirect_uris, "name": name,
-            "auth": method, "exp": issued + CLIENT_SECS,
-        }),
+        &cfg,
+        Claims::Client {
+            redirect_uris: r.redirect_uris.clone(),
+            name: name.clone(),
+            auth,
+        },
+        issued + CLIENT_SECS,
     );
     let mut body = json!({
         "client_id": client_id,
         "client_id_issued_at": issued,
         "client_name": name,
         "redirect_uris": r.redirect_uris,
-        "token_endpoint_auth_method": method,
+        "token_endpoint_auth_method": auth.as_str(),
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
         "scope": SCOPE,
     });
-    if method != "none" {
+    if auth != ClientAuth::None {
         body["client_secret"] = json!(client_secret(&cfg, &client_id));
         body["client_secret_expires_at"] = json!(0);
     }
@@ -234,19 +264,14 @@ enum Refusal {
 
 fn check_authorize(cfg: &Config, p: AuthorizeParams) -> Result<AuthRequest, Refusal> {
     let client_id = p.client_id.ok_or(Refusal::Page("missing client_id"))?;
-    let client = verify_kind(cfg, &client_id, "client").ok_or(Refusal::Page(
+    let client = verify_client(cfg, &client_id).ok_or(Refusal::Page(
         "unknown client; remove the connector and add it again",
     ))?;
-    let uris: Vec<&str> = client["redirect_uris"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect();
+    let uris = &client.redirect_uris;
     // With a single registered URI the parameter may be omitted.
     let redirect_uri = match p.redirect_uri {
-        Some(u) if uris.contains(&u.as_str()) => u,
-        None if uris.len() == 1 => uris[0].to_string(),
+        Some(u) if uris.contains(&u) => u,
+        None if uris.len() == 1 => uris[0].clone(),
         _ => {
             return Err(Refusal::Page(
                 "redirect_uri does not match the registration",
@@ -268,7 +293,7 @@ fn check_authorize(cfg: &Config, p: AuthorizeParams) -> Result<AuthRequest, Refu
         return Err(refuse("invalid_request"));
     }
     Ok(AuthRequest {
-        client_name: client["name"].as_str().unwrap_or_default().to_string(),
+        client_name: client.name,
         redirect_uri,
         state: p.state,
         challenge,
@@ -325,12 +350,15 @@ async fn authorize(
     };
     // The form carries the validated request, signed, so the POST needs no state.
     let consent = sign(
-        &cfg.session_key,
-        &json!({
-            "kind": "consent", "client_id": req.client_id, "redirect_uri": req.redirect_uri,
-            "state": req.state, "challenge": req.challenge, "email": email,
-            "exp": now() + 600,
-        }),
+        &cfg,
+        Claims::Consent {
+            client_id: req.client_id,
+            redirect_uri: req.redirect_uri.clone(),
+            state: req.state,
+            challenge: req.challenge,
+            email: email.clone(),
+        },
+        now() + 600,
     );
     let host = Url::parse(&req.redirect_uri)
         .ok()
@@ -408,31 +436,44 @@ async fn approve(
     headers: HeaderMap,
     Form(d): Form<Decision>,
 ) -> Response {
-    let Some(c) = verify_kind(&cfg, &d.consent, "consent") else {
+    let Some(Claims::Consent {
+        client_id,
+        redirect_uri,
+        state,
+        challenge,
+        email,
+    }) = verify(&cfg, &d.consent)
+    else {
         return bad_request("the request expired, start again from the app");
     };
-    if session_email(&cfg, &headers).as_deref() != c["email"].as_str() {
+    if session_email(&cfg, &headers).as_ref() != Some(&email) {
         return bad_request("signed in as a different user");
     }
-    let redirect_uri = c["redirect_uri"].as_str().unwrap_or_default();
-    let state = c["state"].as_str();
     if d.decision != "allow" {
         return Redirect::to(&redirect_with(
-            redirect_uri,
+            &redirect_uri,
             &[("error", "access_denied")],
-            state,
+            state.as_deref(),
         ))
         .into_response();
     }
+    tracing::info!("MCP client authorized by {email}");
     let code = sign(
-        &cfg.session_key,
-        &json!({
-            "kind": "code", "client_id": c["client_id"], "redirect_uri": redirect_uri,
-            "challenge": c["challenge"], "email": c["email"], "exp": now() + CODE_SECS,
-        }),
+        &cfg,
+        Claims::Code {
+            client_id,
+            redirect_uri: redirect_uri.clone(),
+            challenge,
+            email,
+        },
+        now() + CODE_SECS,
     );
-    tracing::info!("MCP client authorized by {}", c["email"]);
-    Redirect::to(&redirect_with(redirect_uri, &[("code", &code)], state)).into_response()
+    Redirect::to(&redirect_with(
+        &redirect_uri,
+        &[("code", &code)],
+        state.as_deref(),
+    ))
+    .into_response()
 }
 
 // ------------------------------------------------------------------- token
@@ -479,8 +520,8 @@ fn client_auth(headers: &HeaderMap, t: &TokenRequest) -> (Option<String>, Option
 fn authenticate_client(cfg: &Config, headers: &HeaderMap, t: &TokenRequest) -> Result<String> {
     let (id, secret) = client_auth(headers, t);
     let id = id.context("missing client_id")?;
-    let client = verify_kind(cfg, &id, "client").context("unknown client")?;
-    if client["auth"] != "none" {
+    let client = verify_client(cfg, &id).context("unknown client")?;
+    if client.auth != ClientAuth::None {
         let expected = client_secret(cfg, &id);
         let ok = secret.is_some_and(|s| {
             // Comparing hashes keeps timing from leaking the secret.
@@ -501,12 +542,20 @@ fn pkce_ok(verifier: &str, challenge: &str) -> bool {
 fn issue_tokens(cfg: &Config, client_id: &str, email: &str) -> Response {
     let t = now();
     let access = sign(
-        &cfg.session_key,
-        &json!({ "kind": "access", "email": email, "aud": resource(cfg), "exp": t + ACCESS_SECS }),
+        cfg,
+        Claims::Access {
+            email: email.to_string(),
+            aud: resource(cfg),
+        },
+        t + ACCESS_SECS,
     );
     let refresh = sign(
-        &cfg.session_key,
-        &json!({ "kind": "refresh", "client_id": client_id, "email": email, "exp": t + REFRESH_SECS }),
+        cfg,
+        Claims::Refresh {
+            client_id: client_id.to_string(),
+            email: email.to_string(),
+        },
+        t + REFRESH_SECS,
     );
     (
         [(header::CACHE_CONTROL, "no-store")],
@@ -531,22 +580,25 @@ async fn token(
         Err(e) => return oauth_error(StatusCode::UNAUTHORIZED, "invalid_client", &e.to_string()),
     };
     let grant = match t.grant_type.as_str() {
-        "authorization_code" => (|| {
-            let c = verify_kind(&cfg, t.code.as_deref()?, "code")?;
-            let ok = c["client_id"] == client_id
-                && t.redirect_uri
-                    .as_deref()
-                    .is_none_or(|u| c["redirect_uri"] == u)
-                && pkce_ok(
-                    t.code_verifier.as_deref().unwrap_or_default(),
-                    c["challenge"].as_str()?,
-                );
-            ok.then(|| c["email"].as_str().map(str::to_string))?
-        })(),
-        "refresh_token" => (|| {
-            let r = verify_kind(&cfg, t.refresh_token.as_deref()?, "refresh")?;
-            (r["client_id"] == client_id).then(|| r["email"].as_str().map(str::to_string))?
-        })(),
+        "authorization_code" => match t.code.as_deref().and_then(|c| verify(&cfg, c)) {
+            Some(Claims::Code {
+                client_id: for_client,
+                redirect_uri,
+                challenge,
+                email,
+            }) => (for_client == client_id
+                && t.redirect_uri.as_ref().is_none_or(|u| *u == redirect_uri)
+                && pkce_ok(t.code_verifier.as_deref().unwrap_or_default(), &challenge))
+            .then_some(email),
+            _ => None,
+        },
+        "refresh_token" => match t.refresh_token.as_deref().and_then(|r| verify(&cfg, r)) {
+            Some(Claims::Refresh {
+                client_id: for_client,
+                email,
+            }) => (for_client == client_id).then_some(email),
+            _ => None,
+        },
         _ => {
             return oauth_error(
                 StatusCode::BAD_REQUEST,
