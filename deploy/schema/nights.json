@@ -66,5 +66,28 @@
         "mode": "REQUIRED"
       }
     ]
+  },
+  {
+    "name": "restless_minutes",
+    "type": "INTEGER",
+    "mode": "NULLABLE",
+    "description": "Short awakenings (restless sleep in Google Health)"
+  },
+  {
+    "name": "restless",
+    "type": "RECORD",
+    "mode": "REPEATED",
+    "fields": [
+      {
+        "name": "start",
+        "type": "DATETIME",
+        "mode": "REQUIRED"
+      },
+      {
+        "name": "end",
+        "type": "DATETIME",
+        "mode": "REQUIRED"
+      }
+    ]
   }
 ]

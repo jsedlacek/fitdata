@@ -43,6 +43,9 @@ export type Night = {
   minutes_awake: number | null;
   stages: { start: string; end: string; stage: Stage }[];
   stage_minutes: Partial<Record<Stage, number | null>>;
+  /** Short awakenings within light sleep (restless sleep in Google Health). */
+  restless?: { start: string; end: string }[];
+  restless_minutes?: number | null;
 };
 
 export type Exercise = {

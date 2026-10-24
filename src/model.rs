@@ -27,6 +27,24 @@ pub struct Sleep {
     /// Minutes per stage type (DEEP, LIGHT, REM, AWAKE).
     pub stage_minutes: BTreeMap<String, i64>,
     pub stages: Vec<SleepStage>,
+    /// Short awakenings (a minute or two) inside light sleep; Google Health
+    /// shows them as restless sleep.
+    pub restless: Vec<Span>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Span {
+    pub start: NaiveDateTime,
+    pub end: NaiveDateTime,
+}
+
+impl Sleep {
+    pub fn restless_minutes(&self) -> i64 {
+        self.restless
+            .iter()
+            .map(|s| (s.end - s.start).num_minutes())
+            .sum()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -215,6 +233,17 @@ impl Dataset {
                 .flatten()
                 .filter_map(|s| Some((s["type"].as_str()?.to_string(), num(&s["minutes"])? as i64)))
                 .collect();
+            let restless = p["shortAwakenings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|s| {
+                    Some(Span {
+                        start: local(&s["startTime"], &s["startUtcOffset"])?,
+                        end: local(&s["endTime"], &s["endUtcOffset"])?,
+                    })
+                })
+                .collect();
             ds.sleep.push(Sleep {
                 start,
                 end,
@@ -223,6 +252,7 @@ impl Dataset {
                 minutes_awake: num(&p["summary"]["minutesAwake"]).map(|m| m as i64),
                 stage_minutes,
                 stages,
+                restless,
             });
         }
         ds.sleep.sort_by_key(|s| s.start);
@@ -360,6 +390,7 @@ impl Dataset {
     /// The night before `d`: all sleep sessions that ended on `d` before 14:00,
     /// merged. Google sometimes splits one night into several sessions (e.g.
     /// after waking up for an hour); later sessions are naps and don't count.
+    /// Gaps between the sessions count as awake, as in Google Health.
     pub fn night_before(&self, d: NaiveDate) -> Option<Sleep> {
         let cutoff = d.and_hms_opt(14, 0, 0)?;
         let parts: Vec<&Sleep> = self
@@ -376,12 +407,23 @@ impl Dataset {
             minutes_awake: None,
             stage_minutes: BTreeMap::new(),
             stages: Vec::new(),
+            restless: Vec::new(),
         };
         let add = |a: Option<i64>, b: Option<i64>| match (a, b) {
             (None, None) => None,
             (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
         };
         for p in parts {
+            if p.start > night.end {
+                let gap = (p.start - night.end).num_minutes();
+                night.minutes_awake = add(night.minutes_awake, Some(gap));
+                *night.stage_minutes.entry("AWAKE".to_string()).or_default() += gap;
+                night.stages.push(SleepStage {
+                    start: night.end,
+                    end: p.start,
+                    stage: "AWAKE".to_string(),
+                });
+            }
             night.start = night.start.min(p.start);
             night.end = night.end.max(p.end);
             night.minutes_asleep = add(night.minutes_asleep, p.minutes_asleep);
@@ -390,8 +432,10 @@ impl Dataset {
                 *night.stage_minutes.entry(k.clone()).or_default() += v;
             }
             night.stages.extend(p.stages.iter().cloned());
+            night.restless.extend(p.restless.iter().cloned());
         }
         night.stages.sort_by_key(|s| s.start);
+        night.restless.sort_by_key(|s| s.start);
         Some(night)
     }
 }
@@ -433,7 +477,8 @@ pub fn table_rows(ds: &Dataset, from: NaiveDate, to: NaiveDate) -> Vec<(&'static
                 "minutes_asleep": n.minutes_asleep, "minutes_awake": n.minutes_awake,
                 "deep_minutes": m("DEEP"), "light_minutes": m("LIGHT"),
                 "rem_minutes": m("REM"), "awake_minutes": m("AWAKE"),
-                "stages": n.stages,
+                "restless_minutes": n.restless_minutes(),
+                "stages": n.stages, "restless": n.restless,
             }))
         })
         .collect();
@@ -495,6 +540,10 @@ mod tests {
             minutes_awake: None,
             stage_minutes: BTreeMap::from([("DEEP".to_string(), mins / 4)]),
             stages: Vec::new(),
+            restless: vec![Span {
+                start: t(a),
+                end: t(a) + Duration::minutes(2),
+            }],
         };
         let ds = Dataset {
             sleep: vec![
@@ -511,5 +560,14 @@ mod tests {
         );
         assert_eq!(n.minutes_asleep, Some(430));
         assert_eq!(n.stage_minutes["DEEP"], 58 + 49);
+        // 03:13–05:18 between the two sessions is awake.
+        assert_eq!(n.minutes_awake, Some(125));
+        assert_eq!(n.stage_minutes["AWAKE"], 125);
+        assert_eq!(n.stages.len(), 1);
+        assert_eq!(
+            (n.stages[0].start, n.stages[0].end),
+            (t("2026-10-22 03:13"), t("2026-10-22 05:18"))
+        );
+        assert_eq!(n.restless_minutes(), 4);
     }
 }
