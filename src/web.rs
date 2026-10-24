@@ -454,42 +454,38 @@ fn tuples(rows: Vec<Value>, cols: &[&str]) -> Value {
 
 /// Detail of one day. The time range starts at the beginning of the night
 /// before (if there was one) so the sleep that ended that morning is shown.
+///
+/// All queries run at once: the ones that depend on the night's window read
+/// it from the nights table themselves instead of waiting for it here.
 pub(crate) async fn day_detail(bq: &Bq, date: NaiveDate) -> Result<Value> {
     let prev = date - Duration::days(1);
     let midnight = date.and_time(NaiveTime::MIN);
     let end = midnight + Duration::days(1);
     let t = |name| bq.table(name);
+    let fmt = |d: NaiveDateTime| d.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let (m, e, m8) = (fmt(midnight), fmt(end), fmt(midnight + Duration::hours(8)));
+    // Scalar subqueries for the shown range start (`s`) and the night-only
+    // charts (`nf`..`nt`: the sleep window, or the small hours if none).
+    let night = format!(
+        "(SELECT AS STRUCT start, `end` FROM {} WHERE date = '{date}' ORDER BY start LIMIT 1)",
+        t("nights")
+    );
+    let s = format!("IFNULL(LEAST({night}.start, DATETIME '{m}'), DATETIME '{m}')");
+    let nf = format!("IFNULL({night}.start, DATETIME '{m}')");
+    let nt = format!("IFNULL({night}.`end`, DATETIME '{m8}')");
 
-    let (nights, metrics) = tokio::try_join!(
+    let (nights, metrics, hr, steps, spo2, hrv, exercises) = tokio::try_join!(
         bq.query(format!(
-            "SELECT * FROM {} WHERE date = '{date}'",
+            "SELECT * FROM {} WHERE date = '{date}' ORDER BY start LIMIT 1",
             t("nights")
         )),
         bq.query(format!(
             "SELECT * FROM {} WHERE date = '{date}'",
             t("daily")
         )),
-    )?;
-    let night = nights.into_iter().next().map(|mut n| {
-        n["stage_minutes"] = json!({
-            "DEEP": n["deep_minutes"], "LIGHT": n["light_minutes"],
-            "REM": n["rem_minutes"], "AWAKE": n["awake_minutes"],
-        });
-        n
-    });
-    let night_window = night
-        .as_ref()
-        .and_then(|n| Some((dt(&n["start"])?, dt(&n["end"])?)));
-    let start = night_window.map_or(midnight, |(s, _)| s.min(midnight));
-    // Night-only charts: the sleep window, or the small hours if no sleep was recorded.
-    let (nf, nt) = night_window.unwrap_or((midnight, midnight + Duration::hours(8)));
-    let fmt = |d: NaiveDateTime| d.format("%Y-%m-%dT%H:%M:%S").to_string();
-    let (s, e, nf, nt) = (fmt(start), fmt(end), fmt(nf), fmt(nt));
-
-    let (hr, steps, spo2, hrv, exercises) = tokio::try_join!(
         bq.query(format!(
             "SELECT DATETIME_TRUNC(ts, MINUTE) AS t, MIN(bpm) AS lo, ROUND(AVG(bpm), 1) AS avg, MAX(bpm) AS hi
-             FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= '{s}' AND ts < '{e}'
+             FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= {s} AND ts < '{e}'
              GROUP BY t ORDER BY t",
             t("heart_rate")
         )),
@@ -500,22 +496,34 @@ pub(crate) async fn day_detail(bq: &Bq, date: NaiveDate) -> Result<Value> {
             t("activity")
         )),
         bq.query(format!(
-            "SELECT ts, pct FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= '{nf}' AND ts < '{nt}' ORDER BY ts",
+            "SELECT ts, pct FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= {nf} AND ts < {nt} ORDER BY ts",
             t("spo2")
         )),
         bq.query(format!(
-            "SELECT ts, rmssd_ms FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= '{nf}' AND ts < '{nt}' ORDER BY ts",
+            "SELECT ts, rmssd_ms FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND ts >= {nf} AND ts < {nt} ORDER BY ts",
             t("hrv")
         )),
         bq.query(format!(
-            "SELECT * FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND start >= '{s}' AND start < '{e}' ORDER BY start",
+            "SELECT * FROM {} WHERE date BETWEEN '{prev}' AND '{date}' AND start >= {s} AND start < '{e}' ORDER BY start",
             t("exercises")
         )),
     )?;
 
+    let night = nights.into_iter().next().map(|mut n| {
+        n["stage_minutes"] = json!({
+            "DEEP": n["deep_minutes"], "LIGHT": n["light_minutes"],
+            "REM": n["rem_minutes"], "AWAKE": n["awake_minutes"],
+        });
+        n
+    });
+    let start = night
+        .as_ref()
+        .and_then(|n| dt(&n["start"]))
+        .map_or(midnight, |s| s.min(midnight));
+
     Ok(json!({
         "date": date,
-        "range": [s, e],
+        "range": [fmt(start), e],
         "metrics": metrics.into_iter().next(),
         "heartRate": tuples(hr, &["t", "lo", "avg", "hi"]),
         "steps": tuples(steps, &["t", "steps"]),

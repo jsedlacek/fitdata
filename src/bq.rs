@@ -5,7 +5,7 @@ use chrono::NaiveDate;
 use google_cloud_bigquery_v2::client::JobService;
 use google_cloud_bigquery_v2::model::{
     DatasetReference, Job, JobConfiguration, JobConfigurationLoad, QueryRequest, TableFieldSchema,
-    TableReference,
+    TableReference, query_request::JobCreationMode,
 };
 use serde_json::{Map, Value};
 
@@ -136,7 +136,9 @@ impl Bq {
             .query()
             .set_project_id(&self.project)
             .set_query_request(
+                // Short queries skip job creation and answer noticeably faster.
                 req.set_use_legacy_sql(false)
+                    .set_job_creation_mode(JobCreationMode::JobCreationOptional)
                     .set_location(&self.location)
                     .set_timeout_ms(30_000u32),
             )
