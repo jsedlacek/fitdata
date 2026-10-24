@@ -14,6 +14,8 @@ SCHEDULE=${SCHEDULE:-"0 * * * *"}
 DOMAIN=${DOMAIN:-fitdata.jakub.contact}
 # Google accounts allowed to sign in to the dashboard (comma separated).
 ALLOWED_EMAILS=${ALLOWED_EMAILS:-sedlacek.jakub@gmail.com}
+# Where Cloud Monitoring sends an e-mail when a sync run fails.
+ALERT_EMAIL=${ALERT_EMAIL:-sedlacek.jakub@gmail.com}
 
 JOB_SA=fitdata-job@$PROJECT.iam.gserviceaccount.com
 WEB_SA=fitdata-web@$PROJECT.iam.gserviceaccount.com

@@ -75,11 +75,38 @@ pub async fn read_raw(store: &Store, from: NaiveDate, to: NaiveDate) -> Result<R
     let reads = crate::datatypes::ALL.iter().map(|dt| async move {
         let mut points = Vec::new();
         for slot in slots(dt, from, to) {
-            points.extend(store.get_jsonl(&object_path(dt, &slot)).await?);
+            points.extend(
+                store
+                    .get_jsonl(&object_path(dt, &slot))
+                    .await?
+                    .into_iter()
+                    .filter_map(slim),
+            );
         }
         Ok::<_, anyhow::Error>((dt.id.to_string(), points))
     });
-    stream::iter(reads).buffer_unordered(8).try_collect().await
+    // A few types at a time: a week of heart rate alone is ~300k points.
+    stream::iter(reads).buffer_unordered(4).try_collect().await
+}
+
+/// Keeps only what normalization uses: the payload object (e.g. the value of
+/// `"heartRate"`) without the civil-time copies of each timestamp. Cuts the
+/// memory of a week of raw data several times over.
+fn slim(mut point: Value) -> Option<Value> {
+    let key = point
+        .as_object()?
+        .iter()
+        .find(|(k, v)| *k != "dataSource" && *k != "name" && v.is_object())
+        .map(|(k, _)| k.clone())?;
+    let mut p = point[&key].take();
+    if let Some(t) = p.get_mut("sampleTime").and_then(Value::as_object_mut) {
+        t.remove("civilTime");
+    }
+    if let Some(i) = p.get_mut("interval").and_then(Value::as_object_mut) {
+        i.remove("civilStartTime");
+        i.remove("civilEndTime");
+    }
+    Some(p)
 }
 
 /// Fetches one slot and writes it; returns the number of points.
@@ -268,6 +295,27 @@ mod tests {
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn slim_keeps_only_the_payload() {
+        let p = json!({
+            "heartRate": {
+                "beatsPerMinute": "61",
+                "sampleTime": {"physicalTime": "2026-10-23T17:55:56Z", "utcOffset": "7200s", "civilTime": {"date": {}}}
+            },
+            "dataSource": {"device": {"displayName": "Fitbit Air"}}
+        });
+        assert_eq!(
+            slim(p).unwrap(),
+            json!({"beatsPerMinute": "61", "sampleTime": {"physicalTime": "2026-10-23T17:55:56Z", "utcOffset": "7200s"}})
+        );
+        let steps = json!({"steps": {"count": "5", "interval": {"startTime": "a", "civilStartTime": {}, "civilEndTime": {}}}});
+        assert_eq!(
+            slim(steps).unwrap(),
+            json!({"count": "5", "interval": {"startTime": "a"}})
+        );
+        assert!(slim(json!({"dataSource": {}})).is_none());
     }
 
     #[test]

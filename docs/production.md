@@ -49,6 +49,8 @@ Když přestane fungovat refresh token (odvolaný přístup), stačí na dashboa
 
 ## Provoz
 
+Každý neúspěšný běh jobu otevře v Cloud Monitoring incident **fitdata-sync failed** a pošle e-mail na `ALERT_EMAIL` (`deploy/config.sh`). Při trvalé poruše přijde jeden e-mail, ne jeden za hodinu. Až běhy znovu projdou, incident se sám zavře. Politika je v [deploy/alert-policy.json](../deploy/alert-policy.json) a nastaví ji `setup.sh`.
+
 ```bash
 gcloud run jobs execute fitdata-sync --region europe-west1 --wait     # spustit job hned
 gcloud run jobs executions list --job fitdata-sync --region europe-west1

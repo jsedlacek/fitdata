@@ -17,7 +17,7 @@ say "APIs"
 gcloud services enable --project "$PROJECT" \
   run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
   cloudscheduler.googleapis.com bigquery.googleapis.com storage.googleapis.com \
-  secretmanager.googleapis.com health.googleapis.com
+  secretmanager.googleapis.com health.googleapis.com monitoring.googleapis.com
 
 say "Bucket gs://$BUCKET"
 if ! gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" >/dev/null 2>&1; then
@@ -93,5 +93,27 @@ done
 bq --project_id "$PROJECT" --location "$REGION" query --nouse_legacy_sql --quiet "
   GRANT \`roles/bigquery.dataEditor\` ON SCHEMA \`$PROJECT.$DATASET\` TO 'serviceAccount:$JOB_SA';
   GRANT \`roles/bigquery.dataViewer\` ON SCHEMA \`$PROJECT.$DATASET\` TO 'serviceAccount:$WEB_SA';" >/dev/null
+
+say "Alerting ($ALERT_EMAIL)"
+# One e-mail channel and one policy: any failed run of the sync job opens an
+# incident (one mail), which closes itself once runs succeed again.
+channel=$(gcloud beta monitoring channels list --project "$PROJECT" \
+  --filter='displayName="fitdata alerts" AND type="email"' --format='value(name)' | head -1)
+if [[ -z $channel ]]; then
+  channel=$(gcloud beta monitoring channels create --project "$PROJECT" --display-name 'fitdata alerts' \
+    --type email --channel-labels "email_address=$ALERT_EMAIL" --format='value(name)')
+fi
+policy_file=$(mktemp)
+sed -e "s|__CHANNEL__|$channel|; s|__JOB__|$JOB_NAME|g; s|__PROJECT__|$PROJECT|g; s|__REGION__|$REGION|g; s|__DOMAIN__|$DOMAIN|g" \
+  deploy/alert-policy.json > "$policy_file"
+policy=$(gcloud beta monitoring policies list --project "$PROJECT" \
+  --filter='displayName="fitdata-sync failed"' --format='value(name)' | head -1)
+if [[ -n $policy ]]; then
+  gcloud beta monitoring policies update "$policy" --project "$PROJECT" --policy-from-file "$policy_file" >/dev/null
+else
+  gcloud beta monitoring policies create --project "$PROJECT" --policy-from-file "$policy_file" >/dev/null
+fi
+rm -f "$policy_file"
+echo "  policy 'fitdata-sync failed' -> $channel"
 
 say "Done"

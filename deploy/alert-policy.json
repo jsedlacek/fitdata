@@ -1,0 +1,26 @@
+{
+  "displayName": "fitdata-sync failed",
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "The hourly sync job **fitdata-sync** failed. The dashboard stops getting new data until a run succeeds.\n\n- Executions: https://console.cloud.google.com/run/jobs/details/__REGION__/__JOB__/executions?project=__PROJECT__\n- Logs: `gcloud logging read 'resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"__JOB__\"' --project __PROJECT__ --limit 50`\n\nIf the logs say the token no longer works, use **Obnovit přístup k datům** on https://__DOMAIN__."
+  },
+  "conditions": [
+    {
+      "displayName": "Failed execution of __JOB__",
+      "conditionThreshold": {
+        "filter": "resource.type = \"cloud_run_job\" AND resource.labels.job_name = \"__JOB__\" AND metric.type = \"run.googleapis.com/job/completed_execution_count\" AND metric.labels.result = \"failed\"",
+        "aggregations": [
+          { "alignmentPeriod": "3600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM" }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "combiner": "OR",
+  "alertStrategy": { "autoClose": "3600s" },
+  "severity": "ERROR",
+  "notificationChannels": ["__CHANNEL__"]
+}

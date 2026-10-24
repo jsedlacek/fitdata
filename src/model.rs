@@ -136,18 +136,12 @@ fn interval_end(p: &Value) -> Option<NaiveDateTime> {
     local(&p["interval"]["endTime"], &p["interval"]["endUtcOffset"])
 }
 
-/// Raw API data points per data type id, as stored in `raw/{type}/*.jsonl`.
+/// Payload objects of raw API data points per data type id (see `sync::read_raw`).
 pub type Raw = HashMap<String, Vec<Value>>;
 
-/// Every point of a data type, unwrapped to the payload object (e.g. the value
-/// of `"heartRate"`).
-fn read_type(raw: &Raw, data_type: &str, key: &str) -> Result<Vec<Value>> {
-    Ok(raw
-        .get(data_type)
-        .into_iter()
-        .flatten()
-        .map(|p| p[key].clone())
-        .collect())
+/// Takes all points of a data type out of `raw` (each type is read once).
+fn read_type(raw: &mut Raw, data_type: &str) -> Result<Vec<Value>> {
+    Ok(raw.remove(data_type).unwrap_or_default())
 }
 
 fn series(
@@ -167,38 +161,39 @@ fn series(
 impl Dataset {
     /// Normalizes raw points (typically a few days of them, see
     /// `sync::read_raw`) into typed series and per-day metrics.
-    pub fn from_raw(raw: &Raw) -> Result<Self> {
+    pub fn from_raw(mut raw: Raw) -> Result<Self> {
+        let raw = &mut raw;
         let mut ds = Dataset {
             heart_rate: series(
-                &read_type(raw, "heart-rate", "heartRate")?,
+                &read_type(raw, "heart-rate")?,
                 sample_time,
                 "beatsPerMinute",
             ),
-            steps: series(&read_type(raw, "steps", "steps")?, interval_start, "count"),
+            steps: series(&read_type(raw, "steps")?, interval_start, "count"),
             active_kcal: series(
-                &read_type(raw, "active-energy-burned", "activeEnergyBurned")?,
+                &read_type(raw, "active-energy-burned")?,
                 interval_start,
                 "kcal",
             ),
             azm: series(
-                &read_type(raw, "active-zone-minutes", "activeZoneMinutes")?,
+                &read_type(raw, "active-zone-minutes")?,
                 interval_start,
                 "activeZoneMinutes",
             ),
             spo2: series(
-                &read_type(raw, "oxygen-saturation", "oxygenSaturation")?,
+                &read_type(raw, "oxygen-saturation")?,
                 sample_time,
                 "percentage",
             ),
             hrv: series(
-                &read_type(raw, "heart-rate-variability", "heartRateVariability")?,
+                &read_type(raw, "heart-rate-variability")?,
                 sample_time,
                 "rootMeanSquareOfSuccessiveDifferencesMilliseconds",
             ),
             ..Default::default()
         };
 
-        for p in read_type(raw, "sleep", "sleep")? {
+        for p in read_type(raw, "sleep")? {
             let (Some(start), Some(end)) = (interval_start(&p), interval_end(&p)) else {
                 continue;
             };
@@ -233,7 +228,7 @@ impl Dataset {
         ds.sleep.sort_by_key(|s| s.start);
         ds.sleep.dedup_by_key(|s| s.start);
 
-        for p in read_type(raw, "exercise", "exercise")? {
+        for p in read_type(raw, "exercise")? {
             let (Some(start), Some(end)) = (interval_start(&p), interval_end(&p)) else {
                 continue;
             };
@@ -265,18 +260,14 @@ impl Dataset {
         })
     }
 
-    fn build_daily(&mut self, raw: &Raw) -> Result<()> {
+    fn build_daily(&mut self, raw: &mut Raw) -> Result<()> {
         // Daily summaries computed by Google.
-        for p in read_type(raw, "daily-resting-heart-rate", "dailyRestingHeartRate")? {
+        for p in read_type(raw, "daily-resting-heart-rate")? {
             if let Some(d) = date(&p["date"]) {
                 self.day(d).resting_hr = num(&p["beatsPerMinute"]);
             }
         }
-        for p in read_type(
-            raw,
-            "daily-heart-rate-variability",
-            "dailyHeartRateVariability",
-        )? {
+        for p in read_type(raw, "daily-heart-rate-variability")? {
             if let Some(d) = date(&p["date"]) {
                 let m = self.day(d);
                 m.hrv_ms = num(&p["averageHeartRateVariabilityMilliseconds"]);
@@ -285,7 +276,7 @@ impl Dataset {
                 m.nonrem_hr = num(&p["nonRemHeartRateBeatsPerMinute"]);
             }
         }
-        for p in read_type(raw, "daily-oxygen-saturation", "dailyOxygenSaturation")? {
+        for p in read_type(raw, "daily-oxygen-saturation")? {
             if let Some(d) = date(&p["date"]) {
                 let m = self.day(d);
                 m.spo2_avg = num(&p["averagePercentage"]);
@@ -293,16 +284,12 @@ impl Dataset {
                 m.spo2_high = num(&p["upperBoundPercentage"]);
             }
         }
-        for p in read_type(raw, "daily-respiratory-rate", "dailyRespiratoryRate")? {
+        for p in read_type(raw, "daily-respiratory-rate")? {
             if let Some(d) = date(&p["date"]) {
                 self.day(d).respiratory_rate = num(&p["breathsPerMinute"]);
             }
         }
-        for p in read_type(
-            raw,
-            "daily-sleep-temperature-derivations",
-            "dailySleepTemperatureDerivations",
-        )? {
+        for p in read_type(raw, "daily-sleep-temperature-derivations")? {
             if let Some(d) = date(&p["date"]) {
                 self.day(d).nightly_temp_c = num(&p["nightlyTemperatureCelsius"]);
             }

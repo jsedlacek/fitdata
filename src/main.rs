@@ -212,7 +212,7 @@ async fn load(store: &Store, bq: &Bq, from: NaiveDate, to: NaiveDate) -> Result<
     // One extra day on each side: nights start the evening before, and
     // intervals near midnight may be stored in the neighbouring day's file.
     let raw = sync::read_raw(store, from - Days::new(1), to + Days::new(2)).await?;
-    let ds = model::Dataset::from_raw(&raw)?;
+    let ds = model::Dataset::from_raw(raw)?;
     for (table, rows) in model::table_rows(&ds, from, to) {
         bq.replace_range(store, table, &rows, from, to).await?;
     }
