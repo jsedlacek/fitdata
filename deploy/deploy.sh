@@ -18,7 +18,7 @@ else
 fi
 
 # APP_VERSION tags traces and Error Reporting groups with the image.
-ENV=GCP_PROJECT=$PROJECT,GCP_REGION=$REGION,STORAGE=gs://$BUCKET,BQ_DATASET=$DATASET,TZ=$TIME_ZONE,RUST_LOG=fitdata=info,APP_VERSION=$TAG
+ENV=GCP_PROJECT=$PROJECT,GCP_REGION=$REGION,STORAGE=gs://$BUCKET,BQ_DATASET=$DATASET,OWNER_ID=$OWNER_ID,TZ=$TIME_ZONE,RUST_LOG=fitdata=info,APP_VERSION=$TAG
 
 # GitHub Actions builds and pushes the image itself (with a layer cache)
 # before running this, so there it is always found here.

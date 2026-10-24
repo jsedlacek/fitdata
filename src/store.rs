@@ -156,6 +156,66 @@ impl Store {
         Ok(())
     }
 
+    /// Objects under `prefix` with their generation (in a local directory:
+    /// the modification time in nanoseconds), sorted by name.
+    pub async fn list(&self, prefix: &str) -> Result<Vec<(String, i64)>> {
+        let mut out = Vec::new();
+        match self {
+            Self::Local(dir) => {
+                fn walk(
+                    root: &std::path::Path,
+                    d: &std::path::Path,
+                    out: &mut Vec<(String, i64)>,
+                ) -> Result<()> {
+                    let Ok(entries) = std::fs::read_dir(d) else {
+                        return Ok(());
+                    };
+                    for e in entries {
+                        let p = e?.path();
+                        if p.is_dir() {
+                            walk(root, &p, out)?;
+                        } else {
+                            let name = p.strip_prefix(root)?.to_string_lossy().replace('\\', "/");
+                            let modified = std::fs::metadata(&p)?.modified()?;
+                            let nanos = modified.duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+                            out.push((name, nanos as i64));
+                        }
+                    }
+                    Ok(())
+                }
+                // The deepest directory that the prefix names.
+                let start = match prefix.rfind('/') {
+                    Some(i) => dir.join(&prefix[..i]),
+                    None => dir.clone(),
+                };
+                walk(dir, &start, &mut out)?;
+                out.retain(|(name, _)| name.starts_with(prefix));
+            }
+            Self::Gcs {
+                control, bucket, ..
+            } => {
+                let mut page_token = String::new();
+                loop {
+                    let resp = control
+                        .list_objects()
+                        .set_parent(format!("projects/_/buckets/{bucket}"))
+                        .set_prefix(prefix)
+                        .set_page_token(&page_token)
+                        .send()
+                        .await
+                        .with_context(|| format!("listing gs://{bucket}/{prefix}"))?;
+                    out.extend(resp.objects.into_iter().map(|o| (o.name, o.generation)));
+                    if resp.next_page_token.is_empty() {
+                        break;
+                    }
+                    page_token = resp.next_page_token;
+                }
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
     /// Newline-delimited JSON, one record per line (loads directly into BigQuery).
     pub async fn put_jsonl<T: Serialize>(&self, path: &str, rows: &[T]) -> Result<()> {
         self.put(path, to_jsonl(rows)?).await

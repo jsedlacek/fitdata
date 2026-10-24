@@ -14,12 +14,17 @@ SCHEDULE=${SCHEDULE:-"0 * * * *"}
 DOMAIN=${DOMAIN:-fitdata.jakub.contact}
 # Google accounts allowed to sign in to the dashboard (comma separated).
 ALLOWED_EMAILS=${ALLOWED_EMAILS:-sedlacek.jakub@gmail.com}
+# Google account ID (`sub`) of the owner, whose data the job writes as Parquet
+# under u/$OWNER_ID/ (gcloud auth print-identity-token | jwt payload `sub`).
+OWNER_ID=${OWNER_ID:-102707141805967147144}
 # Where Cloud Monitoring sends an e-mail when a sync run fails.
 ALERT_EMAIL=${ALERT_EMAIL:-sedlacek.jakub@gmail.com}
 
 JOB_SA=fitdata-job@$PROJECT.iam.gserviceaccount.com
 WEB_SA=fitdata-web@$PROJECT.iam.gserviceaccount.com
 SCHEDULER_SA=fitdata-scheduler@$PROJECT.iam.gserviceaccount.com
+# Runs MCP `query` SQL (src/query.rs); has no roles at all.
+QUERY_SA=fitdata-query@$PROJECT.iam.gserviceaccount.com
 # GitHub Actions deploys every push to main of this repo as this SA, keyless
 # via Workload Identity Federation (.github/workflows/deploy.yml).
 DEPLOY_SA=fitdata-deployer@$PROJECT.iam.gserviceaccount.com
@@ -35,3 +40,4 @@ IMAGE=$REGION-docker.pkg.dev/$PROJECT/$REPO/fitdata:$TAG
 
 JOB_NAME=fitdata-sync
 SERVICE_NAME=fitdata-web
+QUERY_SERVICE=fitdata-query

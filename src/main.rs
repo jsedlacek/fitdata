@@ -4,6 +4,7 @@ mod bq;
 mod claims;
 mod cloudrun;
 mod datatypes;
+mod duck;
 mod health;
 mod mcp;
 mod model;
@@ -11,6 +12,7 @@ mod oauth;
 mod secrets;
 mod store;
 mod sync;
+mod tables;
 mod telemetry;
 mod web;
 
@@ -50,6 +52,9 @@ struct Cli {
     region: String,
     #[arg(long, env = "BQ_DATASET", default_value = "health")]
     bq_dataset: String,
+    /// Google account ID (`sub`) whose Parquet tables `load` and `job` write.
+    #[arg(long, env = "OWNER_ID")]
+    owner_id: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -160,6 +165,7 @@ async fn job(
     token_ref: &SecretRef,
     store: &Store,
     bq: &Bq,
+    owner: Option<&str>,
     days: u64,
 ) -> Result<Vec<&'static str>> {
     let client = health_client(http, creds, token_ref).await?;
@@ -178,7 +184,7 @@ async fn job(
         // Usually a scope missing from the refresh token: reconnect Fitbit.
         tracing::warn!("data types not readable: {}", fetched.skipped.join(", "));
     }
-    load(store, bq, from, today).await?;
+    load(store, bq, owner, from, today).await?;
     Ok(fetched.skipped)
 }
 
@@ -214,8 +220,15 @@ async fn record_run(
     Ok(())
 }
 
-/// Rebuilds the BigQuery tables for local dates `[from, to]` from raw data.
-async fn load(store: &Store, bq: &Bq, from: NaiveDate, to: NaiveDate) -> Result<()> {
+/// Rebuilds the BigQuery tables (and the owner's Parquet tables) for local
+/// dates `[from, to]` from raw data.
+async fn load(
+    store: &Store,
+    bq: &Bq,
+    owner: Option<&str>,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> Result<()> {
     if from > to {
         bail!("--from must not be after --to");
     }
@@ -232,6 +245,10 @@ async fn load(store: &Store, bq: &Bq, from: NaiveDate, to: NaiveDate) -> Result<
     bq.replace_range(store, &t.exercises, from, to).await?;
     bq.replace_range(store, &t.daily, from, to).await?;
     tracing::info!("loaded {from}..{to} into BigQuery dataset {}", bq.dataset);
+    if let Some(uid) = owner {
+        tables::write_all(store, uid, &t, from, to).await?;
+        tracing::info!("wrote {from}..{to} as Parquet for {uid}");
+    }
     Ok(())
 }
 
@@ -324,7 +341,7 @@ async fn run(cli: Cli) -> Result<()> {
     }
     if let Cmd::Load { from, to } = &cli.cmd {
         let to = to.unwrap_or_else(|| chrono::Local::now().date_naive());
-        return load(&store, &bq().await?, *from, to).await;
+        return load(&store, &bq().await?, cli.owner_id.as_deref(), *from, to).await;
     }
 
     if let Cmd::Login { port } = cli.cmd {
@@ -337,7 +354,16 @@ async fn run(cli: Cli) -> Result<()> {
     if let Cmd::Job { days } = cli.cmd {
         let bq = bq().await?;
         let started = chrono::Utc::now();
-        let result = job(&http, creds, &token_ref, &store, &bq, days).await;
+        let result = job(
+            &http,
+            creds,
+            &token_ref,
+            &store,
+            &bq,
+            cli.owner_id.as_deref(),
+            days,
+        )
+        .await;
         // The dashboard reads the last run to tell whether the token still works.
         if let Err(e) = record_run(&bq, started, days, &result).await {
             tracing::error!("recording the run failed: {e:#}");
