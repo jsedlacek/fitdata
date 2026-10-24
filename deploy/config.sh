@@ -27,5 +27,11 @@ GITHUB_REPO=${GITHUB_REPO:-jsedlacek/fitdata}
 WIF_POOL=github
 WIF_PROVIDER=github
 
+# Image tag: the last commit that touched what goes into the image, so changes
+# to deploy scripts or docs reuse the existing image.
+IMAGE_SOURCES=(Dockerfile .dockerignore Cargo.toml Cargo.lock src frontend)
+TAG=$(git log -1 --format=%h -- "${IMAGE_SOURCES[@]}")$(git diff --quiet HEAD -- "${IMAGE_SOURCES[@]}" || echo "-dirty")
+IMAGE=$REGION-docker.pkg.dev/$PROJECT/$REPO/fitdata:$TAG
+
 JOB_NAME=fitdata-sync
 SERVICE_NAME=fitdata-web

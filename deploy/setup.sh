@@ -129,10 +129,11 @@ apply_policy "fitdata-sync failed" deploy/alert-policy.json
 apply_policy "fitdata-web errors" deploy/alert-web-errors.json
 
 say "GitHub Actions deploy ($GITHUB_REPO)"
-# Deployer: what deploy/deploy.sh needs. roles/viewer is needed to stream logs
-# of `gcloud builds submit` from the legacy Cloud Build logs bucket.
+# Deployer: what the workflow (pushes the image) and deploy/deploy.sh need.
+# roles/viewer is needed to stream logs of `gcloud builds submit` from the
+# legacy Cloud Build logs bucket.
 for role in roles/run.admin roles/cloudbuild.builds.editor roles/cloudscheduler.admin \
-  roles/artifactregistry.reader roles/serviceusage.serviceUsageConsumer roles/viewer; do
+  roles/artifactregistry.writer roles/serviceusage.serviceUsageConsumer roles/viewer; do
   gcloud projects add-iam-policy-binding "$PROJECT" \
     --member "serviceAccount:$DEPLOY_SA" --role "$role" --condition=None >/dev/null
 done

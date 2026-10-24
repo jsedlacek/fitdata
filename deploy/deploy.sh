@@ -7,11 +7,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/config.sh
 
-# Tag by the last commit that touched what goes into the image, so changes to
-# deploy scripts or docs reuse the existing image.
-SOURCES=(Dockerfile Cargo.toml Cargo.lock src frontend)
-TAG=$(git log -1 --format=%h -- "${SOURCES[@]}")$(git diff --quiet HEAD -- "${SOURCES[@]}" || echo "-dirty")
-IMAGE=$REGION-docker.pkg.dev/$PROJECT/$REPO/fitdata:$TAG
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)')
 # Google redirects to $PUBLIC_URL/auth/callback, which must be an authorized
 # redirect URI of the OAuth Web client.
@@ -24,6 +19,8 @@ fi
 # APP_VERSION tags traces and Error Reporting groups with the image.
 ENV=GCP_PROJECT=$PROJECT,GCP_REGION=$REGION,STORAGE=gs://$BUCKET,BQ_DATASET=$DATASET,TZ=$TIME_ZONE,RUST_LOG=fitdata=info,APP_VERSION=$TAG
 
+# GitHub Actions builds and pushes the image itself (with a layer cache)
+# before running this, so there it is always found here.
 if [[ $TAG != *-dirty ]] && gcloud artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   echo "== Image $IMAGE already built"
 else
