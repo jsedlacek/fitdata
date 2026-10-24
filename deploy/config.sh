@@ -24,8 +24,6 @@ KMS_KEY=projects/$PROJECT/locations/$REGION/keyRings/$KMS_KEYRING/cryptoKeys/$KM
 JOB_SA=fitdata-job@$PROJECT.iam.gserviceaccount.com
 WEB_SA=fitdata-web@$PROJECT.iam.gserviceaccount.com
 SCHEDULER_SA=fitdata-scheduler@$PROJECT.iam.gserviceaccount.com
-# Runs MCP `query` SQL (src/query.rs); has no roles at all.
-QUERY_SA=fitdata-query@$PROJECT.iam.gserviceaccount.com
 # GitHub Actions deploys every push to main of this repo as this SA, keyless
 # via Workload Identity Federation (.github/workflows/deploy.yml).
 DEPLOY_SA=fitdata-deployer@$PROJECT.iam.gserviceaccount.com
@@ -41,4 +39,3 @@ IMAGE=$REGION-docker.pkg.dev/$PROJECT/$REPO/fitdata:$TAG
 
 JOB_NAME=fitdata-sync
 SERVICE_NAME=fitdata-web
-QUERY_SERVICE=fitdata-query

@@ -52,27 +52,12 @@ else
   gcloud scheduler jobs create http "$JOB_NAME-daily" "${SCHEDULE_ARGS[@]}"
 fi
 
-echo "== Service $QUERY_SERVICE"
-# Runs MCP `query` SQL; only the web may call it. Its service account has no
-# roles (setup.sh checks), it gets one user's files with each request and
-# handles one request at a time. No GCP_PROJECT: it exports no traces, which
-# would need a role.
-QUERY_URL=https://$QUERY_SERVICE-$PROJECT_NUMBER.$REGION.run.app
-gcloud run deploy "$QUERY_SERVICE" --project "$PROJECT" --region "$REGION" \
-  --image "$IMAGE" --args query-serve \
-  --service-account "$QUERY_SA" \
-  --set-env-vars "RUST_LOG=fitdata=info,APP_VERSION=$TAG" \
-  --no-allow-unauthenticated --use-http2 --concurrency 1 --timeout 60 \
-  --cpu 1 --memory 1Gi --min-instances 0 --max-instances 4
-gcloud run services add-iam-policy-binding "$QUERY_SERVICE" --project "$PROJECT" --region "$REGION" \
-  --member "serviceAccount:$WEB_SA" --role roles/run.invoker >/dev/null
-
 echo "== Service $SERVICE_NAME"
 # Public endpoint; the app itself requires Google sign-in (ALLOWED_EMAILS).
 gcloud run deploy "$SERVICE_NAME" --project "$PROJECT" --region "$REGION" \
   --image "$IMAGE" --args serve \
   --service-account "$WEB_SA" \
-  --set-env-vars "^;^${ENV//,/;};PUBLIC_URL=$PUBLIC_URL;ALLOWED_EMAILS=$ALLOWED_EMAILS;SYNC_JOB=$JOB_NAME;QUERY_URL=$QUERY_URL" \
+  --set-env-vars "^;^${ENV//,/;};PUBLIC_URL=$PUBLIC_URL;ALLOWED_EMAILS=$ALLOWED_EMAILS;SYNC_JOB=$JOB_NAME" \
   --allow-unauthenticated --cpu 1 --memory 1Gi --min-instances 0 --max-instances 2
 
 if [[ -n $DOMAIN ]]; then

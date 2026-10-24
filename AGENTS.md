@@ -12,11 +12,11 @@ Pokyny pro AI agenty pracující v tomto repu.
 
 Stahuje data z Fitbit Air přes Google Health API v4 a ukazuje je na dashboardu.
 
-- Rust binárka `fitdata` (`src/`): CLI, hodinový job, API i služba pro MCP `query` v jednom.
-- Víc uživatelů (na pozvánku, `ALLOWED_EMAILS`), uživatel = Google `sub`; data každého v GCS pod `u/{sub}/` jako raw JSON a Parquet, čtená přes DuckDB. Data jednoho uživatele nikdy nesmí uvidět jiný.
+- Rust binárka `fitdata` (`src/`): CLI, hodinový job i API v jednom.
+- Víc uživatelů (na pozvánku, `ALLOWED_EMAILS`), uživatel = Google `sub`; data každého v GCS pod `u/{sub}/` jako raw JSON a Parquet, čtená přes DataFusion. Data jednoho uživatele nikdy nesmí uvidět jiný.
 - MCP server pro Claude/ChatGPT na `/mcp` (`src/mcp.rs`) s vlastním OAuth serverem (`src/authz.rs`) nad Google přihlášením.
 - Dashboard v `frontend/` (React, Vite, Tailwind, shadcn-style, TanStack, ECharts); `fitdata serve` servíruje jeho `dist`.
-- Produkce na Google Cloud, vše v `europe-west1`: Cloud Run job `fitdata-sync` (každou hodinu), Cloud Run service `fitdata-web` na https://fitdata.jakub.contact, Cloud Run service `fitdata-query` (SQL z MCP, SA bez rolí), GCS `fitdata-jsedlacek-data`, KMS klíč `fitdata/refresh-token`. Popis: [docs/production.md](docs/production.md).
+- Produkce na Google Cloud, vše v `europe-west1`: Cloud Run job `fitdata-sync` (každou hodinu), Cloud Run service `fitdata-web` na https://fitdata.jakub.contact, GCS `fitdata-jsedlacek-data`, KMS klíč `fitdata/refresh-token`. Popis: [docs/production.md](docs/production.md).
 - Push do `main` automaticky nasadí do produkce (GitHub Actions, `.github/workflows/deploy.yml`); po pushi zkontroluj běh přes `gh run watch`.
 - Nasazení: `deploy/setup.sh` (infrastruktura, idempotentní) a `deploy/deploy.sh` (build + nasazení). Nastavení v `deploy/config.sh`, schémata tabulek v `schema/`.
 - Tajemství jsou jen v Secret Manageru (`oauth-client`, `session-key`) a refresh tokeny uživatelů jen zašifrované KMS v `users/{sub}.json`; nikdy je nevypisuj ani neukládej do souborů.

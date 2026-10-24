@@ -26,12 +26,11 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use crate::claims::{self, Claims, Purpose};
 use crate::cloudrun::SyncJob;
 use crate::datatypes::READ_SCOPES;
-use crate::duck;
+use crate::engine;
 use crate::health::StageType;
 use crate::kms::Kms;
 use crate::model::{DailyMetrics, Exercise, NightRow};
 use crate::oauth::{ClientCredentials, auth_request, exchange_code};
-use crate::query::QueryClient;
 use crate::status;
 use crate::store::Store;
 use crate::users::{self, User};
@@ -69,8 +68,6 @@ pub struct Config {
     pub warehouse: Warehouse,
     /// Encrypts the refresh token "Connect Fitbit" stores.
     pub kms: Kms,
-    /// Where MCP `query` SQL runs.
-    pub query: QueryClient,
     /// The Cloud Run job behind the "sync now" button.
     pub sync_job: SyncJob,
     pub http: reqwest::Client,
@@ -523,9 +520,10 @@ struct Me {
 }
 
 async fn overview(State(cfg): State<Shared>, Extension(user): Extension<SignedIn>) -> Response {
-    let days = cfg.warehouse.with(&user.uid, Need::None, |c| {
-        duck::query_as::<DailyMetrics>(c, "SELECT * FROM daily ORDER BY date")
-    });
+    let days = async {
+        let ctx = cfg.warehouse.session(&user.uid, Need::None).await?;
+        engine::query_as::<DailyMetrics>(&ctx, "SELECT * FROM daily ORDER BY date").await
+    };
     let record = users::get(&cfg.store, &user.uid);
     match tokio::try_join!(days, last_run(&cfg.store, &user.uid, false), record) {
         Ok((days, last_sync, record)) => Json(Overview {
@@ -671,27 +669,22 @@ pub(crate) struct DayDetail {
 /// before (if there was one) so the sleep that ended that morning is shown.
 pub(crate) async fn day_detail(wh: &Warehouse, uid: &str, date: NaiveDate) -> Result<DayDetail> {
     let prev = date - Duration::days(1);
-    wh.with(uid, Need::Range(prev, date), move |c| {
-        day_detail_sql(c, date)
-    })
-    .await
-}
-
-fn day_detail_sql(c: &duckdb::Connection, date: NaiveDate) -> Result<DayDetail> {
-    let prev = date - Duration::days(1);
+    let c = &wh.session(uid, Need::Range(prev, date)).await?;
     let midnight = date.and_time(NaiveTime::MIN);
     let end = midnight + Duration::days(1);
 
-    let night = duck::query_as::<NightRow>(
+    let night = engine::query_as::<NightRow>(
         c,
         &format!("SELECT * FROM nights WHERE date = DATE '{date}'"),
-    )?
+    )
+    .await?
     .into_iter()
     .next();
-    let metrics = duck::query_as::<DailyMetrics>(
+    let metrics = engine::query_as::<DailyMetrics>(
         c,
         &format!("SELECT * FROM daily WHERE date = DATE '{date}'"),
-    )?
+    )
+    .await?
     .into_iter()
     .next();
     let start = night.as_ref().map_or(midnight, |n| n.start.min(midnight));
@@ -705,42 +698,46 @@ fn day_detail_sql(c: &duckdb::Connection, date: NaiveDate) -> Result<DayDetail> 
     let (s, e, nf, nt) = (fmt(start), fmt(end), fmt(nf), fmt(nt));
     let days = format!("date BETWEEN DATE '{prev}' AND DATE '{date}'");
 
-    let heart_rate = duck::query_as(
+    let heart_rate = engine::query_as(
         c,
         &format!(
             "SELECT date_trunc('minute', ts) AS t, MIN(bpm) AS lo, ROUND(AVG(bpm), 1) AS avg, MAX(bpm) AS hi
              FROM heart_rate WHERE {days} AND ts >= TIMESTAMP '{s}' AND ts < TIMESTAMP '{e}'
              GROUP BY t ORDER BY t"
         ),
-    )?;
-    let steps = duck::query_as(
+    )
+    .await?;
+    let steps = engine::query_as(
         c,
         &format!(
-            "SELECT time_bucket(INTERVAL 15 MINUTE, ts) AS t, SUM(steps) AS v
+            "SELECT date_bin(INTERVAL '15 minutes', ts) AS t, SUM(steps) AS v
              FROM activity WHERE date = DATE '{date}' AND steps IS NOT NULL GROUP BY t ORDER BY t"
         ),
-    )?;
-    let spo2 = duck::query_as(
+    )
+    .await?;
+    let spo2 = engine::query_as(
         c,
         &format!(
             "SELECT ts AS t, pct AS v FROM spo2
              WHERE {days} AND ts >= TIMESTAMP '{nf}' AND ts < TIMESTAMP '{nt}' ORDER BY ts"
         ),
-    )?;
-    let hrv = duck::query_as(
+    )
+    .await?;
+    let hrv = engine::query_as(
         c,
         &format!(
             "SELECT ts AS t, rmssd_ms AS v FROM hrv
              WHERE {days} AND ts >= TIMESTAMP '{nf}' AND ts < TIMESTAMP '{nt}' ORDER BY ts"
         ),
-    )?;
-    let exercises = duck::query_as(
+    )
+    .await?;
+    let exercises = engine::query_as(
         c,
         &format!(
-            "SELECT * FROM exercises
-             WHERE {days} AND start >= TIMESTAMP '{s}' AND start < TIMESTAMP '{e}' ORDER BY start"
+            r#"SELECT * FROM exercises
+             WHERE {days} AND "start" >= TIMESTAMP '{s}' AND "start" < TIMESTAMP '{e}' ORDER BY "start""#
         ),
-    )?;
+    ).await?;
 
     Ok(DayDetail {
         date,

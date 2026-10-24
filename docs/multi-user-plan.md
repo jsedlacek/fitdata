@@ -1,5 +1,9 @@
 # Plán: více uživatelů, Parquet + DuckDB
 
+> **Hotovo (2026-10-24).** Oproti plánu: místo DuckDB je DataFusion (Rust, SQL bez cesty k souborům a síti, jednodušší build; srovnání níže) a MCP `query` proto běží přímo ve webu na vlastním runtime místo samostatné služby. Refresh tokeny šifruje symetrický klíč KMS s oddělenými rolemi (web jen šifruje, job i dešifruje) místo asymetrického. Nasazení proběhlo ve třech krocích místo sedmi. Aktuální popis je v [production.md](production.md).
+>
+> Srovnání na roce dat (2 vlákna): stránka dne DataFusion 20 ms, DuckDB 27 ms; roční agregace tepu 43 ms, resp. 65 ms. Všechny pokusy o čtení souborů, síť, DDL, DML a `SET` DataFusion odmítl už při plánování.
+
 Cíl: z fitdata pro jednoho uživatele udělat službu pro víc lidí (zatím na pozvánku, ale připravenou na širší nasazení) a BigQuery nahradit Parquetem v GCS čteným přes DuckDB.
 
 ## Rozhodnutí

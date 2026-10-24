@@ -6,7 +6,7 @@ Fitbit Web API se vypíná 30. 10. 2026; tohle používá jeho náhradu, Google 
 
 ## Stav
 
-Běží v produkci na Google Cloud pro víc uživatelů (na pozvánku): hodinový Cloud Run job stahuje data každého uživatele do GCS jako raw JSON a Parquet tabulky a dashboard s MCP serverem je čte přes DuckDB za přihlášením Googlem. Popis je v [docs/production.md](docs/production.md).
+Běží v produkci na Google Cloud pro víc uživatelů (na pozvánku): hodinový Cloud Run job stahuje data každého uživatele do GCS jako raw JSON a Parquet tabulky a dashboard s MCP serverem je čte přes DataFusion za přihlášením Googlem. Popis je v [docs/production.md](docs/production.md).
 
 ## Použití
 
@@ -20,7 +20,6 @@ cargo run -- backfill --user <sub>   # celá historie (lze přerušit a pustit z
 cargo run -- sync --user <sub>       # posledních 7 dní
 cargo run -- load --user <sub> --from 2026-10-21   # raw data -> Parquet tabulky
 cargo run -- job                     # sync + load posledních 7 dní všech uživatelů (hodinový job)
-cargo run -- query-serve             # služba pro MCP `query` (port 8081)
 cargo run -- serve --dev-user <sub>  # API + dashboard + MCP, lokálně bez přihlášení
 ```
 
@@ -50,4 +49,4 @@ npm run build   # frontend/dist, který servíruje `fitdata serve` (STATIC_DIR)
 ```
 
 `fitdata serve` lokálně čte data z `STORAGE` (adresář nebo `gs://…`) a OAuth client ze Secret Manageru (ADC). Bez `gcloud auth application-default login` stačí
-`GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/legacy_credentials/<účet>/adc.json`. MCP `query` potřebuje běžící `fitdata query-serve`.
+`GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/legacy_credentials/<účet>/adc.json`.

@@ -1,171 +1,75 @@
-//! SQL from MCP clients (the `query` tool) runs here, in its own Cloud Run
-//! service (`fitdata query-serve`) whose service account has no roles.
+//! SQL from MCP clients (the `query` tool).
 //!
-//! The web sends the SQL together with the Parquet files of the one user who
-//! asked, so whatever a query manages to do, it can only ever see that
-//! user's data: the service holds no keys, no other data and no
-//! permissions, and handles one request at a time. Locking DuckDB down
-//! (data loaded into memory first, then no file or network access, no
-//! extensions, configuration locked) is a second layer on top.
+//! A query gets a session of its own that knows only the signed-in user's
+//! tables (`warehouse::Snapshot`): DataFusion has no SQL that reaches files
+//! or the network, and DDL, DML and `SET` are refused (`engine::sql_options`),
+//! so other users' data and the server are out of reach. What is left is
+//! load: queries run on a runtime of their own with two threads, at most two
+//! at a time, with a memory limit and a timeout, so a heavy one slows other
+//! queries but not the dashboard.
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
-use axum::Router;
-use axum::extract::{DefaultBodyLimit, Multipart};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Json};
-use axum::routing::{get, post};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use tokio::sync::{Mutex, Semaphore};
+use anyhow::{Result, bail};
+use serde::Serialize;
+use serde_json::Value;
+use tokio::sync::Semaphore;
 
-use crate::duck;
-#[cfg(test)]
-use crate::duck::literal;
+use crate::engine;
 use crate::warehouse::Snapshot;
 
 pub const MAX_ROWS: usize = 1000;
 /// Rows beyond this size are cut, so one answer stays readable for a model.
 const MAX_RESULT_BYTES: usize = 1 << 20;
 const TIMEOUT: Duration = Duration::from_secs(30);
-const MEMORY_LIMIT: &str = "768MB";
+/// Query state (hash tables, sorts) per query; nothing spills to disk.
+const MEMORY: usize = 256 << 20;
+const CONCURRENT: usize = 2;
 
-#[derive(Debug, Serialize, Deserialize)]
+static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("query")
+        .enable_all()
+        .build()
+        .expect("query runtime")
+});
+static SLOTS: Semaphore = Semaphore::const_new(CONCURRENT);
+
+#[derive(Debug, Serialize)]
 pub struct QueryResult {
     pub rows: Vec<Value>,
     /// More rows (or bytes) than returned.
     pub truncated: bool,
 }
 
-// ------------------------------------------------------------------ server
-
-pub async fn serve(port: u16) -> Result<()> {
-    // Cloud Run sends one request at a time (concurrency 1); this keeps it so
-    // when run elsewhere.
-    let one = Arc::new(Semaphore::new(1));
-    let app = Router::new()
-        .route("/healthz", get(|| async { "ok" }))
-        .route(
-            "/query",
-            post(move |m: Multipart| {
-                let one = one.clone();
-                async move {
-                    let _permit = one.acquire().await;
-                    match handle(m).await {
-                        Ok(r) => Json(r).into_response(),
-                        Err(e) => (
-                            StatusCode::BAD_REQUEST,
-                            Json(json!({ "error": format!("{e:#}") })),
-                        )
-                            .into_response(),
-                    }
-                }
-            }),
-        )
-        .layer(DefaultBodyLimit::max(512 << 20));
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
-    tracing::info!("query service listening on 0.0.0.0:{port}");
-    axum::serve(listener, app).await?;
-    Ok(())
-}
-
-async fn handle(mut m: Multipart) -> Result<QueryResult> {
-    let dir = tempfile::tempdir()?;
-    let mut sql = None;
-    let mut files: Vec<(&'static str, PathBuf)> = Vec::new();
-    while let Some(field) = m.next_field().await? {
-        let name = field.name().unwrap_or_default().to_string();
-        if name == "sql" {
-            sql = Some(field.text().await?);
-            continue;
-        }
-        // Parts named by table; the client's file names are not used.
-        let Some(table) = duck::TABLES.iter().find(|t| **t == name) else {
-            bail!("unknown part {name:?}");
-        };
-        let path = dir.path().join(format!("{table}-{}.parquet", files.len()));
-        std::fs::write(&path, field.bytes().await?)?;
-        files.push((table, path));
-    }
-    let sql = sql.context("missing sql")?;
+/// Runs one SELECT over the tables of `snapshot`.
+pub async fn run(snapshot: Snapshot, sql: &str) -> Result<QueryResult> {
+    let _slot = SLOTS.acquire().await?;
+    let sql = sql.trim().trim_end_matches(';').to_string();
     let started = Instant::now();
-    let result = tokio::task::spawn_blocking(move || run(&sql, &files)).await?;
-    drop(dir);
+    // Dropping the timed-out future cancels the query's tasks.
+    let result = RUNTIME
+        .spawn(async move { tokio::time::timeout(TIMEOUT, execute(snapshot, &sql)).await })
+        .await?;
     tracing::info!(
         ms = started.elapsed().as_millis() as u64,
-        ok = result.is_ok(),
-        "query"
+        ok = matches!(result, Ok(Ok(_))),
+        "MCP query"
     );
-    result
+    match result {
+        Ok(r) => r,
+        Err(_) => bail!("the query took longer than {}s", TIMEOUT.as_secs()),
+    }
 }
 
-/// Checks with DuckDB's own parser that `sql` is exactly one SELECT.
-/// Wrapping it in a subquery is not enough: `prepare` runs every statement
-/// before the last, so `1); CREATE ...; SELECT (1` would get through.
-fn single_select(conn: &duckdb::Connection, sql: &str) -> Result<()> {
-    let parsed: String =
-        conn.query_row("SELECT json_serialize_sql(?::VARCHAR)", [sql], |r| r.get(0))?;
-    let parsed: Value = serde_json::from_str(&parsed)?;
-    if parsed["error"].as_bool() == Some(true) {
-        bail!(
-            "only a single SELECT is allowed: {}",
-            parsed["error_message"].as_str().unwrap_or("not a SELECT")
-        );
-    }
-    if parsed["statements"].as_array().map_or(0, Vec::len) != 1 {
-        bail!("only a single SELECT statement is allowed");
-    }
-    Ok(())
-}
-
-/// Loads the files into in-memory tables, locks DuckDB down and runs `sql`.
-fn run(sql: &str, files: &[(&'static str, PathBuf)]) -> Result<QueryResult> {
-    let conn = duck::open()?;
-    conn.execute_batch(&format!(
-        "SET memory_limit = '{MEMORY_LIMIT}'; SET threads = 1; SET temp_directory = '';"
-    ))?;
-    for table in duck::TABLES {
-        let paths: Vec<String> = files
-            .iter()
-            .filter(|(t, _)| t == table)
-            .map(|(_, p)| p.display().to_string())
-            .collect();
-        let select = duck::select_table(&conn, table, &paths)?;
-        conn.execute_batch(&format!("CREATE TABLE {table} AS {select};"))?;
-    }
-    // From here on nothing outside the loaded tables is reachable.
-    conn.execute_batch(
-        "SET enable_external_access = false;
-         SET allow_community_extensions = false;
-         SET lock_configuration = true;",
-    )?;
-    let sql = sql.trim().trim_end_matches(';');
-    single_select(&conn, sql)?;
+async fn execute(snapshot: Snapshot, sql: &str) -> Result<QueryResult> {
+    let ctx = snapshot.session(MEMORY).await?;
+    // The subquery also keeps anything but a query out (on top of the
+    // session's own checks) and bounds what is collected.
     let wrapped = format!("SELECT * FROM (\n{sql}\n) LIMIT {}", MAX_ROWS + 1);
-
-    // Interrupt the query once it runs too long.
-    let interrupt = conn.interrupt_handle();
-    let (done, wait) = std::sync::mpsc::channel::<()>();
-    let watchdog = std::thread::spawn(move || {
-        if wait.recv_timeout(TIMEOUT).is_err() {
-            interrupt.interrupt();
-        }
-    });
-    let rows = duck::rows(&conn, &wrapped);
-    let _ = done.send(());
-    let _ = watchdog.join();
-    let mut rows = rows.map_err(|e| {
-        let msg = format!("{e:#}");
-        if msg.contains("INTERRUPT") {
-            anyhow::anyhow!("query took longer than {}s", TIMEOUT.as_secs())
-        } else {
-            e
-        }
-    })?;
-
+    let mut rows = engine::rows(&ctx, &wrapped).await?;
     let mut truncated = rows.len() > MAX_ROWS;
     rows.truncate(MAX_ROWS);
     let mut size = 0;
@@ -179,176 +83,124 @@ fn run(sql: &str, files: &[(&'static str, PathBuf)]) -> Result<QueryResult> {
     Ok(QueryResult { rows, truncated })
 }
 
-// ------------------------------------------------------------------ client
-
-/// The web's side: sends a query and the user's files to the service.
-pub struct QueryClient {
-    http: reqwest::Client,
-    url: String,
-    token: Mutex<Option<(String, Instant)>>,
-}
-
-/// ID tokens from the metadata server live an hour.
-const TOKEN_TTL: Duration = Duration::from_secs(45 * 60);
-
-impl QueryClient {
-    pub fn new(http: reqwest::Client, url: &str) -> Self {
-        Self {
-            http,
-            url: url.trim_end_matches('/').to_string(),
-            token: Mutex::new(None),
-        }
-    }
-
-    /// An ID token for the service from the metadata server (Cloud Run
-    /// checks that the caller may invoke it). Locally the service runs
-    /// without that check.
-    async fn id_token(&self) -> Result<Option<String>> {
-        if self.url.starts_with("http://") {
-            return Ok(None);
-        }
-        let mut cached = self.token.lock().await;
-        if let Some((t, at)) = cached.as_ref()
-            && at.elapsed() < TOKEN_TTL
-        {
-            return Ok(Some(t.clone()));
-        }
-        let t = self
-            .http
-            .get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity")
-            .query(&[("audience", self.url.as_str())])
-            .header("Metadata-Flavor", "Google")
-            .send()
-            .await
-            .context("ID token for the query service")?
-            .error_for_status()?
-            .text()
-            .await?;
-        *cached = Some((t.clone(), Instant::now()));
-        Ok(Some(t))
-    }
-
-    #[tracing::instrument(name = "query service", skip_all, fields(otel.kind = "client", db.query.text = %sql))]
-    pub async fn run(&self, sql: &str, snapshot: &Snapshot) -> Result<QueryResult> {
-        let mut form = reqwest::multipart::Form::new().text("sql", sql.to_string());
-        for (table, path) in snapshot.files() {
-            let bytes = tokio::fs::read(path).await?;
-            form = form.part(
-                table,
-                reqwest::multipart::Part::bytes(bytes).file_name("data.parquet"),
-            );
-        }
-        let mut req = self
-            .http
-            .post(format!("{}/query", self.url))
-            .multipart(form);
-        if let Some(t) = self.id_token().await? {
-            req = req.bearer_auth(t);
-        }
-        let resp = req.send().await.context("query service unreachable")?;
-        let status = resp.status();
-        if status == StatusCode::BAD_REQUEST {
-            let body: Value = resp.json().await.unwrap_or_default();
-            bail!("{}", body["error"].as_str().unwrap_or("query failed"));
-        }
-        if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE {
-            bail!("the query service is busy; try again in a moment");
-        }
-        if !status.is_success() {
-            bail!("query service: HTTP {status}");
-        }
-        Ok(resp.json().await?)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{DailyMetrics, HeartRateRow};
+    use crate::store::Store;
+    use crate::tables;
+    use chrono::{Duration as Days, NaiveDate, NaiveDateTime};
 
-    /// A few rows of every table, as files the service would receive.
-    fn files(dir: &std::path::Path) -> Vec<(&'static str, PathBuf)> {
-        let conn = duck::open().unwrap();
-        let hr = dir.join("hr.parquet");
-        let daily = dir.join("daily.parquet");
-        conn.execute_batch(&format!(
-            "COPY (SELECT DATE '2026-10-01' + (i % 3)::INT AS date,
-                          TIMESTAMP '2026-10-01 00:00:00' + to_seconds(i * 60) AS ts,
-                          60.0 + i % 20 AS bpm FROM range(5000) t(i))
-               TO {} (FORMAT parquet);
-             COPY (SELECT DATE '2026-10-01' AS date, 55.0 AS resting_hr) TO {} (FORMAT parquet);",
-            literal(&hr.display().to_string()),
-            literal(&daily.display().to_string())
-        ))
-        .unwrap();
-        vec![("heart_rate", hr), ("daily", daily)]
+    /// A user's files: heart rate every minute over three days, one day of
+    /// daily metrics.
+    async fn snapshot(dir: &std::path::Path) -> Snapshot {
+        let store = Store::open(dir.to_str().unwrap()).await.unwrap();
+        let start = NaiveDateTime::parse_from_str("2026-10-01 00:00", "%Y-%m-%d %H:%M").unwrap();
+        let hr: Vec<HeartRateRow> = (0..3 * 1440)
+            .map(|i| {
+                let ts = start + Days::minutes(i);
+                HeartRateRow {
+                    date: ts.date(),
+                    ts,
+                    bpm: 60.0 + (i % 20) as f64,
+                }
+            })
+            .collect();
+        let d = |s| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        tables::replace_range(&store, "x", &hr, d("2026-10-01"), d("2026-10-03"))
+            .await
+            .unwrap();
+        let daily = DailyMetrics {
+            date: d("2026-10-01"),
+            resting_hr: Some(55.0),
+            ..Default::default()
+        };
+        tables::replace_range(&store, "x", &[daily], d("2026-10-01"), d("2026-10-01"))
+            .await
+            .unwrap();
+        let data = dir.join("u/x/data");
+        Snapshot::from_files([
+            ("heart_rate", vec![data.join("heart_rate/2026-10.parquet")]),
+            ("daily", vec![data.join("daily.parquet")]),
+        ])
     }
 
-    fn query(sql: &str) -> Result<QueryResult> {
+    async fn query(sql: &str) -> Result<QueryResult> {
         let dir = tempfile::tempdir().unwrap();
-        run(sql, &files(dir.path()))
+        run(snapshot(dir.path()).await, sql).await
     }
 
-    #[test]
-    fn answers_selects_over_the_loaded_tables() {
+    #[tokio::test]
+    async fn answers_selects_over_the_tables() {
         let r = query("SELECT date, count(*) AS n FROM heart_rate GROUP BY date ORDER BY date")
+            .await
             .unwrap();
         assert_eq!(r.rows.len(), 3);
         assert_eq!(r.rows[0]["date"], "2026-10-01");
+        assert_eq!(r.rows[0]["n"], 1440);
         // Tables without files exist, empty.
-        let r = query("SELECT count(*) AS n FROM spo2").unwrap();
+        let r = query("SELECT count(*) AS n FROM spo2").await.unwrap();
         assert_eq!(r.rows[0]["n"], 0);
-        // Columns missing from older files come back NULL.
-        let r = query("SELECT resting_hr, steps FROM daily").unwrap();
+        let r = query("SELECT resting_hr, steps FROM daily").await.unwrap();
         assert_eq!(r.rows[0]["resting_hr"], 55.0);
-        assert!(r.rows[0]["steps"].is_null());
+        assert!(r.rows[0].get("steps").is_none());
         // CTEs and a trailing semicolon are fine.
-        let r = query("WITH x AS (SELECT max(bpm) AS m FROM heart_rate) SELECT m FROM x;").unwrap();
+        let r = query("WITH x AS (SELECT max(bpm) AS m FROM heart_rate) SELECT m FROM x;")
+            .await
+            .unwrap();
         assert_eq!(r.rows[0]["m"], 79.0);
     }
 
-    #[test]
-    fn cuts_long_results() {
-        let r = query("SELECT * FROM heart_rate").unwrap();
+    #[tokio::test]
+    async fn cuts_long_results() {
+        let r = query("SELECT * FROM heart_rate").await.unwrap();
         assert_eq!(r.rows.len(), MAX_ROWS);
         assert!(r.truncated);
     }
 
-    /// Everything here must fail: the service is the boundary, but DuckDB
-    /// itself must not reach outside the loaded tables either.
-    #[test]
-    fn refuses_to_reach_outside_the_loaded_tables() {
+    /// Everything here must fail: a query sees the registered tables and
+    /// nothing else.
+    #[tokio::test]
+    async fn refuses_to_reach_outside_the_tables() {
         let dir = tempfile::tempdir().unwrap();
-        let fs = files(dir.path());
-        let loaded = fs[0].1.display().to_string();
+        let file = dir.path().join("u/x/data/heart_rate/2026-10.parquet");
         let attempts = [
-            "SELECT * FROM read_csv('/etc/passwd')".to_string(),
-            "SELECT * FROM read_text('/etc/hostname')".to_string(),
-            "SELECT * FROM read_blob('/proc/self/environ')".to_string(),
-            "SELECT * FROM glob('/**')".to_string(),
-            format!("SELECT * FROM read_parquet('{loaded}')"),
+            "SELECT * FROM '/etc/passwd'".to_string(),
+            "SELECT * FROM 'file:///etc/hostname'".to_string(),
+            format!("SELECT * FROM '{}'", file.display()),
             "SELECT * FROM 'http://metadata.google.internal/computeMetadata/v1/'".to_string(),
-            "SELECT getenv('HOME') AS h".to_string(),
-            "SELECT current_setting('enable_external_access') AS x FROM (SELECT 1); SET enable_external_access = true; SELECT (1".to_string(),
-            "SELECT 1); COPY heart_rate TO '/tmp/x.csv'; SELECT (1".to_string(),
-            "SELECT 1); ATTACH '/tmp/x.db' AS x; SELECT (1".to_string(),
-            "SELECT 1); INSTALL httpfs; SELECT (1".to_string(),
-            "SELECT 1); LOAD httpfs; SELECT (1".to_string(),
-            "SELECT 1); SET lock_configuration = false; SELECT (1".to_string(),
-            "SELECT 1); PRAGMA enable_external_access; SELECT (1".to_string(),
-            "SELECT 1); CREATE TABLE y AS SELECT 1; SELECT (1".to_string(),
+            "SELECT * FROM read_csv('/etc/passwd')".to_string(),
+            "SELECT * FROM read_parquet('/etc/passwd')".to_string(),
+            "CREATE EXTERNAL TABLE x STORED AS CSV LOCATION '/etc/passwd'".to_string(),
+            "COPY (SELECT 1) TO '/tmp/fitdata.csv'".to_string(),
+            "COPY heart_rate TO '/tmp/fitdata.parquet'".to_string(),
+            "INSERT INTO daily SELECT * FROM daily".to_string(),
+            "DROP TABLE daily".to_string(),
+            "CREATE TABLE y AS SELECT 1".to_string(),
+            "CREATE VIEW v AS SELECT 1".to_string(),
+            "SET datafusion.execution.batch_size = 1".to_string(),
             "SELECT 1; SELECT 2".to_string(),
-            "DROP TABLE heart_rate".to_string(),
+            "SELECT 1); DROP TABLE daily; SELECT (1".to_string(),
+            "SELECT * FROM information_schema.df_settings".to_string(),
+            "EXPLAIN ANALYZE SELECT 1".to_string(),
+            "PREPARE p AS SELECT 1".to_string(),
         ];
+        let snap = snapshot(dir.path()).await;
         for sql in &attempts {
-            assert!(run(sql, &fs).is_err(), "should fail: {sql}");
+            let r = run(snap.clone(), sql).await;
+            assert!(r.is_err(), "should fail: {sql}");
         }
+        assert!(!std::path::Path::new("/tmp/fitdata.csv").exists());
     }
 
-    #[test]
-    fn stops_queries_over_the_memory_limit() {
-        let err = query(
-            "SELECT count(DISTINCT (a.i, b.i)) AS n FROM range(100000) a(i), range(100000) b(i)",
-        );
-        assert!(err.is_err());
+    #[tokio::test]
+    async fn stops_queries_over_the_memory_limit() {
+        let r = query(
+            "SELECT count(DISTINCT a.value * 100000 + b.value) AS n
+             FROM generate_series(1, 3000) a, generate_series(1, 100000) b",
+        )
+        .await;
+        let e = format!("{:#}", r.unwrap_err());
+        assert!(e.contains("esources exhausted"), "{e}");
     }
 }

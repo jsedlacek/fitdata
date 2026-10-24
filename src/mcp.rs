@@ -22,8 +22,9 @@ use serde_json::{Map, Value, json};
 use tracing::Instrument;
 
 use crate::authz::{bearer_user, unauthorized};
-use crate::duck;
+use crate::engine;
 use crate::model::{DailyMetrics, Exercise, NightRow};
+use crate::query;
 use crate::warehouse::Need;
 use crate::web::{Config, HrMinute, Shared, SignedIn, day_detail, last_run};
 
@@ -274,7 +275,7 @@ struct DayArgs {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct QueryArgs {
-    /// A single SELECT statement (DuckDB SQL)
+    /// A single SELECT statement (DataFusion SQL, close to PostgreSQL)
     sql: String,
     /// First day of heart_rate, activity, spo2 and hrv to load, YYYY-MM-DD. Default: 90 days
     /// before `to`. The other tables are always complete.
@@ -382,7 +383,8 @@ fn tools() -> Vec<Tool> {
         tool(
             "query",
             "SQL query",
-            "Runs one read-only SELECT in DuckDB SQL over the user's tables, by bare name (e.g. \
+            "Runs one read-only SELECT in DataFusion SQL (close to PostgreSQL; e.g. date_trunc, \
+             date_bin, extract) over the user's tables, by bare name (e.g. \
              `daily`, `heart_rate`). daily, nights and exercises are complete; heart_rate, \
              activity, spo2 and hrv hold only the days `from`..`to` (default: the last 90 days, \
              at most 400). Returns at most 1000 rows; aggregate rather than fetch raw readings.",
@@ -440,9 +442,10 @@ async fn call_tool(cfg: &Config, uid: &str, tool: ToolCall) -> Result<Value> {
     match tool {
         ToolCall::GetDailyMetrics(args) => {
             let sql = in_range("daily", args.range()?, "date");
-            let days = wh.with(uid, Need::None, move |c| {
-                duck::query_as::<DailyMetrics>(c, &sql)
-            });
+            let days = async {
+                let ctx = wh.session(uid, Need::None).await?;
+                engine::query_as::<DailyMetrics>(&ctx, &sql).await
+            };
             let (days, run) = tokio::try_join!(days, last_run(&cfg.store, uid, true))?;
             Ok(json!({
                 "lastSuccessfulSync": run.map(|r| r.run_at),
@@ -464,27 +467,21 @@ async fn call_tool(cfg: &Config, uid: &str, tool: ToolCall) -> Result<Value> {
         }
         ToolCall::GetSleep(args) => {
             let sql = in_range("nights", args.range()?, "date");
-            let rows = wh
-                .with(uid, Need::None, move |c| {
-                    duck::query_as::<NightRow>(c, &sql)
-                })
-                .await?;
+            let rows =
+                engine::query_as::<NightRow>(&wh.session(uid, Need::None).await?, &sql).await?;
             Ok(json!({ "nights": compact(rows) }))
         }
         ToolCall::GetExercises(args) => {
-            let sql = in_range("exercises", args.range()?, "start");
-            let rows = wh
-                .with(uid, Need::None, move |c| {
-                    duck::query_as::<Exercise>(c, &sql)
-                })
-                .await?;
+            let sql = in_range("exercises", args.range()?, "\"start\"");
+            let rows =
+                engine::query_as::<Exercise>(&wh.session(uid, Need::None).await?, &sql).await?;
             Ok(json!({ "exercises": compact(rows) }))
         }
         ToolCall::GetSchema(NoArgs {}) => Ok(schema()),
         ToolCall::Query(args) => {
             let (from, to) = args.range()?;
             let snapshot = wh.snapshot(uid, Need::Range(from, to)).await?;
-            let result = cfg.query.run(&args.sql, &snapshot).await?;
+            let result = query::run(snapshot, &args.sql).await?;
             let mut out = json!({ "rows": compact(result.rows) });
             if result.truncated {
                 out["note"] = json!("Only the first rows; aggregate to see everything.");
@@ -496,15 +493,15 @@ async fn call_tool(cfg: &Config, uid: &str, tool: ToolCall) -> Result<Value> {
 
 /// `get_schema`: every table with its columns, types and descriptions.
 fn schema() -> Value {
-    let tables: Map<String, Value> = duck::TABLES
+    let tables: Map<String, Value> = engine::TABLES
         .iter()
         .map(|t| {
-            let cols: Vec<Value> = duck::schema(t)
+            let cols: Vec<Value> = engine::columns(t)
                 .iter()
                 .map(|c| {
                     compact(json!({
                         "column": c.name,
-                        "type": duck::duck_type(c),
+                        "type": engine::sql_type(c),
                         "description": c.description,
                     }))
                 })
@@ -513,7 +510,7 @@ fn schema() -> Value {
         })
         .collect();
     json!({
-        "notes": "DuckDB SQL. Every table has `date` (local date); TIMESTAMP columns are local \
+        "notes": "DataFusion SQL (close to PostgreSQL). Every table has `date` (local date); TIMESTAMP columns are local \
                   wall-clock time (Europe/Prague). `daily` has one row per day; heart_rate has a \
                   reading every few seconds, so aggregate it.",
         "tables": tables,

@@ -11,13 +11,21 @@
 //! written last, so a reader that follows it sees whole files of one load.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::io::Cursor;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, Months, NaiveDate};
+use datafusion::arrow::array::RecordBatch;
+use datafusion::arrow::json::ReaderBuilder;
+use datafusion::datasource::MemTable;
+use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::parquet::basic::{Compression, ZstdLevel};
+use datafusion::parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
 
-use crate::duck::{self, ident, literal};
+use crate::engine;
 use crate::model::{Row, Tables};
 use crate::store::{self, Store};
 
@@ -56,50 +64,80 @@ pub fn months(from: NaiveDate, to: NaiveDate) -> Vec<String> {
 /// The columns rows are sorted by within a file (for compression and for
 /// row-group statistics on time).
 fn sort_key(table: &str) -> String {
-    let cols = duck::schema(table);
+    let cols = engine::columns(table);
     let time = ["ts", "start"]
         .into_iter()
         .find(|t| cols.iter().any(|c| c.name == *t));
     match time {
-        Some(t) => format!("date, {}", ident(t)),
+        Some(t) => format!("date, \"{t}\""),
         None => "date".to_string(),
     }
 }
 
-/// The SQL that writes one file: the old file without the dates in
-/// `[from, to]`, plus the new rows, limited to `month` if the table is split.
-fn merge_sql(
+/// `rows` as record batches of the table's schema.
+fn batches<R: Row>(rows: &[R]) -> Result<Vec<RecordBatch>> {
+    let jsonl = store::to_jsonl(rows)?;
+    ReaderBuilder::new(engine::schema(R::TABLE))
+        .build(Cursor::new(jsonl))?
+        .map(|b| b.map_err(anyhow::Error::from))
+        .collect()
+}
+
+/// One file's new content: the old file without the dates in `[from, to]`,
+/// plus the new rows, limited to `month` if the table is split by month.
+/// Returns the Parquet bytes and the number of rows.
+async fn merge(
     table: &str,
-    old: Option<&Path>,
-    new: &Path,
-    out: &Path,
+    old: Option<PathBuf>,
+    new: Vec<RecordBatch>,
     month: Option<&str>,
     (from, to): (NaiveDate, NaiveDate),
-) -> String {
-    let columns: Vec<String> = duck::schema(table).iter().map(|c| ident(&c.name)).collect();
-    let new = format!(
-        "SELECT * FROM read_json({}, format = 'newline_delimited', columns = {})",
-        literal(&new.display().to_string()),
-        duck::json_columns(table)
-    );
-    let source = match old {
-        Some(old) => format!(
-            "SELECT * FROM read_parquet({}) WHERE date NOT BETWEEN DATE '{from}' AND DATE '{to}'
-             UNION ALL BY NAME {new}",
-            literal(&old.display().to_string())
-        ),
-        None => new,
+) -> Result<(Vec<u8>, usize)> {
+    let schema = engine::schema(table);
+    let ctx = engine::session(512 << 20)?;
+    ctx.register_table(
+        "incoming",
+        Arc::new(MemTable::try_new(schema.clone(), vec![new])?),
+    )?;
+    let cols = engine::columns(table)
+        .iter()
+        .map(|c| format!("\"{}\"", c.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let kept = match old {
+        Some(old) => {
+            engine::register_as(&ctx, "existing", table, &[old]).await?;
+            format!(
+                "SELECT {cols} FROM existing WHERE date NOT BETWEEN DATE '{from}' AND DATE '{to}'
+                 UNION ALL "
+            )
+        }
+        None => String::new(),
     };
-    let filter = month.map_or(String::new(), |m| {
-        format!("WHERE strftime(date, '%Y-%m') = {}", literal(m))
-    });
-    format!(
-        "COPY (SELECT {cols} FROM ({source}) {filter} ORDER BY {key})
-         TO {out} (FORMAT parquet, COMPRESSION zstd)",
-        cols = columns.join(", "),
-        key = sort_key(table),
-        out = literal(&out.display().to_string()),
-    )
+    let filter = match month {
+        Some(m) => {
+            let first = NaiveDate::parse_from_str(&format!("{m}-01"), "%Y-%m-%d")?;
+            let next = first + Months::new(1);
+            format!("WHERE date >= DATE '{first}' AND date < DATE '{next}'")
+        }
+        None => String::new(),
+    };
+    let sql = format!(
+        "SELECT {cols} FROM ({kept}SELECT {cols} FROM incoming) {filter} ORDER BY {}",
+        sort_key(table)
+    );
+    let result = engine::run(&ctx, &sql).await?;
+    let n = result.iter().map(RecordBatch::num_rows).sum();
+    let props = WriterProperties::builder()
+        .set_compression(Compression::ZSTD(ZstdLevel::default()))
+        .build();
+    let mut buf = Vec::new();
+    let mut w = ArrowWriter::try_new(&mut buf, schema, Some(props))?;
+    for b in &result {
+        w.write(b)?;
+    }
+    w.close()?;
+    Ok((buf, n))
 }
 
 /// Replaces the rows of `R`'s table for local dates `[from, to]` in the
@@ -114,8 +152,7 @@ pub async fn replace_range<R: Row>(
 ) -> Result<()> {
     let table = R::TABLE;
     let dir = tempfile::tempdir()?;
-    let new = dir.path().join("new.jsonl");
-    std::fs::write(&new, store::to_jsonl(rows)?)?;
+    let new = batches(rows)?;
     let targets: Vec<Option<String>> = if MONTHLY.contains(&table) {
         months(from, to).into_iter().map(Some).collect()
     } else {
@@ -136,24 +173,13 @@ pub async fn replace_range<R: Row>(
             }
             None => None,
         };
-        let out = dir.path().join("out.parquet");
-        let sql = merge_sql(
-            table,
-            old.as_deref(),
-            &new,
-            &out,
-            month.as_deref(),
-            (from, to),
-        );
-        let n = tokio::task::spawn_blocking(move || -> Result<usize> {
-            Ok(duck::open()?.execute(&sql, [])?)
-        })
-        .await?
-        .with_context(|| format!("writing {path}"))?;
+        let (bytes, n) = merge(table, old, new.clone(), month.as_deref(), (from, to))
+            .await
+            .with_context(|| format!("writing {path}"))?;
         if n == 0 {
             store.delete(&path).await?;
         } else {
-            store.put(&path, std::fs::read(&out)?).await?;
+            store.put(&path, bytes).await?;
         }
         written += n;
     }
@@ -230,29 +256,24 @@ mod tests {
         }
     }
 
-    fn read(store: &Store, path: &str) -> Vec<(String, f64)> {
-        let dir = store.local_dir().unwrap();
-        let conn = duck::open().unwrap();
-        let file = dir.join("u/x/data").join(path);
+    async fn read(store: &Store, path: &str) -> Vec<(String, f64)> {
+        let file = store.local_dir().unwrap().join("u/x/data").join(path);
         if !file.exists() {
             return vec![];
         }
-        duck::rows(
-            &conn,
-            &format!(
-                "SELECT ts, bpm FROM read_parquet({}) ORDER BY ts",
-                literal(&file.display().to_string())
-            ),
-        )
-        .unwrap()
-        .into_iter()
-        .map(|r| {
-            (
-                r["ts"].as_str().unwrap().to_string(),
-                r["bpm"].as_f64().unwrap(),
-            )
-        })
-        .collect()
+        let ctx = engine::session(64 << 20).unwrap();
+        engine::register(&ctx, "heart_rate", &[file]).await.unwrap();
+        engine::rows(&ctx, "SELECT ts, bpm FROM heart_rate ORDER BY ts")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| {
+                (
+                    r["ts"].as_str().unwrap().to_string(),
+                    r["bpm"].as_f64().unwrap(),
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -278,10 +299,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            read(&store, "heart_rate/2026-09.parquet"),
+            read(&store, "heart_rate/2026-09.parquet").await,
             [("2026-09-30T10:00:00".into(), 60.0)]
         );
-        assert_eq!(read(&store, "heart_rate/2026-10.parquet").len(), 3);
+        assert_eq!(read(&store, "heart_rate/2026-10.parquet").await.len(), 3);
 
         // Re-load the middle: Oct 2 changes, Oct 3 is kept, Oct 1 lost its data.
         let second = [hr("2026-10-02 11:00", 72.0)];
@@ -289,19 +310,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            read(&store, "heart_rate/2026-10.parquet"),
+            read(&store, "heart_rate/2026-10.parquet").await,
             [
                 ("2026-10-02T11:00:00".into(), 72.0),
                 ("2026-10-03T10:00:00".into(), 63.0)
             ]
         );
-        assert_eq!(read(&store, "heart_rate/2026-09.parquet").len(), 1);
+        assert_eq!(read(&store, "heart_rate/2026-09.parquet").await.len(), 1);
 
         // A file left without rows is removed.
         replace_range::<HeartRateRow>(&store, "x", &[], d("2026-09-01"), d("2026-09-30"))
             .await
             .unwrap();
-        assert!(read(&store, "heart_rate/2026-09.parquet").is_empty());
+        assert!(read(&store, "heart_rate/2026-09.parquet").await.is_empty());
         assert!(
             !tmp.path()
                 .join("u/x/data/heart_rate/2026-09.parquet")
@@ -345,16 +366,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let conn = duck::open().unwrap();
         let file = tmp.path().join("u/x/data/daily.parquet");
-        let rows: Vec<DailyMetrics> = duck::query_as(
-            &conn,
-            &format!(
-                "SELECT * FROM read_parquet({}) ORDER BY date",
-                literal(&file.display().to_string())
-            ),
-        )
-        .unwrap();
+        let ctx = engine::session(64 << 20).unwrap();
+        engine::register(&ctx, "daily", &[file]).await.unwrap();
+        let rows: Vec<DailyMetrics> = engine::query_as(&ctx, "SELECT * FROM daily ORDER BY date")
+            .await
+            .unwrap();
         let got: Vec<_> = rows.iter().map(|r| (r.date, r.steps)).collect();
         assert_eq!(
             got,

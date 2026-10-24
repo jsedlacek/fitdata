@@ -5,20 +5,18 @@ Cloud Scheduler (každou hodinu)
   └─> Cloud Run job fitdata-sync      `fitdata job --days 7`, pro každého uživatele
         ├─ users/{uid}.json: šifrovaný refresh token ─> Cloud KMS (dešifruje jen job)
         ├─ Google Health API ─> GCS u/{uid}/raw/{typ}/{den|měsíc}.jsonl
-        └─ normalizace (DuckDB) ─> GCS u/{uid}/data/{tabulka}[/{YYYY-MM}].parquet + manifest.json
+        └─ normalizace (DataFusion) ─> GCS u/{uid}/data/{tabulka}[/{YYYY-MM}].parquet + manifest.json
 Cloud Run service fitdata-web          `fitdata serve`   https://fitdata.jakub.contact
-  └─ Google přihlášení (ALLOWED_EMAILS) ─> Parquet uživatele v cache instance ─> DuckDB
-Cloud Run service fitdata-query        `fitdata query-serve`   (jen pro fitdata-web)
-  └─ SQL z MCP nástroje `query` nad soubory jednoho uživatele, SA bez rolí
+  └─ Google přihlášení (ALLOWED_EMAILS) ─> Parquet uživatele v cache instance ─> DataFusion
 ```
 
-Jeden image, jedna binárka; job a obě služby se liší jen argumenty. Všechno běží v jednom regionu, `europe-west1` (Belgie). Frankfurt (`europe-west3`) by byl blíž, ale neumí Cloud Run domain mapping.
+Jeden image, jedna binárka; job a web se liší jen argumenty. Všechno běží v jednom regionu, `europe-west1` (Belgie). Frankfurt (`europe-west3`) by byl blíž, ale neumí Cloud Run domain mapping.
 
 ## Nasazení
 
 ```bash
 deploy/setup.sh    # jednorázově / idempotentně: API, bucket, KMS klíč, SA, IAM, session-key
-deploy/deploy.sh   # build (Cloud Build), job + scheduler, fitdata-query, web
+deploy/deploy.sh   # build (Cloud Build), job + scheduler, web
 ```
 
 Každý push do `main` nasadí GitHub Actions ([.github/workflows/deploy.yml](../.github/workflows/deploy.yml)) spuštěním `deploy/deploy.sh`. Ručně jde workflow spustit v záložce Actions (Run workflow). Přihlašuje se bez klíče přes Workload Identity Federation (pool `github`) jako `fitdata-deployer`; token dostane jen workflow z `jsedlacek/fitdata` na `main`. Pool i role nastaví `setup.sh`. Image se staví znovu jen při změně `Dockerfile`, `.dockerignore`, `Cargo.*`, `src/` nebo `frontend/`, takže push samotných docs jen znovu nasadí stávající image. V Actions se image staví přímo na runneru (Buildx) a pushne do Artifact Registry; `deploy.sh` ho pak najde a Cloud Build přeskočí. Závislosti Rustu staví [cargo-chef](https://github.com/LukeMathWalker/cargo-chef) ve vlastní vrstvě, kterou drží cache GitHub Actions, takže se znovu kompilují jen při změně `Cargo.*`. Lokální `deploy.sh` staví dál v Cloud Buildu, bez cache.
@@ -59,7 +57,7 @@ u/{uid}/status.json                         poslední běh syncu, poslední úsp
 
 - **Raw:** job při každém běhu přepíše posledních 7 dní, protože hodinky synchronizují se zpožděním. Nový uživatel dostane nejdřív celou historii (backfill).
 - **Tabulky:** `fitdata load` nahradí v souborech dny z rozsahu a zbytek nechá, takže opakovaný běh nic nezdvojí. Schéma sloupců je v [schema/](../schema/) (formát schémat BigQuery); nový sloupec stačí přidat tam a do `model.rs`, ve starších souborech se čte jako NULL.
-- **Čtení:** web drží soubory uživatelů v cache instance (`/tmp`, tedy RAM, nejvýš 256 MB) a podle `manifest.json` stahuje jen změněné a jen měsíce, které požadavek potřebuje. Dotazy běží v DuckDB nad views se jmény tabulek ([src/warehouse.rs](../src/warehouse.rs)).
+- **Čtení:** web drží soubory uživatelů v cache instance (`/tmp`, tedy RAM, nejvýš 256 MB) a podle `manifest.json` stahuje jen změněné a jen měsíce, které požadavek potřebuje. Dotazy běží v DataFusion nad tabulkami zaregistrovanými jen pro daného uživatele ([src/warehouse.rs](../src/warehouse.rs), [src/engine.rs](../src/engine.rs)).
 - **Noc** (`nights`) patří ke dni probuzení a spojuje všechny spánky, které skončily před 14:00.
 
 ## Bezpečnost
@@ -67,8 +65,7 @@ u/{uid}/status.json                         poslední běh syncu, poslední úsp
 | Identita | Smí |
 |---|---|
 | `fitdata-job` | číst `oauth-client`, zapisovat do bucketu, šifrovat a dešifrovat klíčem `refresh-token` (KMS), zapisovat spany do Cloud Trace |
-| `fitdata-web` | číst `oauth-client` a `session-key`, číst bucket, zapisovat jen `users/` (podmínka IAM), jen šifrovat klíčem `refresh-token`, volat `fitdata-query`, spustit job (i s argumenty pro jednoho uživatele) a číst jeho stav, zapisovat spany do Cloud Trace |
-| `fitdata-query` | nic: žádná role v projektu ani v bucketu (`setup.sh` to kontroluje) |
+| `fitdata-web` | číst `oauth-client` a `session-key`, číst bucket, zapisovat jen `users/` (podmínka IAM), jen šifrovat klíčem `refresh-token`, spustit job (i s argumenty pro jednoho uživatele) a číst jeho stav, zapisovat spany do Cloud Trace |
 | `fitdata-scheduler` | spustit job |
 | `fitdata-deployer` | nasadit job, scheduler a web (GitHub Actions), číst projekt |
 
@@ -80,11 +77,11 @@ Refresh tokeny jsou v záznamech uživatelů zašifrované klíčem Cloud KMS `f
 
 `https://fitdata.jakub.contact/mcp` je MCP server (Streamable HTTP) s nástroji jen pro čtení nad daty přihlášeného uživatele: `get_daily_metrics`, `get_day`, `get_sleep`, `get_exercises`, `get_schema` a `query`. Kód je v [src/mcp.rs](../src/mcp.rs).
 
-`query` je jeden SELECT v DuckDB SQL, nejvýš 1000 řádků. Minutové tabulky (`heart_rate`, `activity`, `spo2`, `hrv`) obsahují jen dny `from`..`to` (výchozí posledních 90 dní, nejvýš 400), ostatní celé. SQL běží v samostatné službě `fitdata-query` ([src/query.rs](../src/query.rs)):
+`query` je jeden SELECT v SQL DataFusion (blízké PostgreSQL), nejvýš 1000 řádků. Minutové tabulky (`heart_rate`, `activity`, `spo2`, `hrv`) obsahují jen dny `from`..`to` (výchozí posledních 90 dní, nejvýš 400), ostatní celé. Kód je v [src/query.rs](../src/query.rs):
 
-- Web jí pošle SQL a Parquet soubory jen přihlášeného uživatele (HTTP/2, bez limitu 32 MiB). Volat ji smí jen `fitdata-web` (ID token, `roles/run.invoker`).
-- Její service account nemá žádnou roli, nemá secrety ani přístup k datům, a instance obsluhuje jeden požadavek najednou (`concurrency 1`). Co dotaz dokáže, omezí architektura: vidí nanejvýš data uživatele, který ho poslal.
-- Druhá vrstva je DuckDB: data se načtou do paměti, pak se vypne přístup k souborům a síti, rozšíření a zamkne konfigurace. Parser DuckDB ověří, že jde o jediný SELECT. Testy v `query.rs` zkoušejí čtení souborů, `COPY`, `ATTACH`, `INSTALL`, `SET`, víc příkazů najednou, limit paměti a timeout (30 s).
+- Dotaz dostane vlastní session, ve které jsou zaregistrované jen tabulky přihlášeného uživatele. DataFusion nemá SQL, které by sáhlo na soubory nebo síť (cesty a URL jako tabulky ani funkce typu `read_csv` neexistují), a DDL, DML i `SET` jsou vypnuté, takže `CREATE EXTERNAL TABLE` ani `COPY TO` neprojdou. Data jiných uživatelů ani server dotaz nevidí.
+- Proti přetížení: dotazy běží na vlastním runtime se dvěma vlákny (nezablokují dashboard), nejvýš dva najednou, s limitem 256 MB na stav dotazu (bez zápisu na disk) a timeoutem 30 s.
+- Testy v `query.rs` zkoušejí cesty a URL jako tabulky, `CREATE EXTERNAL TABLE`, `COPY`, `INSERT`, `DROP`, `SET`, `PREPARE`, víc příkazů najednou a limit paměti.
 
 Připojení:
 
@@ -110,7 +107,7 @@ Druhá politika, **fitdata-web errors** ([deploy/alert-web-errors.json](../deplo
 Nastavení je v [src/telemetry.rs](../src/telemetry.rs).
 
 - **Logy:** na Cloud Runu (`K_SERVICE` nebo `CLOUD_RUN_JOB`) píše binárka JSON řádky ve formátu Cloud Loggingu: `severity`, `message`, zdrojový řádek a pole události i nadřazených spanů (např. `data_type`, `table`, `http.route`) v `jsonPayload`. Lokálně je výstup čitelný text. Formát jde vynutit přes `LOG_FORMAT=json` nebo `LOG_FORMAT=text`, úroveň přes `RUST_LOG`.
-- **Trace:** spany se posílají přes OpenTelemetry (OTLP) do Cloud Trace (Telemetry API `telemetry.googleapis.com`). Každý HTTP požadavek na web je jeden trace, který navazuje na trace Cloud Runu (`traceparent`). Každý běh jobu je jeden trace `sync job` se spany pro uživatele, datové typy, volání Health API, čtení a zápis v GCS a zápis tabulek. `fitdata-query` spany neposílá (potřeboval by roli); trvání dotazu je ve spanu `query service` webu.
+- **Trace:** spany se posílají přes OpenTelemetry (OTLP) do Cloud Trace (Telemetry API `telemetry.googleapis.com`). Každý HTTP požadavek na web je jeden trace, který navazuje na trace Cloud Runu (`traceparent`). Každý běh jobu je jeden trace `sync job` se spany pro uživatele, datové typy, volání Health API, čtení a zápis v GCS a zápis tabulek.
 - **Korelace:** každý log nese `logging.googleapis.com/trace` a `spanId`. V Logs Explorer se logy požadavku seskupí pod jeho request log a v Cloud Trace se u spanu zobrazí jeho logy.
 - **Error Reporting:** logy úrovně ERROR (i panic) mají typ `ReportedErrorEvent` a verzi image (`APP_VERSION`), takže je [Error Reporting](https://console.cloud.google.com/errors?project=fitdata-jsedlacek) seskupí.
 

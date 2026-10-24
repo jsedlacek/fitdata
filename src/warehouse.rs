@@ -4,7 +4,7 @@
 //! query the user's manifest says which files changed since they were
 //! cached; only those are downloaded, and only the ones the query needs
 //! (the small tables always, monthly ones for the months of a date range).
-//! Queries see each table as a view of the same name over its files.
+//! Queries see each table under its name, over its files (`engine.rs`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -13,17 +13,19 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
-use duckdb::Connection;
+use datafusion::prelude::SessionContext;
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::sync::Mutex;
 
-use crate::duck;
+use crate::engine;
 use crate::store::Store;
 use crate::tables::{MONTHLY, Manifest, file_name, manifest_path, months, user_prefix};
 
 /// How long a fetched manifest is trusted; the dashboard asks several
 /// endpoints at once, and a sync takes minutes anyway.
 const MANIFEST_TTL: Duration = Duration::from_secs(5);
+/// Query state of the dashboard's own queries (minutes of a day at most).
+const SESSION_MEMORY: usize = 128 << 20;
 /// Above this, the users used longest ago are dropped from the cache.
 const CACHE_BYTES: u64 = 256 << 20;
 
@@ -51,35 +53,30 @@ struct UserCache {
     used: Option<Instant>,
 }
 
-/// The files of one user a query can read, as views. Each table has a
-/// view, empty if the user has no file for it (yet).
+/// The files of one user a query can read. Every table is registered,
+/// empty if the user has no file for it (yet).
+#[derive(Clone)]
 pub struct Snapshot {
     files: BTreeMap<&'static str, Vec<PathBuf>>,
 }
 
 impl Snapshot {
-    /// An in-memory database with a view per table.
-    pub fn connect(&self) -> Result<Connection> {
-        let conn = duck::open()?;
-        for table in duck::TABLES {
-            let files: Vec<String> = self
-                .files
-                .get(table)
-                .into_iter()
-                .flatten()
-                .map(|p| p.display().to_string())
-                .collect();
-            let select = duck::select_table(&conn, table, &files)?;
-            conn.execute_batch(&format!("CREATE VIEW {table} AS {select};"))?;
+    #[cfg(test)]
+    pub fn from_files<const N: usize>(files: [(&'static str, Vec<PathBuf>); N]) -> Self {
+        Self {
+            files: files.into_iter().collect(),
         }
-        Ok(conn)
     }
 
-    /// The files behind each table, for sending them elsewhere.
-    pub fn files(&self) -> impl Iterator<Item = (&'static str, &PathBuf)> {
-        self.files
-            .iter()
-            .flat_map(|(t, files)| files.iter().map(move |f| (*t, f)))
+    /// A session that knows these tables and nothing else, with at most
+    /// `memory` bytes for query state.
+    pub async fn session(&self, memory: usize) -> Result<SessionContext> {
+        let ctx = engine::session(memory)?;
+        for table in engine::TABLES {
+            let files = self.files.get(table).map(Vec::as_slice).unwrap_or_default();
+            engine::register(&ctx, table, files).await?;
+        }
+        Ok(ctx)
     }
 }
 
@@ -177,7 +174,7 @@ impl Warehouse {
         let mut files: BTreeMap<&'static str, Vec<PathBuf>> = BTreeMap::new();
         for name in &wanted {
             let table = name.split(['/', '.']).next().unwrap_or_default();
-            if let Some(t) = duck::TABLES.iter().find(|t| **t == table) {
+            if let Some(t) = engine::TABLES.iter().find(|t| **t == table) {
                 files.entry(t).or_default().push(dir.join(name));
             }
         }
@@ -220,15 +217,12 @@ impl Warehouse {
         }
     }
 
-    /// Runs `f` with a connection over the user's tables, off the async runtime.
-    pub async fn with<T: Send + 'static>(
-        &self,
-        uid: &str,
-        need: Need,
-        f: impl FnOnce(&Connection) -> Result<T> + Send + 'static,
-    ) -> Result<T> {
-        let snapshot = self.snapshot(uid, need).await?;
-        tokio::task::spawn_blocking(move || f(&snapshot.connect()?)).await?
+    /// A session over the user's tables (see `snapshot`) for our own queries.
+    pub async fn session(&self, uid: &str, need: Need) -> Result<SessionContext> {
+        self.snapshot(uid, need)
+            .await?
+            .session(SESSION_MEMORY)
+            .await
     }
 }
 
@@ -313,20 +307,16 @@ mod tests {
         let count = |need| {
             let wh = &wh;
             async move {
-                wh.with("x", need, |c| {
-                    let r = duck::rows(
-                        c,
-                        "SELECT count(*) AS n, count(DISTINCT date) AS d FROM heart_rate",
-                    )?;
-                    Ok(r[0]["n"].as_i64().unwrap())
-                })
-                .await
-                .unwrap()
+                let ctx = wh.session("x", need).await.unwrap();
+                let r = engine::rows(&ctx, "SELECT count(*) AS n FROM heart_rate")
+                    .await
+                    .unwrap();
+                r[0]["n"].as_i64().unwrap()
             }
         };
         let oct = Need::Range(d("2026-10-01"), d("2026-10-31"));
 
-        // No data yet: empty views.
+        // No data yet: empty tables.
         assert_eq!(count(oct).await, 0);
 
         tables::replace_range(

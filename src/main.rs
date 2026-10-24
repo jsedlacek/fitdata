@@ -6,7 +6,7 @@ mod authz;
 mod claims;
 mod cloudrun;
 mod datatypes;
-mod duck;
+mod engine;
 mod health;
 mod job;
 mod kms;
@@ -87,17 +87,9 @@ enum Cmd {
         /// Cloud Run job the "sync now" button starts.
         #[arg(long, env = "SYNC_JOB", default_value = "fitdata-sync")]
         sync_job: String,
-        /// The service that runs MCP `query` SQL (`fitdata query-serve`).
-        #[arg(long, env = "QUERY_URL", default_value = "http://localhost:8081")]
-        query_url: String,
         /// Where the users' tables are cached (on Cloud Run: memory).
         #[arg(long, env = "CACHE_DIR", default_value = "/tmp/fitdata-cache")]
         cache_dir: std::path::PathBuf,
-    },
-    /// Runs MCP `query` SQL against the files sent with each request.
-    QueryServe {
-        #[arg(long, env = "PORT", default_value_t = 8081)]
-        port: u16,
     },
     /// The hourly job: sync the last N days of every user (or one).
     Job {
@@ -212,10 +204,6 @@ async fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    // Needs nothing else: no secrets, storage or credentials (see query.rs).
-    if let Cmd::QueryServe { port } = cli.cmd {
-        return query::serve(port).await;
-    }
     let http = reqwest::Client::builder()
         .user_agent("fitdata/0.1")
         .build()?;
@@ -237,7 +225,6 @@ async fn run(cli: Cli) -> Result<()> {
     };
 
     let user = match &cli.cmd {
-        Cmd::QueryServe { .. } => unreachable!(),
         Cmd::Serve {
             port,
             public_url,
@@ -246,7 +233,6 @@ async fn run(cli: Cli) -> Result<()> {
             static_dir,
             dev_user,
             sync_job,
-            query_url,
             cache_dir,
         } => {
             let session_key = SecretRef::parse(session_key, project)?
@@ -271,7 +257,6 @@ async fn run(cli: Cli) -> Result<()> {
                 warehouse: warehouse::Warehouse::new(store.clone(), cache_dir.clone()),
                 store,
                 kms,
-                query: query::QueryClient::new(http.clone(), query_url),
                 sync_job: cloudrun::SyncJob::new(
                     http.clone(),
                     project.context("GCP_PROJECT is required")?,

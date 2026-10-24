@@ -9,8 +9,6 @@ RUN npm run build
 # Backend: cargo in the official Rust image. cargo-chef builds the
 # dependencies in their own layer, which stays cached until Cargo.* changes.
 FROM rust:1.99-slim-bookworm AS chef
-# DuckDB (libduckdb-sys) is C++.
-RUN apt-get update && apt-get install -y --no-install-recommends g++ && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef --version 0.1.78 --locked
 WORKDIR /src
 
@@ -28,7 +26,7 @@ COPY src src
 COPY schema schema
 RUN cargo build --release --locked
 
-# Runtime: distroless (glibc, libstdc++ for DuckDB, CA certs, tzdata).
+# Runtime: distroless (glibc, CA certs, tzdata).
 FROM gcr.io/distroless/cc-debian12
 COPY --from=build /src/target/release/fitdata /fitdata
 COPY --from=web /web/dist /static
