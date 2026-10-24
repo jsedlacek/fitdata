@@ -210,6 +210,10 @@ impl HttpClient for AuthClient {
                 .body(body)
                 .send()
                 .await?;
+            // The SDK drops failed batches silently.
+            if !resp.status().is_success() {
+                tracing::warn!("trace export: HTTP {}", resp.status());
+            }
             let mut out = Response::builder().status(resp.status());
             for (k, v) in resp.headers() {
                 out = out.header(k, v);

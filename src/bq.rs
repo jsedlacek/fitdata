@@ -41,7 +41,7 @@ impl Bq {
     /// Rows are staged as NDJSON in GCS, loaded into `_staging_{table}` (same
     /// schema, created by deploy/setup.sh) and swapped in with one
     /// DELETE + INSERT transaction, so re-running a day never duplicates it.
-    #[tracing::instrument(skip_all, fields(otel.name = format!("replace {table}"), table, %from, %to))]
+    #[tracing::instrument(skip_all, fields(otel.name = format!("replace {table}"), table = %table, %from, %to))]
     pub async fn replace_range(
         &self,
         store: &Store,
