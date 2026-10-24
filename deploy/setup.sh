@@ -17,7 +17,8 @@ say "APIs"
 gcloud services enable --project "$PROJECT" \
   run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
   cloudscheduler.googleapis.com bigquery.googleapis.com storage.googleapis.com \
-  secretmanager.googleapis.com health.googleapis.com monitoring.googleapis.com
+  secretmanager.googleapis.com health.googleapis.com monitoring.googleapis.com \
+  iamcredentials.googleapis.com sts.googleapis.com
 
 say "Bucket gs://$BUCKET"
 if ! gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" >/dev/null 2>&1; then
@@ -61,7 +62,7 @@ if ! gcloud secrets describe session-key --project "$PROJECT" >/dev/null 2>&1; t
 fi
 
 say "Service accounts"
-for sa in "$JOB_SA" "$WEB_SA" "$SCHEDULER_SA"; do
+for sa in "$JOB_SA" "$WEB_SA" "$SCHEDULER_SA" "$DEPLOY_SA"; do
   name=${sa%%@*}
   if ! gcloud iam service-accounts describe "$sa" --project "$PROJECT" >/dev/null 2>&1; then
     gcloud iam service-accounts create "$name" --project "$PROJECT" --display-name "fitdata $name"
@@ -115,5 +116,42 @@ else
 fi
 rm -f "$policy_file"
 echo "  policy 'fitdata-sync failed' -> $channel"
+
+say "GitHub Actions deploy ($GITHUB_REPO)"
+# Deployer: what deploy/deploy.sh needs. roles/viewer is needed to stream logs
+# of `gcloud builds submit` from the legacy Cloud Build logs bucket.
+for role in roles/run.admin roles/cloudbuild.builds.editor roles/cloudscheduler.admin \
+  roles/artifactregistry.reader roles/serviceusage.serviceUsageConsumer roles/viewer; do
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member "serviceAccount:$DEPLOY_SA" --role "$role" --condition=None >/dev/null
+done
+gcloud storage buckets add-iam-policy-binding "gs://${PROJECT}_cloudbuild" \
+  --member "serviceAccount:$DEPLOY_SA" --role roles/storage.admin >/dev/null
+# Run the job and web as their SAs, schedule as the scheduler SA, and run
+# Cloud Build as its default (compute) SA.
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)')
+for sa in "$JOB_SA" "$WEB_SA" "$SCHEDULER_SA" "$PROJECT_NUMBER-compute@developer.gserviceaccount.com"; do
+  gcloud iam service-accounts add-iam-policy-binding "$sa" --project "$PROJECT" \
+    --member "serviceAccount:$DEPLOY_SA" --role roles/iam.serviceAccountUser >/dev/null
+done
+if ! gcloud iam workload-identity-pools describe "$WIF_POOL" --project "$PROJECT" --location global >/dev/null 2>&1; then
+  gcloud iam workload-identity-pools create "$WIF_POOL" --project "$PROJECT" --location global \
+    --display-name "GitHub Actions"
+fi
+# Only workflows of this repo running on main can get a token.
+WIF_ARGS=(--project "$PROJECT" --location global --workload-identity-pool "$WIF_POOL"
+  --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref"
+  --attribute-condition "assertion.repository == '$GITHUB_REPO' && assertion.ref == 'refs/heads/main'")
+if gcloud iam workload-identity-pools providers describe "$WIF_PROVIDER" --project "$PROJECT" \
+  --location global --workload-identity-pool "$WIF_POOL" >/dev/null 2>&1; then
+  gcloud iam workload-identity-pools providers update-oidc "$WIF_PROVIDER" "${WIF_ARGS[@]}" >/dev/null
+else
+  gcloud iam workload-identity-pools providers create-oidc "$WIF_PROVIDER" "${WIF_ARGS[@]}" \
+    --issuer-uri https://token.actions.githubusercontent.com >/dev/null
+fi
+gcloud iam service-accounts add-iam-policy-binding "$DEPLOY_SA" --project "$PROJECT" \
+  --member "principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$WIF_POOL/attribute.repository/$GITHUB_REPO" \
+  --role roles/iam.workloadIdentityUser >/dev/null
+echo "  provider projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$WIF_POOL/providers/$WIF_PROVIDER"
 
 say "Done"

@@ -1,0 +1,35 @@
+# Deploys every push to main with deploy/deploy.sh. Authenticates keyless as
+# fitdata-deployer via Workload Identity Federation (set up by deploy/setup.sh).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits for the running one.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # deploy.sh tags the image by the last commit that touched its sources.
+          fetch-depth: 0
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/127000208622/locations/global/workloadIdentityPools/github/providers/github
+          service_account: fitdata-deployer@fitdata-jsedlacek.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: beta
+      - run: deploy/deploy.sh
