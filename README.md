@@ -1,4 +1,4 @@
-# fitbit-data
+# fitdata
 
 Stahuje data z Fitbitu (Fitbit Air) přes [Google Health API v4](https://developers.google.com/health) a ukládá je pro analýzu.
 

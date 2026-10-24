@@ -23,7 +23,7 @@ SCHEDULER_SA=fitdata-scheduler@$PROJECT.iam.gserviceaccount.com
 # GitHub Actions deploys every push to main of this repo as this SA, keyless
 # via Workload Identity Federation (.github/workflows/deploy.yml).
 DEPLOY_SA=fitdata-deployer@$PROJECT.iam.gserviceaccount.com
-GITHUB_REPO=${GITHUB_REPO:-jsedlacek/fitbit-data}
+GITHUB_REPO=${GITHUB_REPO:-jsedlacek/fitdata}
 WIF_POOL=github
 WIF_PROVIDER=github
 

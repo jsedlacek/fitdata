@@ -18,7 +18,7 @@ deploy/setup.sh    # jednorázově / idempotentně: API, bucket, dataset a tabul
 deploy/deploy.sh   # build (Cloud Build), job + scheduler, web
 ```
 
-Každý push do `main` nasadí GitHub Actions ([.github/workflows/deploy.yml](../.github/workflows/deploy.yml)) spuštěním `deploy/deploy.sh`. Ručně jde workflow spustit v záložce Actions (Run workflow). Přihlašuje se bez klíče přes Workload Identity Federation (pool `github`) jako `fitdata-deployer`; token dostane jen workflow z `jsedlacek/fitbit-data` na `main`. Pool i role nastaví `setup.sh`. Image se staví znovu jen při změně `Dockerfile`, `Cargo.*`, `src/` nebo `frontend/`, takže push samotných docs jen znovu nasadí stávající image.
+Každý push do `main` nasadí GitHub Actions ([.github/workflows/deploy.yml](../.github/workflows/deploy.yml)) spuštěním `deploy/deploy.sh`. Ručně jde workflow spustit v záložce Actions (Run workflow). Přihlašuje se bez klíče přes Workload Identity Federation (pool `github`) jako `fitdata-deployer`; token dostane jen workflow z `jsedlacek/fitdata` na `main`. Pool i role nastaví `setup.sh`. Image se staví znovu jen při změně `Dockerfile`, `Cargo.*`, `src/` nebo `frontend/`, takže push samotných docs jen znovu nasadí stávající image.
 
 Nastavení je v [deploy/config.sh](../deploy/config.sh). Schémata tabulek jsou v [deploy/schema/](../deploy/schema/). Nový sloupec stačí přidat do schématu i do `model.rs` a spustit znovu `setup.sh`.
 
