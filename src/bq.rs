@@ -4,7 +4,8 @@ use anyhow::{Context, Result, bail};
 use chrono::NaiveDate;
 use google_cloud_bigquery_v2::client::JobService;
 use google_cloud_bigquery_v2::model::{
-    Job, JobConfiguration, JobConfigurationLoad, QueryRequest, TableFieldSchema, TableReference,
+    DatasetReference, Job, JobConfiguration, JobConfigurationLoad, QueryRequest, TableFieldSchema,
+    TableReference,
 };
 use serde_json::{Map, Value};
 
@@ -94,14 +95,42 @@ impl Bq {
     /// Runs a query and returns its rows as JSON objects keyed by column name.
     /// Only interpolate trusted values (dates parsed by us) into `sql`.
     pub async fn query(&self, sql: String) -> Result<Vec<Value>> {
+        self.run(QueryRequest::new().set_query(&sql)).await
+    }
+
+    /// Runs a query written by someone else (an MCP client). It is wrapped as
+    /// a subquery, so it must be a single SELECT; unqualified table names
+    /// resolve to the dataset; it may scan at most `max_bytes` and returns at
+    /// most `max_rows + 1` rows (the extra one tells the caller it was cut).
+    /// Writes are prevented by IAM: the web service can only read the dataset.
+    pub async fn query_untrusted(
+        &self,
+        sql: &str,
+        max_bytes: i64,
+        max_rows: usize,
+    ) -> Result<Vec<Value>> {
+        let sql = sql.trim().trim_end_matches(';');
+        self.run(
+            QueryRequest::new()
+                .set_query(format!("SELECT * FROM (\n{sql}\n) LIMIT {}", max_rows + 1))
+                .set_default_dataset(
+                    DatasetReference::new()
+                        .set_project_id(&self.project)
+                        .set_dataset_id(&self.dataset),
+                )
+                .set_maximum_bytes_billed(max_bytes),
+        )
+        .await
+    }
+
+    async fn run(&self, req: QueryRequest) -> Result<Vec<Value>> {
+        let sql = req.query.clone();
         let mut resp = self
             .jobs
             .query()
             .set_project_id(&self.project)
             .set_query_request(
-                QueryRequest::new()
-                    .set_query(&sql)
-                    .set_use_legacy_sql(false)
+                req.set_use_legacy_sql(false)
                     .set_location(&self.location)
                     .set_timeout_ms(30_000u32),
             )

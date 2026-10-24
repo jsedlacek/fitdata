@@ -1,5 +1,6 @@
 //! Dashboard: JSON API over the BigQuery tables plus a single page, behind
-//! Google sign-in restricted to an allowlist of accounts.
+//! Google sign-in restricted to an allowlist of accounts. The same sign-in
+//! guards the MCP endpoint (`mcp.rs`) through a small OAuth server (`authz.rs`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Json, Redirect, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use hmac::{Hmac, KeyInit, Mac};
@@ -26,6 +27,7 @@ use crate::cloudrun::SyncJob;
 use crate::datatypes::READ_SCOPES;
 use crate::oauth::{ClientCredentials, auth_request, exchange_code};
 use crate::secrets::SecretRef;
+use crate::{authz, mcp};
 
 const SESSION_COOKIE: &str = "fd_session";
 const OAUTH_COOKIE: &str = "fd_oauth";
@@ -48,7 +50,7 @@ pub struct Config {
     pub http: reqwest::Client,
 }
 
-type Shared = Arc<Config>;
+pub(crate) type Shared = Arc<Config>;
 
 pub async fn serve(cfg: Config) -> Result<()> {
     if !cfg.auth_disabled && cfg.allowed_emails.is_empty() {
@@ -93,6 +95,8 @@ pub async fn serve(cfg: Config) -> Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
+        .merge(authz::routes())
+        .route("/mcp", post(mcp::handle).get(mcp::no_stream))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
@@ -109,7 +113,7 @@ fn internal(e: anyhow::Error) -> Response {
 // ---------------------------------------------------------------- sessions
 
 /// `base64(json) . base64(hmac)`; the JSON carries an `exp` unix timestamp.
-fn sign(key: &[u8], payload: &Value) -> String {
+pub(crate) fn sign(key: &[u8], payload: &Value) -> String {
     let body = URL_SAFE_NO_PAD.encode(payload.to_string());
     let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(body.as_bytes());
@@ -119,7 +123,7 @@ fn sign(key: &[u8], payload: &Value) -> String {
     )
 }
 
-fn verify(key: &[u8], token: &str) -> Option<Value> {
+pub(crate) fn verify(key: &[u8], token: &str) -> Option<Value> {
     let (body, sig) = token.split_once('.')?;
     let mut mac = Hmac::<Sha256>::new_from_slice(key).ok()?;
     mac.update(body.as_bytes());
@@ -146,12 +150,27 @@ fn set_cookie(cfg: &Config, name: &str, value: &str, max_age: i64) -> String {
     format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
 }
 
+/// The signed-in user. Every token signed with the session key carries an
+/// `exp`, so a session is recognised by having an `email` and no `kind`
+/// (OAuth codes and tokens have one; the pending sign-in cookie has no email).
+pub(crate) fn session_email(cfg: &Config, headers: &HeaderMap) -> Option<String> {
+    session_of(&cfg.session_key, &cfg.allowed_emails, headers)
+}
+
+fn session_of(key: &[u8], allowed: &[String], headers: &HeaderMap) -> Option<String> {
+    let v = verify(key, cookie(headers, SESSION_COOKIE)?)?;
+    if v.get("kind").is_some() {
+        return None;
+    }
+    let email = v["email"].as_str()?;
+    allowed
+        .iter()
+        .any(|e| e == email)
+        .then(|| email.to_string())
+}
+
 async fn require_session(State(cfg): State<Shared>, req: Request, next: Next) -> Response {
-    let ok = cfg.auth_disabled
-        || cookie(req.headers(), SESSION_COOKIE)
-            .and_then(|t| verify(&cfg.session_key, t))
-            .is_some();
-    if ok {
+    if cfg.auth_disabled || session_email(&cfg, req.headers()).is_some() {
         return next.run(req).await;
     }
     if req.uri().path().starts_with("/api/") {
@@ -162,15 +181,22 @@ async fn require_session(State(cfg): State<Shared>, req: Request, next: Next) ->
 }
 
 /// Starts an OAuth flow; `purpose` is "login" (who are you) or "health"
-/// (consent to read Health data, yielding a new refresh token).
-fn start_oauth(cfg: &Config, purpose: &str, scopes: &[&str], offline: bool) -> Response {
+/// (consent to read Health data, yielding a new refresh token). After a
+/// login the browser returns to `next`.
+fn start_oauth(
+    cfg: &Config,
+    purpose: &str,
+    scopes: &[&str],
+    offline: bool,
+    next: &str,
+) -> Response {
     let redirect_uri = format!("{}/auth/callback", cfg.public_url);
     let req = match auth_request(&cfg.creds, &redirect_uri, scopes, offline) {
         Ok(r) => r,
         Err(e) => return internal(e),
     };
     let pending = json!({
-        "state": req.state, "verifier": req.verifier, "purpose": purpose,
+        "state": req.state, "verifier": req.verifier, "purpose": purpose, "next": next,
         "exp": chrono::Utc::now().timestamp() + 600,
     });
     (
@@ -183,12 +209,26 @@ fn start_oauth(cfg: &Config, purpose: &str, scopes: &[&str], offline: bool) -> R
         .into_response()
 }
 
-async fn login(State(cfg): State<Shared>) -> Response {
-    start_oauth(&cfg, "login", &["openid", "email"], false)
+#[derive(Deserialize)]
+struct LoginParams {
+    next: Option<String>,
+}
+
+/// Only paths on this site, so the login cannot be used as an open redirect.
+fn local_path(next: Option<&str>) -> &str {
+    match next {
+        Some(n) if n.starts_with('/') && !n.starts_with("//") && !n.contains('\\') => n,
+        _ => "/",
+    }
+}
+
+async fn login(State(cfg): State<Shared>, Query(p): Query<LoginParams>) -> Response {
+    let next = local_path(p.next.as_deref());
+    start_oauth(&cfg, "login", &["openid", "email"], false, next)
 }
 
 async fn connect_fitbit(State(cfg): State<Shared>) -> Response {
-    start_oauth(&cfg, "health", READ_SCOPES, true)
+    start_oauth(&cfg, "health", READ_SCOPES, true, "/")
 }
 
 #[derive(Deserialize)]
@@ -210,7 +250,8 @@ async fn callback(
             (
                 StatusCode::FORBIDDEN,
                 Html(format!(
-                    "<p>Sign-in failed: {e}</p><p><a href=\"/auth/login\">Try again</a></p>"
+                    "<p>Sign-in failed: {}</p><p><a href=\"/auth/login\">Try again</a></p>",
+                    escape_html(&e.to_string())
                 )),
             )
                 .into_response()
@@ -263,7 +304,7 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     }
     let session =
         json!({ "email": email, "exp": chrono::Utc::now().timestamp() + SESSION_DAYS * 86_400 });
-    let mut resp = Redirect::to("/").into_response();
+    let mut resp = Redirect::to(local_path(pending["next"].as_str())).into_response();
     let h = resp.headers_mut();
     h.append(header::SET_COOKIE, clear_oauth.parse()?);
     h.append(
@@ -277,6 +318,14 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
         .parse()?,
     );
     Ok(resp)
+}
+
+pub(crate) fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 // --------------------------------------------------------------------- API
@@ -346,7 +395,7 @@ fn tuples(rows: Vec<Value>, cols: &[&str]) -> Value {
 
 /// Detail of one day. The time range starts at the beginning of the night
 /// before (if there was one) so the sleep that ended that morning is shown.
-async fn day_detail(bq: &Bq, date: NaiveDate) -> Result<Value> {
+pub(crate) async fn day_detail(bq: &Bq, date: NaiveDate) -> Result<Value> {
     let prev = date - Duration::days(1);
     let midnight = date.and_time(NaiveTime::MIN);
     let end = midnight + Duration::days(1);
@@ -435,6 +484,39 @@ mod tests {
         assert!(verify(key, body).is_none());
         let expired = sign(key, &json!({"email": "a@b.c", "exp": 1}));
         assert!(verify(key, &expired).is_none());
+    }
+
+    #[test]
+    fn only_sessions_are_sessions() {
+        let key = b"k";
+        let allowed = ["a@b.c".to_string()];
+        let exp = chrono::Utc::now().timestamp() + 60;
+        let check = |v: Value| {
+            let mut h = HeaderMap::new();
+            let c = format!("{SESSION_COOKIE}={}", sign(key, &v));
+            h.insert(header::COOKIE, c.parse().unwrap());
+            session_of(key, &allowed, &h)
+        };
+        assert_eq!(
+            check(json!({"email": "a@b.c", "exp": exp})).as_deref(),
+            Some("a@b.c")
+        );
+        assert!(check(json!({"email": "x@y.z", "exp": exp})).is_none());
+        // The pending sign-in cookie and OAuth tokens are signed with the same key.
+        assert!(check(json!({"state": "s", "purpose": "login", "exp": exp})).is_none());
+        assert!(check(json!({"kind": "access", "email": "a@b.c", "exp": exp})).is_none());
+    }
+
+    #[test]
+    fn login_returns_only_to_local_paths() {
+        assert_eq!(
+            local_path(Some("/oauth/authorize?x=1")),
+            "/oauth/authorize?x=1"
+        );
+        assert_eq!(local_path(Some("//evil.example")), "/");
+        assert_eq!(local_path(Some("https://evil.example")), "/");
+        assert_eq!(local_path(Some("/\\evil.example")), "/");
+        assert_eq!(local_path(None), "/");
     }
 
     #[test]

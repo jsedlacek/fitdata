@@ -13,6 +13,7 @@ Pokyny pro AI agenty pracující v tomto repu.
 Stahuje data z Fitbit Air přes Google Health API v4 a ukazuje je na dashboardu.
 
 - Rust binárka `fitdata` (`src/`): CLI, denní job i API v jednom.
+- MCP server pro Claude/ChatGPT na `/mcp` (`src/mcp.rs`) s vlastním OAuth serverem (`src/authz.rs`) nad Google přihlášením.
 - Dashboard v `frontend/` (React, Vite, Tailwind, shadcn-style, TanStack, ECharts); `fitdata serve` servíruje jeho `dist`.
 - Produkce na Google Cloud, vše v `europe-west1`: Cloud Run job `fitdata-sync` (každou hodinu), Cloud Run service `fitdata-web` na https://fitdata.jakub.contact, GCS `fitdata-jsedlacek-data`, BigQuery dataset `health`. Popis: [docs/production.md](docs/production.md).
 - Nasazení: `deploy/setup.sh` (infrastruktura, idempotentní) a `deploy/deploy.sh` (build + nasazení). Nastavení v `deploy/config.sh`, schémata tabulek v `deploy/schema/`.

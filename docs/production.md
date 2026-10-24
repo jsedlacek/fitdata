@@ -45,6 +45,17 @@ OAuth Web client musí mít mezi *Authorized redirect URIs* adresu `https://fitd
 
 Web je na Cloud Runu veřejný, ale každá stránka i API vyžaduje přihlášení Googlem s e-mailem z `ALLOWED_EMAILS`. Session je HMAC podepsaná cookie (klíč `session-key`, platnost 30 dní).
 
+## MCP server
+
+`https://fitdata.jakub.contact/mcp` je MCP server (Streamable HTTP) s nástroji jen pro čtení: `get_daily_metrics`, `get_day`, `get_sleep`, `get_exercises`, `get_schema` a `query` (jeden SELECT nad datasetem, nejvýš 1 GB skenu a 1000 řádků; zápis brání IAM, protože `fitdata-web` smí dataset jen číst). Kód je v [src/mcp.rs](../src/mcp.rs).
+
+Připojení:
+
+- **Claude:** Settings → Connectors → Add custom connector, URL `https://fitdata.jakub.contact/mcp`.
+- **ChatGPT:** Settings → Apps & Connectors → Advanced → Developer mode, pak Create, URL stejná, autentizace OAuth.
+
+Klient se zaregistruje sám (dynamická registrace), pošle uživatele na přihlášení Googlem (stejné `ALLOWED_EMAILS`) a na stránku se souhlasem. Autorizační server je v [src/authz.rs](../src/authz.rs) a nic neukládá: client ID, kódy i tokeny jsou podepsané klíčem `session-key`. Access token platí hodinu, refresh token 30 dní od posledního obnovení. Odebrání přístupu všem klientům i všem přihlášeným prohlížečům najednou: nová verze `session-key` a nové nasazení webu.
+
 Když přestane fungovat refresh token (odvolaný přístup), stačí na dashboardu kliknout na **Připojit Fitbit**.
 
 ## Provoz
