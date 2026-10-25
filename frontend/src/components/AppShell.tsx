@@ -1,7 +1,7 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, CheckCircle2, Laptop, LogOut, Moon, RefreshCw, Sun, Trash2, TriangleAlert, UserRound } from 'lucide-react';
+import { Activity, ArrowLeft, Bot, CheckCircle2, Laptop, LogOut, Moon, RefreshCw, Sun, Trash2, TriangleAlert, UserRound } from 'lucide-react';
 import { deleteAccount, overviewQuery, startSync, syncQuery, type Me, type SyncRun } from '@/lib/api';
 import { ago } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -10,6 +10,7 @@ import { useThemeChoice, type ThemeChoice } from '@/lib/theme';
 import { Segmented } from './ui/segmented';
 import { ReconnectBanner } from './ReconnectBanner';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { McpConnect } from './McpConnect';
 
 export function AppShell() {
   const { data } = useQuery(overviewQuery);
@@ -37,6 +38,18 @@ export function AppShell() {
         <ReconnectBanner run={data?.lastSync ?? null} user={data?.user ?? null} />
         <Outlet />
       </main>
+      {data && (
+        <footer className="mx-auto max-w-6xl px-4 pb-8 text-[13px] text-muted">
+          <Popover>
+            <PopoverTrigger className="inline-flex items-center gap-1.5 rounded-md transition-colors hover:text-ink-2">
+              <Bot className="size-3.5" /> Data i v Claude a ChatGPT (MCP)
+            </PopoverTrigger>
+            <PopoverContent align="start" side="top" className="w-80">
+              <McpConnect />
+            </PopoverContent>
+          </Popover>
+        </footer>
+      )}
     </div>
   );
 }
@@ -113,43 +126,62 @@ function SyncStatus({ run }: { run: SyncRun | null }) {
 
 function AccountMenu({ user }: { user: Me }) {
   const [confirming, setConfirming] = useState(false);
+  const [mcp, setMcp] = useState(false);
   const remove = useMutation({ mutationFn: deleteAccount });
+  const close = () => {
+    setConfirming(false);
+    setMcp(false);
+  };
   return (
-    <Popover onOpenChange={(open) => !open && setConfirming(false)}>
+    <Popover onOpenChange={(open) => !open && close()}>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink" aria-label="Účet" title={user.email}>
           <UserRound />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 text-sm">
-        <p className="truncate font-medium" title={user.email}>
-          {user.email}
-        </p>
-        <div className="mt-3 flex flex-col gap-1">
-          <Button asChild variant="ghost" size="sm" className="justify-start">
-            <a href="/auth/logout">
-              <LogOut /> Odhlásit
-            </a>
-          </Button>
-          {confirming ? (
-            <div className="mt-1 rounded-lg border border-l-4 border-l-critical p-2.5">
-              <p>Smazat účet i všechna stažená data? Nejde to vrátit.</p>
-              <div className="mt-2 flex gap-2">
-                <Button size="sm" disabled={remove.isPending} onClick={() => remove.mutate()}>
-                  {remove.isPending ? 'Mažu…' : 'Smazat'}
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
-                  Zpět
-                </Button>
-              </div>
-              {remove.isError && <p className="mt-2 text-critical">Smazání se nepodařilo, zkuste to znovu.</p>}
-            </div>
-          ) : (
-            <Button variant="ghost" size="sm" className="justify-start text-critical" onClick={() => setConfirming(true)}>
-              <Trash2 /> Smazat účet
+      <PopoverContent align="end" className={cn('text-sm', mcp ? 'w-80' : 'w-72')}>
+        {mcp ? (
+          <>
+            <Button variant="ghost" size="sm" className="-ml-2 mb-2 text-ink-2" onClick={() => setMcp(false)}>
+              <ArrowLeft /> Zpět
             </Button>
-          )}
-        </div>
+            <McpConnect />
+          </>
+        ) : (
+          <>
+            <p className="truncate font-medium" title={user.email}>
+              {user.email}
+            </p>
+            <div className="mt-3 flex flex-col gap-1">
+              <Button variant="ghost" size="sm" className="justify-start" onClick={() => setMcp(true)}>
+                <Bot /> Připojit Claude / ChatGPT
+              </Button>
+              <Button asChild variant="ghost" size="sm" className="justify-start">
+                <a href="/auth/logout">
+                  <LogOut /> Odhlásit
+                </a>
+              </Button>
+              {confirming ? (
+                <div className="mt-1 rounded-lg border border-l-4 border-l-critical p-2.5">
+                  <p>Smazat účet i všechna stažená data? Nejde to vrátit.</p>
+                  <div className="mt-2 flex gap-2">
+                    <Button size="sm" disabled={remove.isPending} onClick={() => remove.mutate()}>
+                      {remove.isPending ? 'Mažu…' : 'Smazat'}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
+                      Zpět
+                    </Button>
+                  </div>
+                  {remove.isError && <p className="mt-2 text-critical">Smazání se nepodařilo, zkuste to znovu.</p>}
+                </div>
+              ) : (
+                <Button variant="ghost" size="sm" className="justify-start text-critical" onClick={() => setConfirming(true)}>
+                  <Trash2 /> Smazat účet
+                </Button>
+              )}
+            </div>
+          </>
+        )}
       </PopoverContent>
     </Popover>
   );

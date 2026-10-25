@@ -89,6 +89,8 @@ Připojení:
 - **Claude:** Settings → Connectors → Add custom connector, URL `https://fitdata.jakub.contact/mcp`.
 - **ChatGPT:** Settings → Apps & Connectors → Advanced → Developer mode, pak Create, URL stejná, autentizace OAuth.
 
+Na dashboardu je návod v menu účtu (**Připojit Claude / ChatGPT**) a v patičce. Prohlížeč na `/mcp` (GET s `Accept: text/html`) dostane stránku s návodem; MCP klienti na GET dál dostanou 405, protože SSE stream nenabízíme.
+
 Klient se zaregistruje sám (dynamická registrace), pošle uživatele na přihlášení Googlem (stejné `ALLOWED_EMAILS`) a na stránku se souhlasem. Tokeny nesou ID uživatele; tokeny vydané před zavedením více uživatelů ho nemají a dohledá se podle e-mailu. Autorizační server je v [src/authz.rs](../src/authz.rs) a nic neukládá: client ID, kódy i tokeny jsou podepsané klíčem `session-key`. Access token platí hodinu, refresh token 30 dní od posledního obnovení. Odebrání přístupu všem klientům i všem přihlášeným prohlížečům najednou: nová verze `session-key` a nové nasazení webu.
 
 Když přestane fungovat refresh token (odvolaný přístup), dashboard to uživateli ukáže a stačí kliknout na **Obnovit přístup k datům**. Pro job to není chyba (běh uživatele skončí stavem `auth_error`), alert ho nehlásí.

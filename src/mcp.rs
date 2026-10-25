@@ -12,7 +12,7 @@ use anyhow::{Result, bail};
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Json, Response};
+use axum::response::{Html, IntoResponse, Json, Response};
 use chrono::{Duration, NaiveDate, Timelike};
 use schemars::generate::SchemaSettings;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
@@ -26,7 +26,7 @@ use crate::engine;
 use crate::model::{DailyMetrics, Exercise, NightRow, Time};
 use crate::query;
 use crate::warehouse::Need;
-use crate::web::{Config, HrMinute, Shared, SignedIn, day_detail, last_run};
+use crate::web::{Config, HrMinute, Shared, SignedIn, day_detail, escape_html, last_run};
 
 const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 /// Longest range the list tools return at once.
@@ -41,9 +41,68 @@ A night belongs to the date the user woke up. \
 Start with get_daily_metrics for trends and get_day for one day in detail; for anything else read \
 get_schema and use query.";
 
-/// The streamable HTTP transport's optional GET stream is not offered.
-pub async fn no_stream() -> Response {
+/// The streamable HTTP transport's optional GET stream is not offered. A
+/// browser opening the URL gets a page on how to connect instead.
+pub async fn no_stream(State(cfg): State<Shared>, headers: HeaderMap) -> Response {
+    if wants_html(&headers) {
+        return help_page(&format!("{}/mcp", cfg.public_url));
+    }
     (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, "POST")]).into_response()
+}
+
+/// A browser's navigation, not a client asking for the event stream.
+fn wants_html(headers: &HeaderMap) -> bool {
+    let accept = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    accept.contains("text/html") && !accept.contains("text/event-stream")
+}
+
+fn help_page(url: &str) -> Response {
+    let url = escape_html(url);
+    let html = format!(
+        r#"<!doctype html>
+<html lang="cs"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP server · fitdata</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  :root {{ color-scheme: light dark; --bg: #f6f7f9; --card: #fff; --fg: #111827; --muted: #6b7280; --accent: #2563eb; --border: #e5e7eb; --code: #f3f4f6; }}
+  @media (prefers-color-scheme: dark) {{ :root {{ --bg: #0b0f17; --card: #131926; --fg: #e5e7eb; --muted: #9ca3af; --accent: #3b82f6; --border: #273042; --code: #1c2333; }} }}
+  body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }}
+  main {{ background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 28px; margin: 16px; max-width: 520px; }}
+  h1 {{ font-size: 18px; margin: 0 0 12px; }}
+  h2 {{ font-size: 15px; margin: 20px 0 4px; }}
+  p {{ margin: 0 0 12px; }}
+  .muted {{ color: var(--muted); font-size: 13px; }}
+  .url {{ display: block; padding: 8px 12px; border-radius: 8px; background: var(--code); border: 1px solid var(--border); overflow-wrap: anywhere; }}
+  code {{ font-size: 13px; }}
+  a {{ color: var(--accent); }}
+</style></head>
+<body><main>
+  <h1>MCP server fitdata</h1>
+  <p>Tahle adresa je pro Claude a ChatGPT, ne pro prohlížeč. Po připojení se jich můžeš na svoje data z Fitbitu ptát v chatu. Přístup je jen ke čtení a jen k datům účtu, kterým se přihlásíš.</p>
+  <code class="url">{url}</code>
+  <h2>Claude</h2>
+  <p>Settings → Connectors → Add custom connector, vlož URL výše.</p>
+  <h2>ChatGPT</h2>
+  <p>Settings → Apps &amp; Connectors → Advanced → zapni Developer mode, pak Create, vlož URL výše a jako autentizaci zvol OAuth.</p>
+  <p>Při připojení se přihlásíš Googlem, stejným účtem jako na dashboard, a potvrdíš přístup.</p>
+  <h2>Co umí</h2>
+  <p class="muted">Denní metriky a trendy (<code>get_daily_metrics</code>), detail dne (<code>get_day</code>), spánek (<code>get_sleep</code>), cvičení (<code>get_exercises</code>) a vlastní SQL dotazy nad tabulkami (<code>get_schema</code>, <code>query</code>).</p>
+  <p class="muted"><a href="/">Zpět na dashboard</a></p>
+</main></body></html>"#
+    );
+    (
+        [
+            (header::CONTENT_SECURITY_POLICY, "frame-ancestors 'none'"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        Html(html),
+    )
+        .into_response()
 }
 
 pub async fn handle(State(cfg): State<Shared>, headers: HeaderMap, body: Bytes) -> Response {
@@ -550,6 +609,17 @@ fn hr_buckets(minutes: &[HrMinute]) -> Vec<(Time, f64, f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_browsers_get_the_help_page() {
+        let accept = |v: &'static str| HeaderMap::from_iter([(header::ACCEPT, v.parse().unwrap())]);
+        assert!(wants_html(&accept(
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        )));
+        assert!(!wants_html(&accept("text/event-stream")));
+        assert!(!wants_html(&accept("application/json, text/event-stream")));
+        assert!(!wants_html(&HeaderMap::new()));
+    }
 
     fn t(s: &str) -> Time {
         Time::parse_from_rfc3339(s).unwrap()
