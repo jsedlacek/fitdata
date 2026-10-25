@@ -7,34 +7,34 @@
 
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use google_cloud_auth::credentials::{AccessTokenCredentials, Builder};
-use serde::Deserialize;
-use serde_json::json;
+use google_cloud_kms_v1::client::KeyManagementService;
+use tokio::sync::OnceCell;
+
+static CLIENT: OnceCell<KeyManagementService> = OnceCell::const_new();
+
+/// Shared client using Application Default Credentials (the service account
+/// on Cloud Run, `gcloud auth application-default login` locally).
+async fn client() -> Result<&'static KeyManagementService> {
+    CLIENT
+        .get_or_try_init(|| async {
+            KeyManagementService::builder()
+                .build()
+                .await
+                .context("Cloud KMS client")
+        })
+        .await
+}
 
 pub enum Kms {
-    Cloud {
-        http: reqwest::Client,
-        creds: AccessTokenCredentials,
-        /// `projects/{p}/locations/{l}/keyRings/{r}/cryptoKeys/{k}`
-        key: String,
-    },
+    /// `projects/{p}/locations/{l}/keyRings/{r}/cryptoKeys/{k}`
+    Cloud(String),
     /// Local development only: "ciphertext" is the base64 plaintext.
     Plain,
 }
 
-#[derive(Deserialize)]
-struct EncryptResponse {
-    ciphertext: String,
-}
-
-#[derive(Deserialize)]
-struct DecryptResponse {
-    plaintext: String,
-}
-
 impl Kms {
     /// `plain` (local development) or a KMS key resource name.
-    pub fn new(http: reqwest::Client, key: &str) -> Result<Self> {
+    pub fn new(key: &str) -> Result<Self> {
         if key == "plain" {
             tracing::warn!("refresh tokens are stored unencrypted (KMS_KEY=plain)");
             return Ok(Self::Plain);
@@ -42,68 +42,68 @@ impl Kms {
         if !key.starts_with("projects/") {
             bail!("KMS_KEY must be `projects/.../cryptoKeys/...` or `plain`");
         }
-        Ok(Self::Cloud {
-            http,
-            creds: Builder::default()
-                .build_access_token_credentials()
-                .context("Google credentials for Cloud KMS")?,
-            key: key.to_string(),
-        })
+        Ok(Self::Cloud(key.to_string()))
     }
 
-    async fn call<T: for<'de> Deserialize<'de>>(
-        http: &reqwest::Client,
-        creds: &AccessTokenCredentials,
-        url: String,
-        body: serde_json::Value,
-    ) -> Result<T> {
-        let token = creds.access_token().await?.token;
-        let resp = http.post(url).bearer_auth(token).json(&body).send().await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            bail!("Cloud KMS: HTTP {status}: {text}");
-        }
-        resp.json().await.context("unexpected Cloud KMS response")
-    }
-
+    /// The ciphertext as base64, as it is stored in the user's record.
     #[tracing::instrument(name = "kms encrypt", skip_all, fields(otel.kind = "client"))]
     pub async fn encrypt(&self, plaintext: &[u8], uid: &str) -> Result<String> {
         match self {
             Self::Plain => Ok(STANDARD.encode(plaintext)),
-            Self::Cloud { http, creds, key } => {
-                let r: EncryptResponse = Self::call(
-                    http,
-                    creds,
-                    format!("https://cloudkms.googleapis.com/v1/{key}:encrypt"),
-                    json!({
-                        "plaintext": STANDARD.encode(plaintext),
-                        "additionalAuthenticatedData": STANDARD.encode(uid),
-                    }),
-                )
-                .await?;
-                Ok(r.ciphertext)
+            Self::Cloud(key) => {
+                let resp = client()
+                    .await?
+                    .encrypt()
+                    .set_name(key)
+                    .set_plaintext(plaintext.to_vec())
+                    .set_additional_authenticated_data(uid.as_bytes().to_vec())
+                    .send()
+                    .await
+                    .context("Cloud KMS encrypt")?;
+                Ok(STANDARD.encode(resp.ciphertext))
             }
         }
     }
 
     #[tracing::instrument(name = "kms decrypt", skip_all, fields(otel.kind = "client"))]
     pub async fn decrypt(&self, ciphertext: &str, uid: &str) -> Result<Vec<u8>> {
+        let ciphertext = STANDARD.decode(ciphertext)?;
         match self {
-            Self::Plain => Ok(STANDARD.decode(ciphertext)?),
-            Self::Cloud { http, creds, key } => {
-                let r: DecryptResponse = Self::call(
-                    http,
-                    creds,
-                    format!("https://cloudkms.googleapis.com/v1/{key}:decrypt"),
-                    json!({
-                        "ciphertext": ciphertext,
-                        "additionalAuthenticatedData": STANDARD.encode(uid),
-                    }),
-                )
-                .await?;
-                Ok(STANDARD.decode(r.plaintext)?)
+            Self::Plain => Ok(ciphertext),
+            Self::Cloud(key) => {
+                let resp = client()
+                    .await?
+                    .decrypt()
+                    .set_name(key)
+                    .set_ciphertext(ciphertext)
+                    .set_additional_authenticated_data(uid.as_bytes().to_vec())
+                    .send()
+                    .await
+                    .context("Cloud KMS decrypt")?;
+                Ok(resp.plaintext.to_vec())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_keys() {
+        assert!(matches!(Kms::new("plain").unwrap(), Kms::Plain));
+        assert!(matches!(
+            Kms::new("projects/p/locations/l/keyRings/r/cryptoKeys/k").unwrap(),
+            Kms::Cloud(k) if k == "projects/p/locations/l/keyRings/r/cryptoKeys/k"
+        ));
+        assert!(Kms::new("fitdata/refresh-token").is_err());
+    }
+
+    #[tokio::test]
+    async fn plain_round_trips() {
+        let kms = Kms::Plain;
+        let c = kms.encrypt(b"token", "123").await.unwrap();
+        assert_eq!(kms.decrypt(&c, "123").await.unwrap(), b"token");
     }
 }

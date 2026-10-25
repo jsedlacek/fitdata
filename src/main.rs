@@ -216,7 +216,7 @@ async fn run(cli: Cli) -> Result<()> {
             .with_context(|| format!("no OAuth client in {client_ref}"))?,
     )?;
     let store = Store::open(&cli.storage).await?;
-    let kms = Kms::new(http.clone(), &cli.kms_key)?;
+    let kms = Kms::new(&cli.kms_key)?;
     let ctx = job::Ctx {
         http: &http,
         creds: &creds,
