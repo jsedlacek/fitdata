@@ -516,7 +516,7 @@ fn schema() -> Value {
                   TIMESTAMP WITH TIME ZONE columns are instants shown in local time \
                   (Europe/Prague) with their UTC offset; extract, date_trunc, date_bin and \
                   CAST(... AS DATE) work in local time, and so do literals without an offset \
-                  (ts >= '2026-10-25 06:00'); give the offset to pick one of the hour repeated \
+                  (ts >= '2026-10-25 06:00:00'); give the offset to pick one of the hour repeated \
                   when clocks go back ('2026-10-25 02:30:00+01:00'). \
                   `daily` has one row per day; heart_rate has a reading every few seconds, \
                   so aggregate it.",

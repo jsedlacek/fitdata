@@ -12,6 +12,8 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
+use datafusion::sql::parser::Statement;
+use datafusion::sql::sqlparser::ast;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::Semaphore;
@@ -66,10 +68,26 @@ pub async fn run(snapshot: Snapshot, sql: &str) -> Result<QueryResult> {
 
 async fn execute(snapshot: Snapshot, sql: &str) -> Result<QueryResult> {
     let ctx = snapshot.session(MEMORY).await?;
-    // The subquery also keeps anything but a query out (on top of the
-    // session's own checks) and bounds what is collected.
-    let wrapped = format!("SELECT * FROM (\n{sql}\n) LIMIT {}", MAX_ROWS + 1);
-    let mut rows = engine::rows(&ctx, &wrapped).await?;
+    // Only a query (SELECT, WITH ...), on top of the session's own checks:
+    // no EXPLAIN, PREPARE and the like.
+    let state = ctx.state();
+    let dialect = state.config().options().sql_parser.dialect;
+    let is_query = matches!(
+        state.sql_to_statement(sql, &dialect)?,
+        Statement::Statement(s) if matches!(*s, ast::Statement::Query(_))
+    );
+    if !is_query {
+        bail!("only a single SELECT is allowed");
+    }
+    // The limit goes on top of the query, so its ORDER BY still holds (in a
+    // subquery the optimizer may drop it).
+    let batches = ctx
+        .sql_with_options(sql, engine::sql_options())
+        .await?
+        .limit(0, Some(MAX_ROWS + 1))?
+        .collect()
+        .await?;
+    let mut rows = engine::to_json(&batches)?;
     let mut truncated = rows.len() > MAX_ROWS;
     rows.truncate(MAX_ROWS);
     let mut size = 0;
@@ -150,6 +168,21 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.rows[0]["m"], 79.0);
+    }
+
+    #[tokio::test]
+    async fn keeps_the_order_of_the_query() {
+        let r = query(
+            "SELECT date_trunc('hour', ts) AS h, count(*) AS n FROM heart_rate
+             GROUP BY 1 ORDER BY h DESC",
+        )
+        .await
+        .unwrap();
+        let hours: Vec<&str> = r.rows.iter().map(|r| r["h"].as_str().unwrap()).collect();
+        let mut sorted = hours.clone();
+        sorted.sort_by(|a, b| b.cmp(a));
+        assert_eq!(hours.len(), 72);
+        assert_eq!(hours, sorted);
     }
 
     #[tokio::test]
