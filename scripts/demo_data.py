@@ -3,9 +3,12 @@
 the screenshots on the home page (frontend/src/home/), so no real data is shown.
 
     python3 scripts/demo_data.py /tmp/demo 4815162342108
-    # users/4815162342108.json with a dummy token, then:
+    # users/4815162342108.json with a dummy token, time_zone "Europe/Prague" and
+    # prefs {"units": "metric", "weekStart": "monday", "clock": "24h"}, then:
     cargo run -- --storage /tmp/demo load --user 4815162342108 --from 2026-07-28
     cargo run -- --storage /tmp/demo serve --dev-user 4815162342108
+
+Take the screenshots with the browser locale en-GB and time zone Europe/Prague.
 """
 import json, math, os, random, sys
 from datetime import date, datetime, timedelta, timezone
@@ -18,6 +21,9 @@ raw = os.path.join(root, "u", uid, "raw")
 END = date(2026, 10, 25)
 DAYS = 90
 NOW = datetime(2026, 10, 25, 16, 40, tzinfo=TZ)
+# A late night out (the home page's chat is about it): short sleep, little
+# deep sleep, a high heart rate and a low HRV through the night.
+PARTY = date(2026, 10, 18)
 
 files = {}
 def put(dtype, key, point):
@@ -43,16 +49,22 @@ for i in range(DAYS):
     rough = 40 <= i <= 46
     rhr = trend(i, 57 - i * 0.03 + (3 if rough else 0), 1.2, 0.8)
     hrv = trend(i, 44 + i * 0.06 - (8 if rough else 0), 4, 3)
+    party = d == PARTY
+    night_hr = rhr + (9 if party else -2)
+    if party:
+        hrv, rhr = 24.0, rhr + 5
 
     # The night that ends this morning.
     bed = local(d - timedelta(days=1), 22, random.randint(30, 80) + (40 if weekend else 0))
     wake = local(d, 6, random.randint(20, 70) + (60 if weekend else 0))
+    if party:
+        bed, wake = local(d, 2, 40), local(d, 7, 50)
     if NOW < wake:
         continue
     t, stages, mins = bed, [], {"LIGHT": 0, "DEEP": 0, "REM": 0, "AWAKE": 0}
     cycle = 0
     while t < wake:
-        for kind, length in (("LIGHT", random.randint(20, 35)), ("DEEP", max(5, random.randint(35, 55) - cycle * 12)),
+        for kind, length in (("LIGHT", random.randint(20, 35)), ("DEEP", random.randint(11, 14) if party else max(5, random.randint(35, 55) - cycle * 12)),
                              ("LIGHT", random.randint(10, 25)), ("REM", random.randint(10, 18) + cycle * 6),
                              ("AWAKE", random.choice([0, 0, 2, 4]))):
             if length == 0 or t >= wake:
@@ -70,7 +82,7 @@ for i in range(DAYS):
     # Night vitals.
     t = bed
     while t < wake:
-        put("heart-rate", (t.date().isoformat()), {"heartRate": {"beatsPerMinute": str(round(rhr + random.gauss(-2, 2))), "sampleTime": sample(t)}})
+        put("heart-rate", (t.date().isoformat()), {"heartRate": {"beatsPerMinute": str(round(night_hr + random.gauss(0, 2))), "sampleTime": sample(t)}})
         if (t - bed).seconds % 300 == 0:
             put("heart-rate-variability", t.date().isoformat(), {"heartRateVariability": {"rootMeanSquareOfSuccessiveDifferencesMilliseconds": round(max(15, hrv + random.gauss(0, 7)), 1), "sampleTime": sample(t)}})
         put("oxygen-saturation", t.date().isoformat(), {"oxygenSaturation": {"percentage": round(min(99.5, random.gauss(96.3, 0.9)), 1), "sampleTime": sample(t)}})
@@ -78,7 +90,7 @@ for i in range(DAYS):
 
     put("daily-resting-heart-rate", mkey, {"dailyRestingHeartRate": {"date": ymd(d), "beatsPerMinute": str(round(rhr))}})
     put("daily-heart-rate-variability", mkey, {"dailyHeartRateVariability": {"date": ymd(d), "averageHeartRateVariabilityMilliseconds": round(hrv, 1),
-        "deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds": round(hrv * 1.15, 1), "nonRemHeartRateBeatsPerMinute": round(rhr - 2, 1)}})
+        "deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds": round(hrv * 1.15, 1), "nonRemHeartRateBeatsPerMinute": round(night_hr, 1)}})
     put("daily-oxygen-saturation", mkey, {"dailyOxygenSaturation": {"date": ymd(d), "averagePercentage": round(random.gauss(96.2, 0.4), 1),
         "lowerBoundPercentage": round(random.gauss(93.5, 0.6), 1), "upperBoundPercentage": round(random.gauss(98.4, 0.3), 1)}})
     put("daily-respiratory-rate", mkey, {"dailyRespiratoryRate": {"date": ymd(d), "breathsPerMinute": round(trend(i, 14.2, 0.4, 0.3) + (0.8 if rough else 0), 1)}})
