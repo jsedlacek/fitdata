@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use google_cloud_gax::options::RequestOptionsBuilder;
 use google_cloud_kms_v1::client::KeyManagementService;
 use tokio::sync::OnceCell;
 
@@ -14,6 +15,9 @@ static CLIENT: OnceCell<KeyManagementService> = OnceCell::const_new();
 
 /// Shared client using Application Default Credentials (the service account
 /// on Cloud Run, `gcloud auth application-default login` locally).
+///
+/// Encrypt and decrypt are POSTs, which the client retries only when marked
+/// idempotent; both change nothing, so a transient error is retried.
 async fn client() -> Result<&'static KeyManagementService> {
     CLIENT
         .get_or_try_init(|| async {
@@ -57,6 +61,7 @@ impl Kms {
                     .set_name(key)
                     .set_plaintext(plaintext.to_vec())
                     .set_additional_authenticated_data(uid.as_bytes().to_vec())
+                    .with_idempotency(true)
                     .send()
                     .await
                     .context("Cloud KMS encrypt")?;
@@ -77,6 +82,7 @@ impl Kms {
                     .set_name(key)
                     .set_ciphertext(ciphertext)
                     .set_additional_authenticated_data(uid.as_bytes().to_vec())
+                    .with_idempotency(true)
                     .send()
                     .await
                     .context("Cloud KMS decrypt")?;
