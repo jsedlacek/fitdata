@@ -13,8 +13,11 @@ const KIND: Record<string, { label: string; icon: typeof Bike }> = {
 
 const kind = (k: string) => KIND[k] ?? { label: k.toLowerCase().replace(/_/g, ' '), icon: Dumbbell };
 
-/** The recorded name, else the activity type in words. */
-export const exerciseLabel = (e: Exercise) => e.name || kind(e.kind).label;
+/**
+ * The activity type in English when it is a known one; Fitbit's recorded
+ * name is in the account's language. Else that name, else the raw type.
+ */
+export const exerciseLabel = (e: Exercise) => KIND[e.kind]?.label ?? (e.name || kind(e.kind).label);
 
 export function ExerciseList({ exercises }: { exercises: Exercise[] }) {
   if (!exercises.length) return null;
