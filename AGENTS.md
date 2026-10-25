@@ -1,32 +1,33 @@
 # AGENTS.md
 
-Pokyny pro AI agenty pracující v tomto repu.
+Instructions for AI agents working in this repo.
 
 ## Git
 
-- Po každém commitu **vždy automaticky pushni** do `origin main` (`git push origin main`); není potřeba se ptát.
-- Pracuje se přímo na `main`, bez feature větví a PR, pokud uživatel neřekne jinak.
-- Commit message anglicky, stručný předmět + tělo s důvodem změny.
+- After every commit, **always push automatically** to `origin main` (`git push origin main`); no need to ask.
+- Work directly on `main`, without feature branches or PRs, unless the user says otherwise.
+- Commit messages in English, a short subject + a body with the reason for the change.
+- Everything in the repo (code, comments, docs, UI) is in English.
 
-## Projekt
+## Project
 
-Stahuje data z Fitbit Air přes Google Health API v4 a ukazuje je na dashboardu.
+Downloads data from Fitbit Air through the Google Health API v4 and shows it on a dashboard.
 
-- Rust binárka `fitdata` (`src/`): CLI, hodinový job i API v jednom.
-- Google Cloud klienti (KMS, Secret Manager, GCS) jsou ve workspace crate `crates/gcp` (`fitdata-gcp`), aby se jejich velký kód nepřekládal s každou změnou `fitdata`. Jeho async metody vrací `BoxFuture`, ne `async fn` (tělo `async fn` se kompiluje v crate, který ho awaituje); tak to drž i u nových.
-- Víc uživatelů (na pozvánku, `ALLOWED_EMAILS`), uživatel = Google `sub`; data každého v GCS pod `u/{sub}/` jako raw JSON a Parquet, čtená přes DataFusion. Data jednoho uživatele nikdy nesmí uvidět jiný.
-- MCP server pro Claude/ChatGPT na `/mcp` (`src/mcp.rs`) s vlastním OAuth serverem (`src/authz.rs`) nad Google přihlášením.
-- Dashboard v `frontend/` (React, Vite, Tailwind, shadcn-style, TanStack, ECharts); `fitdata serve` servíruje jeho `dist`.
-- Produkce na Google Cloud, vše v `europe-west1`: Cloud Run job `fitdata-sync` (každou hodinu), Cloud Run service `fitdata-web` na https://fitdata.jakub.contact, GCS `fitdata-jsedlacek-data`, KMS klíč `fitdata/refresh-token`. Popis: [docs/production.md](docs/production.md).
-- Push do `main` automaticky nasadí do produkce (GitHub Actions, `.github/workflows/deploy.yml`); po pushi zkontroluj běh přes `gh run watch`.
-- Nasazení: `deploy/setup.sh` (infrastruktura, idempotentní) a `deploy/deploy.sh` (build + nasazení). Nastavení v `deploy/config.sh`; sloupce tabulek jsou pole row structů v `src/model.rs` (`#[derive(Columns)]` z `crates/derive`).
-- Tajemství jsou jen v Secret Manageru (`oauth-client`, `session-key`) a refresh tokeny uživatelů jen zašifrované KMS v `users/{sub}.json`; nikdy je nevypisuj ani neukládej do souborů.
+- Rust binary `fitdata` (`src/`): CLI, hourly job and API in one.
+- The Google Cloud clients (KMS, Secret Manager, GCS) live in the workspace crate `crates/gcp` (`fitdata-gcp`), so their large code is not recompiled with every change to `fitdata`. Its async methods return `BoxFuture`, not `async fn` (an `async fn` body is compiled in the crate that awaits it); keep it that way for new ones too.
+- Multiple users (invite only, `ALLOWED_EMAILS`), a user = Google `sub`; each user's data in GCS under `u/{sub}/` as raw JSON and Parquet, read through DataFusion. One user's data must never be visible to another.
+- MCP server for Claude/ChatGPT at `/mcp` (`src/mcp.rs`) with its own OAuth server (`src/authz.rs`) on top of Google sign-in.
+- Dashboard in `frontend/` (React, Vite, Tailwind, shadcn-style, TanStack, ECharts); `fitdata serve` serves its `dist`. UI text is English only; dates and numbers are formatted as `en-GB` (24-hour clock).
+- Production on Google Cloud, all in `europe-west1`: Cloud Run job `fitdata-sync` (every hour), Cloud Run service `fitdata-web` at https://fitdata.jakub.contact, GCS `fitdata-jsedlacek-data`, KMS key `fitdata/refresh-token`. Description: [docs/production.md](docs/production.md).
+- A push to `main` deploys to production automatically (GitHub Actions, `.github/workflows/deploy.yml`); after pushing, check the run with `gh run watch`.
+- Deployment: `deploy/setup.sh` (infrastructure, idempotent) and `deploy/deploy.sh` (build + deploy). Settings in `deploy/config.sh`; table columns are the fields of the row structs in `src/model.rs` (`#[derive(Columns)]` from `crates/derive`).
+- Secrets live only in Secret Manager (`oauth-client`, `session-key`), and users' refresh tokens only KMS-encrypted in `users/{sub}.json`; never print them or write them to files.
 
-## Než commitneš
+## Before committing
 
 ```bash
 cargo fmt && cargo clippy --all-targets && cargo test
-cd frontend && npm run build   # typecheck + build dashboardu
+cd frontend && npm run build   # typecheck + build of the dashboard
 ```
 
-Změny dashboardu ověř v prohlížeči (headless Chromium přes Playwright ve scratchpadu), ne jen kompilací.
+Check dashboard changes in a browser (headless Chromium through Playwright in the scratchpad), not just by compiling.

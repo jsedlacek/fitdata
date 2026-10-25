@@ -19,8 +19,8 @@ export function ReconnectBanner({ run, user }: { run: SyncRun | null; user: Me |
         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-good" />
         <p>
           {run
-            ? 'Přístup k datům je obnovený. Chybějící dny se doplní při příští synchronizaci (každou hodinu).'
-            : 'Fitbit je připojený. Načítám historii dat, první dny se objeví za pár minut.'}
+            ? 'Access to your data is restored. Missing days will be filled in at the next sync (every hour).'
+            : 'Fitbit is connected. Loading your history, the first days will appear in a few minutes.'}
         </p>
       </div>
     );
@@ -29,9 +29,9 @@ export function ReconnectBanner({ run, user }: { run: SyncRun | null; user: Me |
     return (
       <div role="status" className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-l-4 border-l-s1 bg-surface px-4 py-3 text-sm">
         <Watch className="size-4 shrink-0 text-s1" />
-        <p className="flex-1">Připoj svůj Fitbit, ať se tu objeví tvoje data. Přístup je jen ke čtení.</p>
+        <p className="flex-1">Connect your Fitbit to see your data here. Access is read-only.</p>
         <Button asChild size="sm">
-          <a href="/auth/fitbit">Připojit Fitbit</a>
+          <a href="/auth/fitbit">Connect Fitbit</a>
         </Button>
       </div>
     );
@@ -40,9 +40,9 @@ export function ReconnectBanner({ run, user }: { run: SyncRun | null; user: Me |
   return (
     <div role="alert" className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-l-4 border-l-warning bg-surface px-4 py-3 text-sm">
       <KeyRound className="size-4 shrink-0 text-warning" />
-      <p className="flex-1">Synchronizace ztratila přístup k datům z Google Health, nová data nepřibývají.</p>
+      <p className="flex-1">The sync lost access to your Google Health data, so no new data is coming in.</p>
       <Button asChild size="sm">
-        <a href="/auth/fitbit">Obnovit přístup k datům</a>
+        <a href="/auth/fitbit">Restore access to data</a>
       </Button>
     </div>
   );

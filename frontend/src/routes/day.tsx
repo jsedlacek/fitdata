@@ -3,7 +3,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useNavigate } from '@tanstack/react-router';
 import { Activity, BedDouble, Flame, Footprints, HeartPulse, RefreshCw, Waves, Wind, Zap } from 'lucide-react';
 import { dayQuery, overviewQuery, type Daily } from '@/lib/api';
-import { duration, hm, num, plural } from '@/lib/format';
+import { duration, hm, num } from '@/lib/format';
 import { before, mean, type MetricKey } from '@/lib/stats';
 import { DateNav } from '@/components/DateNav';
 import { DayTimeline } from '@/components/DayTimeline';
@@ -20,14 +20,14 @@ import { cn } from '@/lib/utils';
 type Kpi = { key: MetricKey; label: string; icon: typeof Activity; unit?: string; digits?: number; accent: string; time?: boolean; better?: 1 | -1 };
 
 const KPIS: Kpi[] = [
-  { key: 'sleep_minutes', label: 'Spánek', icon: BedDouble, accent: 'var(--s7)', time: true, better: 1 },
-  { key: 'resting_hr', label: 'Klidový tep', icon: HeartPulse, unit: 'bpm', accent: 'var(--s5)', better: -1 },
+  { key: 'sleep_minutes', label: 'Sleep', icon: BedDouble, accent: 'var(--s7)', time: true, better: 1 },
+  { key: 'resting_hr', label: 'Resting HR', icon: HeartPulse, unit: 'bpm', accent: 'var(--s5)', better: -1 },
   { key: 'hrv_ms', label: 'HRV', icon: Activity, unit: 'ms', digits: 1, accent: 'var(--s1)', better: 1 },
-  { key: 'steps', label: 'Kroky', icon: Footprints, accent: 'var(--s3)', better: 1 },
-  { key: 'azm', label: 'Aktivní zóny', icon: Zap, unit: 'min', accent: 'var(--s2)', better: 1 },
+  { key: 'steps', label: 'Steps', icon: Footprints, accent: 'var(--s3)', better: 1 },
+  { key: 'azm', label: 'Active Zone Minutes', icon: Zap, unit: 'min', accent: 'var(--s2)', better: 1 },
   { key: 'spo2_avg', label: 'SpO₂', icon: Waves, unit: '%', digits: 1, accent: 'var(--s1)' },
-  { key: 'respiratory_rate', label: 'Dech', icon: Wind, unit: '/min', digits: 1, accent: 'var(--s3)' },
-  { key: 'active_kcal', label: 'Aktivní kcal', icon: Flame, unit: 'kcal', accent: 'var(--s2)' },
+  { key: 'respiratory_rate', label: 'Breathing rate', icon: Wind, unit: '/min', digits: 1, accent: 'var(--s3)' },
+  { key: 'active_kcal', label: 'Active kcal', icon: Flame, unit: 'kcal', accent: 'var(--s2)' },
 ];
 
 /** Days that have any measurement (the daily table also holds empty rows). */
@@ -71,8 +71,8 @@ export function DayPage({ date: wanted }: { date?: string }) {
       <Card>
         <CardBody className="py-16 text-center text-sm text-muted">
           {overview.data.user.connected
-            ? 'Zatím žádná data. Spusť synchronizaci tlačítkem vpravo nahoře.'
-            : 'Zatím žádná data. Po připojení Fitbitu se tu objeví.'}
+            ? 'No data yet. Start a sync with the button in the top right.'
+            : 'No data yet. It will appear here once you connect your Fitbit.'}
         </CardBody>
       </Card>
     );
@@ -83,7 +83,7 @@ export function DayPage({ date: wanted }: { date?: string }) {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">Přehled dne</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Day overview</h1>
         <DateNav date={date} available={days.map((d) => d.date)} onChange={go} />
       </div>
 
@@ -107,7 +107,7 @@ export function DayPage({ date: wanted }: { date?: string }) {
               unit={k.time ? 'h' : k.unit}
               delta={delta}
               tone={tone}
-              baselineLabel={`vs. Ø ${base.length} ${plural(base.length, 'dne', 'dnů', 'dnů')}`}
+              baselineLabel={`vs. ${base.length}-day avg`}
               spark={spark}
               accent={k.accent}
             />
@@ -143,14 +143,14 @@ export function DayPage({ date: wanted }: { date?: string }) {
 
 function HeartSummary({ m }: { m: Daily }) {
   const items = [
-    ['Nejnižší', m.hr_min],
-    ['Průměr', m.hr_avg],
-    ['Nejvyšší', m.hr_max],
-    ['Ve spánku (non-REM)', m.nonrem_hr],
+    ['Lowest', m.hr_min],
+    ['Average', m.hr_avg],
+    ['Highest', m.hr_max],
+    ['Asleep (non-REM)', m.nonrem_hr],
   ] as const;
   return (
     <Card>
-      <CardHeader title="Tep během dne" subtitle="tepů za minutu" />
+      <CardHeader title="Heart rate during the day" subtitle="beats per minute" />
       <CardBody className="grid grid-cols-2 gap-3">
         {items.map(([label, v]) => (
           <div key={label} className="rounded-lg bg-surface-2 px-3 py-2">
@@ -159,7 +159,7 @@ function HeartSummary({ m }: { m: Daily }) {
           </div>
         ))}
         <div className="col-span-2 text-xs text-muted">
-          Cvičení celkem {duration(m.exercise_minutes ?? 0)} · noční teplota {m.nightly_temp_c != null ? `${num(m.nightly_temp_c, 1)} °C` : '–'}
+          Exercise in total {duration(m.exercise_minutes ?? 0)} · nightly temperature {m.nightly_temp_c != null ? `${num(m.nightly_temp_c, 1)} °C` : '–'}
         </div>
       </CardBody>
     </Card>
@@ -170,9 +170,9 @@ export function ErrorCard({ onRetry }: { onRetry: () => void }) {
   return (
     <Card>
       <CardBody className="flex flex-col items-center gap-3 py-12 text-center">
-        <p className="text-sm text-ink-2">Data se nepodařilo načíst.</p>
+        <p className="text-sm text-ink-2">Could not load the data.</p>
         <Button variant="outline" size="sm" onClick={onRetry}>
-          <RefreshCw /> Zkusit znovu
+          <RefreshCw /> Try again
         </Button>
       </CardBody>
     </Card>

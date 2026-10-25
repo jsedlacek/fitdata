@@ -25,8 +25,8 @@ export function AppShell() {
             <span className="hidden sm:inline">fitdata</span>
           </Link>
           <nav className="flex items-center gap-1 text-sm">
-            <NavLink to="/">Den</NavLink>
-            <NavLink to="/trends">Trendy</NavLink>
+            <NavLink to="/">Day</NavLink>
+            <NavLink to="/trends">Trends</NavLink>
           </nav>
           <div className="flex-1" />
           {data?.user.connected !== false && <SyncStatus run={data?.lastSync ?? null} />}
@@ -42,7 +42,7 @@ export function AppShell() {
         <footer className="mx-auto max-w-6xl px-4 pb-8 text-[13px] text-muted">
           <Popover>
             <PopoverTrigger className="inline-flex items-center gap-1.5 rounded-md transition-colors hover:text-ink-2">
-              <Bot className="size-3.5" /> Data i v Claude a ChatGPT (MCP)
+              <Bot className="size-3.5" /> Your data in Claude and ChatGPT (MCP)
             </PopoverTrigger>
             <PopoverContent align="start" side="top" className="w-80">
               <McpConnect />
@@ -85,7 +85,7 @@ function SyncStatus({ run }: { run: SyncRun | null }) {
     wasRunning.current = running;
   }, [running, queryClient]);
 
-  // Re-render every minute so "před 5 min" keeps counting.
+  // Re-render every minute so "5 min ago" keeps counting.
   const [, tick] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
     const id = setInterval(tick, 60_000);
@@ -96,15 +96,15 @@ function SyncStatus({ run }: { run: SyncRun | null }) {
   return (
     <div className="flex items-center gap-1.5 text-[13px] text-ink-2">
       {running ? (
-        <span className="hidden md:inline">Synchronizuji…</span>
+        <span className="hidden md:inline">Syncing…</span>
       ) : (
         run && (
           <span
             className="hidden items-center gap-1.5 md:flex"
-            title={`Poslední synchronizace ${new Date(run.run_at).toLocaleString('cs-CZ')}`}
+            title={`Last sync ${new Date(run.run_at).toLocaleString('en-GB')}`}
           >
             <Icon className={run.ok ? 'size-4 text-good' : 'size-4 text-critical'} />
-            <span>{run.ok ? 'Synchronizováno' : 'Synchronizace selhala'}</span>
+            <span>{run.ok ? 'Synced' : 'Sync failed'}</span>
             <span className="text-muted">{ago(run.run_at)}</span>
           </span>
         )
@@ -115,8 +115,8 @@ function SyncStatus({ run }: { run: SyncRun | null }) {
         className={cn('text-ink-2 hover:text-ink disabled:opacity-100', start.isError && 'text-critical')}
         disabled={running}
         onClick={() => start.mutate()}
-        aria-label="Synchronizovat teď"
-        title={start.isError ? 'Synchronizaci se nepodařilo spustit, zkusit znovu' : running ? 'Synchronizace běží' : 'Synchronizovat teď'}
+        aria-label="Sync now"
+        title={start.isError ? 'Could not start the sync, try again' : running ? 'Sync in progress' : 'Sync now'}
       >
         <RefreshCw className={cn(running && 'animate-spin')} />
       </Button>
@@ -135,7 +135,7 @@ function AccountMenu({ user }: { user: Me }) {
   return (
     <Popover onOpenChange={(open) => !open && close()}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink" aria-label="Účet" title={user.email}>
+        <Button variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink" aria-label="Account" title={user.email}>
           <UserRound />
         </Button>
       </PopoverTrigger>
@@ -143,7 +143,7 @@ function AccountMenu({ user }: { user: Me }) {
         {mcp ? (
           <>
             <Button variant="ghost" size="sm" className="-ml-2 mb-2 text-ink-2" onClick={() => setMcp(false)}>
-              <ArrowLeft /> Zpět
+              <ArrowLeft /> Back
             </Button>
             <McpConnect />
           </>
@@ -154,29 +154,29 @@ function AccountMenu({ user }: { user: Me }) {
             </p>
             <div className="mt-3 flex flex-col gap-1">
               <Button variant="ghost" size="sm" className="justify-start" onClick={() => setMcp(true)}>
-                <Bot /> Připojit Claude / ChatGPT
+                <Bot /> Connect Claude / ChatGPT
               </Button>
               <Button asChild variant="ghost" size="sm" className="justify-start">
                 <a href="/auth/logout">
-                  <LogOut /> Odhlásit
+                  <LogOut /> Sign out
                 </a>
               </Button>
               {confirming ? (
                 <div className="mt-1 rounded-lg border border-l-4 border-l-critical p-2.5">
-                  <p>Smazat účet i všechna stažená data? Nejde to vrátit.</p>
+                  <p>Delete your account and all downloaded data? This cannot be undone.</p>
                   <div className="mt-2 flex gap-2">
                     <Button size="sm" disabled={remove.isPending} onClick={() => remove.mutate()}>
-                      {remove.isPending ? 'Mažu…' : 'Smazat'}
+                      {remove.isPending ? 'Deleting…' : 'Delete'}
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
-                      Zpět
+                      Cancel
                     </Button>
                   </div>
-                  {remove.isError && <p className="mt-2 text-critical">Smazání se nepodařilo, zkuste to znovu.</p>}
+                  {remove.isError && <p className="mt-2 text-critical">Could not delete the account, try again.</p>}
                 </div>
               ) : (
                 <Button variant="ghost" size="sm" className="justify-start text-critical" onClick={() => setConfirming(true)}>
-                  <Trash2 /> Smazat účet
+                  <Trash2 /> Delete account
                 </Button>
               )}
             </div>
@@ -191,13 +191,13 @@ function ThemeToggle() {
   const [choice, setChoice] = useThemeChoice();
   return (
     <Segmented<ThemeChoice>
-      label="Vzhled"
+      label="Theme"
       value={choice}
       onChange={setChoice}
       options={[
-        { value: 'light', label: <Sun />, title: 'Světlý' },
-        { value: 'system', label: <Laptop />, title: 'Podle systému' },
-        { value: 'dark', label: <Moon />, title: 'Tmavý' },
+        { value: 'light', label: <Sun />, title: 'Light' },
+        { value: 'system', label: <Laptop />, title: 'System' },
+        { value: 'dark', label: <Moon />, title: 'Dark' },
       ]}
     />
   );

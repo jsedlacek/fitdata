@@ -47,7 +47,7 @@ function VitalChart({ title, subtitle, points, timeZone, unit, digits, gap, summ
         {points.length ? (
           <EChart option={option} className="h-[170px]" label={label} />
         ) : (
-          <p className="py-12 text-center text-sm text-muted">Žádná měření.</p>
+          <p className="py-12 text-center text-sm text-muted">No measurements.</p>
         )}
       </CardBody>
     </Card>
@@ -59,14 +59,14 @@ export function NightVitals({ day }: { day: DayDetail }) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <VitalChart
-        title="SpO₂ v noci" subtitle="Saturace krve kyslíkem, %" points={day.spo2} timeZone={day.timeZone} unit="%" digits={1} gap={10}
-        summary={m?.spo2_avg != null ? `Ø ${num(m.spo2_avg, 1)} % · ${num(m.spo2_low, 1)}–${num(m.spo2_high, 1)}` : ''}
-        label="Graf saturace kyslíkem během noci"
+        title="SpO₂ overnight" subtitle="Blood oxygen saturation, %" points={day.spo2} timeZone={day.timeZone} unit="%" digits={1} gap={10}
+        summary={m?.spo2_avg != null ? `Avg ${num(m.spo2_avg, 1)}% · ${num(m.spo2_low, 1)}–${num(m.spo2_high, 1)}` : ''}
+        label="Chart of oxygen saturation overnight"
       />
       <VitalChart
-        title="HRV v noci" subtitle="RMSSD v 5minutových oknech, ms" points={day.hrv} timeZone={day.timeZone} unit="ms" digits={1} gap={15}
-        summary={m?.hrv_ms != null ? `Ø ${num(m.hrv_ms, 1)} ms` : ''}
-        label="Graf variability srdečního tepu během noci"
+        title="HRV overnight" subtitle="RMSSD in 5-minute windows, ms" points={day.hrv} timeZone={day.timeZone} unit="ms" digits={1} gap={15}
+        summary={m?.hrv_ms != null ? `Avg ${num(m.hrv_ms, 1)} ms` : ''}
+        label="Chart of heart rate variability overnight"
       />
     </div>
   );

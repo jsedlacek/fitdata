@@ -63,7 +63,7 @@ fn help_page(url: &str) -> Response {
     let url = escape_html(url);
     let html = format!(
         r#"<!doctype html>
-<html lang="cs"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MCP server · fitdata</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -82,17 +82,17 @@ fn help_page(url: &str) -> Response {
   a {{ color: var(--accent); }}
 </style></head>
 <body><main>
-  <h1>MCP server fitdata</h1>
-  <p>Tahle adresa je pro Claude a ChatGPT, ne pro prohlížeč. Po připojení se jich můžeš na svoje data z Fitbitu ptát v chatu. Přístup je jen ke čtení a jen k datům účtu, kterým se přihlásíš.</p>
+  <h1>fitdata MCP server</h1>
+  <p>This address is for Claude and ChatGPT, not for a browser. Once connected, you can ask them about your Fitbit data in a chat. Access is read-only and limited to the data of the account you sign in with.</p>
   <code class="url">{url}</code>
   <h2>Claude</h2>
-  <p>Settings → Connectors → Add custom connector, vlož URL výše.</p>
+  <p>Settings → Connectors → Add custom connector, paste the URL above.</p>
   <h2>ChatGPT</h2>
-  <p>Settings → Apps &amp; Connectors → Advanced → zapni Developer mode, pak Create, vlož URL výše a jako autentizaci zvol OAuth.</p>
-  <p>Při připojení se přihlásíš Googlem, stejným účtem jako na dashboard, a potvrdíš přístup.</p>
-  <h2>Co umí</h2>
-  <p class="muted">Denní metriky a trendy (<code>get_daily_metrics</code>), detail dne (<code>get_day</code>), spánek (<code>get_sleep</code>), cvičení (<code>get_exercises</code>) a vlastní SQL dotazy nad tabulkami (<code>get_schema</code>, <code>query</code>).</p>
-  <p class="muted"><a href="/">Zpět na dashboard</a></p>
+  <p>Settings → Apps &amp; Connectors → Advanced → turn on Developer mode, then Create, paste the URL above and choose OAuth as the authentication.</p>
+  <p>When connecting, you sign in with Google, using the same account as on the dashboard, and confirm access.</p>
+  <h2>What it can do</h2>
+  <p class="muted">Daily metrics and trends (<code>get_daily_metrics</code>), a day in detail (<code>get_day</code>), sleep (<code>get_sleep</code>), exercise (<code>get_exercises</code>) and your own SQL queries over the tables (<code>get_schema</code>, <code>query</code>).</p>
+  <p class="muted"><a href="/">Back to the dashboard</a></p>
 </main></body></html>"#
     );
     (

@@ -387,9 +387,9 @@ fn consent_page(name: &str, host: &str, email: &str, consent: &str) -> Response 
     );
     let html = format!(
         r#"<!doctype html>
-<html lang="cs"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Přístup k datům · fitdata</title>
+<title>Access to your data · fitdata</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root {{ color-scheme: light dark; --bg: #f6f7f9; --card: #fff; --fg: #111827; --muted: #6b7280; --accent: #2563eb; --border: #e5e7eb; }}
@@ -406,15 +406,15 @@ fn consent_page(name: &str, host: &str, email: &str, consent: &str) -> Response 
   button.primary {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
 </style></head>
 <body><main>
-  <h1>{name} chce číst tvoje data z Fitbitu</h1>
-  <p>Aplikace získá přístup jen pro čtení k datům na dashboardu fitdata: denním metrikám, spánku, tepu a aktivitám.</p>
-  <p class="muted">Přesměrování na <code>{host}</code> · účet {email}</p>
-  <p class="muted">Pokud připojení nečekáš, zvol Zamítnout.</p>
+  <h1>{name} wants to read your Fitbit data</h1>
+  <p>The app gets read-only access to the data on your fitdata dashboard: daily metrics, sleep, heart rate and activities.</p>
+  <p class="muted">Redirects to <code>{host}</code> · account {email}</p>
+  <p class="muted">If you did not expect this connection, choose Deny.</p>
   <form method="post" action="/oauth/authorize">
     <input type="hidden" name="consent" value="{consent}">
     <div class="buttons">
-      <button type="submit" name="decision" value="deny">Zamítnout</button>
-      <button type="submit" name="decision" value="allow" class="primary">Povolit</button>
+      <button type="submit" name="decision" value="deny">Deny</button>
+      <button type="submit" name="decision" value="allow" class="primary">Allow</button>
     </div>
   </form>
 </main></body></html>"#

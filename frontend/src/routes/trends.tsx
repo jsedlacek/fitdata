@@ -19,12 +19,12 @@ export type Range = '7' | '30' | '90' | 'all';
 type Metric = { key: MetricKey; title: string; unit: string; digits?: number; kind: 'line' | 'bar'; color: string; max?: number };
 
 const METRICS: Metric[] = [
-  { key: 'resting_hr', title: 'Klidový tep', unit: 'bpm', kind: 'line', color: 's5' },
+  { key: 'resting_hr', title: 'Resting heart rate', unit: 'bpm', kind: 'line', color: 's5' },
   { key: 'hrv_ms', title: 'HRV', unit: 'ms', digits: 1, kind: 'line', color: 's1' },
-  { key: 'steps', title: 'Kroky', unit: 'kroků', kind: 'bar', color: 's3' },
-  { key: 'azm', title: 'Aktivní zóny', unit: 'min', kind: 'bar', color: 's2' },
-  { key: 'spo2_avg', title: 'SpO₂ v noci', unit: '%', digits: 1, kind: 'line', color: 's1', max: 100 },
-  { key: 'respiratory_rate', title: 'Dech ve spánku', unit: 'dechů/min', digits: 1, kind: 'line', color: 's3' },
+  { key: 'steps', title: 'Steps', unit: 'steps', kind: 'bar', color: 's3' },
+  { key: 'azm', title: 'Active Zone Minutes', unit: 'min', kind: 'bar', color: 's2' },
+  { key: 'spo2_avg', title: 'SpO₂ overnight', unit: '%', digits: 1, kind: 'line', color: 's1', max: 100 },
+  { key: 'respiratory_rate', title: 'Breathing rate asleep', unit: 'breaths/min', digits: 1, kind: 'line', color: 's3' },
 ];
 
 export function TrendsPage({ range }: { range: Range }) {
@@ -39,21 +39,21 @@ export function TrendsPage({ range }: { range: Range }) {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Trendy</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Trends</h1>
           <p className="text-sm text-muted">
             {days.length ? `${weekdayShort(days[0].date)} – ${weekdayShort(days.at(-1)!.date)}` : ''}
-            {days.length > 0 && days.length < 7 && ' · klouzavý průměr se ukáže od 7 dnů dat'}
+            {days.length > 0 && days.length < 7 && ' · the rolling average shows from 7 days of data'}
           </p>
         </div>
         <Segmented<Range>
-          label="Období"
+          label="Period"
           value={range}
           onChange={(r) => navigate({ to: '/trends', search: { range: r } })}
           options={[
-            { value: '7', label: '7 dní' },
-            { value: '30', label: '30 dní' },
-            { value: '90', label: '90 dní' },
-            { value: 'all', label: 'Vše' },
+            { value: '7', label: '7 days' },
+            { value: '30', label: '30 days' },
+            { value: '90', label: '90 days' },
+            { value: 'all', label: 'All' },
           ]}
         />
       </div>
@@ -108,7 +108,7 @@ function TrendCard({ metric: m, days }: { metric: Metric; days: Daily[] }) {
           const i = ps[0].dataIndex;
           let html = `<div style="font-weight:600;margin-bottom:2px">${weekdayShort(days[i].date)}</div>`;
           html += row(color, m.title, values[i] == null ? '–' : `${num(values[i], m.digits ?? 0)} ${m.unit}`);
-          if (showAvg && avg7[i] != null) html += row(t.c.ink2, 'Ø 7 dní', `${num(avg7[i], m.digits ?? 0)} ${m.unit}`);
+          if (showAvg && avg7[i] != null) html += row(t.c.ink2, '7-day avg', `${num(avg7[i], m.digits ?? 0)} ${m.unit}`);
           return html;
         },
       },
@@ -142,16 +142,16 @@ function TrendCard({ metric: m, days }: { metric: Metric; days: Daily[] }) {
         action={
           <div className="text-right">
             <div className="text-lg font-semibold tabular-nums leading-tight">{num(mean(present), m.digits ?? 0)}</div>
-            <div className="text-[11px] text-muted">Ø za období{last != null ? ` · poslední ${num(last, m.digits ?? 0)}` : ''}</div>
+            <div className="text-[11px] text-muted">Period avg{last != null ? ` · latest ${num(last, m.digits ?? 0)}` : ''}</div>
           </div>
         }
       />
       <CardBody className="pt-1">
-        <EChart option={option} className="h-[200px]" label={`Graf: ${m.title} po dnech`} />
+        <EChart option={option} className="h-[200px]" label={`Chart: ${m.title} by day`} />
         {showAvg && (
           <div className="mt-1 flex gap-4 text-xs text-ink-2">
-            <Legend color={`var(--${m.color})`} label="Denně" />
-            <Legend color="var(--ink-2)" label="Ø 7 dní" />
+            <Legend color={`var(--${m.color})`} label="Daily" />
+            <Legend color="var(--ink-2)" label="7-day avg" />
           </div>
         )}
       </CardBody>
@@ -197,25 +197,25 @@ function SleepTrend({ days }: { days: Daily[] }) {
   return (
     <Card>
       <CardHeader
-        title="Spánek"
-        subtitle="Fáze spánku po nocích (den = den probuzení)"
+        title="Sleep"
+        subtitle="Sleep stages by night (dated by the day you woke up)"
         action={
           <div className="text-right">
             <div className="text-lg font-semibold tabular-nums leading-tight">{avg != null ? `${hm(avg)} h` : '–'}</div>
-            <div className="text-[11px] text-muted">Ø spánku za období</div>
+            <div className="text-[11px] text-muted">Period avg sleep</div>
           </div>
         }
       />
       <CardBody className="pt-1">
         {nights.length ? (
           <>
-            <EChart option={option} className="h-[230px]" label="Graf fází spánku po nocích" />
+            <EChart option={option} className="h-[230px]" label="Chart of sleep stages by night" />
             <div className="mt-1 flex flex-wrap gap-4 text-xs text-ink-2">
               {STAGES.map((s) => <Legend key={s.key} color={`var(${s.color})`} label={s.label} />)}
             </div>
           </>
         ) : (
-          <p className="py-12 text-center text-sm text-muted">V tomto období nejsou data o spánku.</p>
+          <p className="py-12 text-center text-sm text-muted">No sleep data in this period.</p>
         )}
       </CardBody>
     </Card>
@@ -225,24 +225,24 @@ function SleepTrend({ days }: { days: Daily[] }) {
 function DaysTable({ days }: { days: Daily[] }) {
   const navigate = useNavigate();
   const cols: [string, (d: Daily) => string][] = [
-    ['Spánek', (d) => hm(d.sleep_minutes)],
-    ['Klidový tep', (d) => num(d.resting_hr)],
+    ['Sleep', (d) => hm(d.sleep_minutes)],
+    ['Resting HR', (d) => num(d.resting_hr)],
     ['HRV', (d) => num(d.hrv_ms, 1)],
-    ['Kroky', (d) => num(d.steps)],
+    ['Steps', (d) => num(d.steps)],
     ['AZM', (d) => num(d.azm)],
-    ['Aktivní kcal', (d) => num(d.active_kcal)],
+    ['Active kcal', (d) => num(d.active_kcal)],
     ['SpO₂', (d) => num(d.spo2_avg, 1)],
-    ['Dech', (d) => num(d.respiratory_rate, 1)],
-    ['Tep min–max', (d) => (d.hr_min == null ? '–' : `${num(d.hr_min)}–${num(d.hr_max)}`)],
+    ['Breathing', (d) => num(d.respiratory_rate, 1)],
+    ['HR min–max', (d) => (d.hr_min == null ? '–' : `${num(d.hr_min)}–${num(d.hr_max)}`)],
   ];
   return (
     <Card>
-      <CardHeader title="Všechny dny" subtitle="Kliknutím otevřeš detail dne" />
+      <CardHeader title="All days" subtitle="Click a day to open its detail" />
       <CardBody className="overflow-x-auto px-0 pb-1">
         <table className="w-full text-sm tabular-nums">
           <thead>
             <tr className="border-b text-xs text-ink-2">
-              <th className="sticky left-0 bg-surface px-5 py-2 text-left font-medium">Den</th>
+              <th className="sticky left-0 bg-surface px-5 py-2 text-left font-medium">Day</th>
               {cols.map(([h]) => <th key={h} className="whitespace-nowrap px-3 py-2 text-right font-medium">{h}</th>)}
             </tr>
           </thead>

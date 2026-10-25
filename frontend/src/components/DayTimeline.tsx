@@ -25,7 +25,7 @@ export function DayTimeline({ day }: { day: DayDetail }) {
     const { c } = t;
     const clock = wallClock(day.timeZone);
     const rows = withGaps(day.heartRate, 5);
-    const sleepArea = day.sleep ? [[{ xAxis: day.sleep.start, name: 'Spánek' }, { xAxis: day.sleep.end }]] : [];
+    const sleepArea = day.sleep ? [[{ xAxis: day.sleep.start, name: 'Sleep' }, { xAxis: day.sleep.end }]] : [];
     const exerciseAreas = day.exercises.map((e) => [{ xAxis: e.start, name: exerciseLabel(e) }, { xAxis: e.end }]);
     const x = { ...t.timeAxis(day.timeZone), min: day.range[0], max: day.range[1] };
     return {
@@ -42,8 +42,8 @@ export function DayTimeline({ day }: { day: DayDetail }) {
           const r = day.heartRate.find((h) => h[0] === ts);
           const s = day.steps.find((st) => Date.parse(st[0]) <= Date.parse(ts) && Date.parse(ts) < Date.parse(st[0]) + 15 * 60_000);
           let html = `<div style="font-weight:600;margin-bottom:2px">${clock(ts)}</div>`;
-          if (r) html += row(c.s1, 'Tep', `${num(r[2])} bpm`) + row(c.band, 'Rozsah', `${num(r[1])}–${num(r[3])}`);
-          if (s) html += row(c.s3, 'Kroky (15 min)', num(s[1]));
+          if (r) html += row(c.s1, 'Heart rate', `${num(r[2])} bpm`) + row(c.band, 'Range', `${num(r[1])}–${num(r[3])}`);
+          if (s) html += row(c.s3, 'Steps (15 min)', num(s[1]));
           return html;
         },
       },
@@ -95,20 +95,20 @@ export function DayTimeline({ day }: { day: DayDetail }) {
   return (
     <Card>
       <CardHeader
-        title="Tep a pohyb"
-        subtitle="Průměr za minutu s pásmem min–max, kroky po 15 minutách. Kolečkem nebo gestem lze přiblížit."
+        title="Heart rate and movement"
+        subtitle="Per-minute average with the min–max band, steps per 15 minutes. Zoom with the mouse wheel or a pinch."
         action={
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
-            <Legend color="var(--s1)" label="Tep" />
+            <Legend color="var(--s1)" label="Heart rate" />
             <Legend color="var(--band)" label="Min–max" />
-            <Legend color="var(--s3)" label={`Kroky (${num(totalSteps)})`} />
-            {day.sleep && <Legend color="var(--shade)" label="Spánek" border />}
-            {day.exercises.length > 0 && <Legend color="color-mix(in srgb, var(--s2) 25%, transparent)" label="Cvičení" />}
+            <Legend color="var(--s3)" label={`Steps (${num(totalSteps)})`} />
+            {day.sleep && <Legend color="var(--shade)" label="Sleep" border />}
+            {day.exercises.length > 0 && <Legend color="color-mix(in srgb, var(--s2) 25%, transparent)" label="Exercise" />}
           </div>
         }
       />
       <CardBody className="pt-1">
-        <EChart option={option} className="h-[340px]" label="Graf tepu a kroků během dne" />
+        <EChart option={option} className="h-[340px]" label="Chart of heart rate and steps during the day" />
       </CardBody>
     </Card>
   );

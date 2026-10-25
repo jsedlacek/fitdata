@@ -1,133 +1,133 @@
-# Produkce na Google Cloud
+# Production on Google Cloud
 
 ```
-Cloud Scheduler (každou hodinu)
-  └─> Cloud Run job fitdata-sync      `fitdata job --days 7`, pro každého uživatele
-        ├─ users/{uid}.json: šifrovaný refresh token ─> Cloud KMS (dešifruje jen job)
-        ├─ Google Health API ─> GCS u/{uid}/raw/{typ}/{den|měsíc}.jsonl
-        └─ normalizace (DataFusion) ─> GCS u/{uid}/data/{tabulka}[/{YYYY-MM}].parquet + manifest.json
+Cloud Scheduler (every hour)
+  └─> Cloud Run job fitdata-sync      `fitdata job --days 7`, for each user
+        ├─ users/{uid}.json: encrypted refresh token ─> Cloud KMS (only the job decrypts)
+        ├─ Google Health API ─> GCS u/{uid}/raw/{type}/{day|month}.jsonl
+        └─ normalization (DataFusion) ─> GCS u/{uid}/data/{table}[/{YYYY-MM}].parquet + manifest.json
 Cloud Run service fitdata-web          `fitdata serve`   https://fitdata.jakub.contact
-  └─ Google přihlášení (ALLOWED_EMAILS) ─> Parquet uživatele v cache instance ─> DataFusion
+  └─ Google sign-in (ALLOWED_EMAILS) ─> the user's Parquet in the instance cache ─> DataFusion
 ```
 
-Jeden image, jedna binárka; job a web se liší jen argumenty. Všechno běží v jednom regionu, `europe-west1` (Belgie). Frankfurt (`europe-west3`) by byl blíž, ale neumí Cloud Run domain mapping.
+One image, one binary; the job and the web differ only in their arguments. Everything runs in one region, `europe-west1` (Belgium). Frankfurt (`europe-west3`) would be closer, but it has no Cloud Run domain mapping.
 
-## Nasazení
+## Deployment
 
 ```bash
-deploy/setup.sh    # jednorázově / idempotentně: API, bucket, KMS klíč, SA, IAM, session-key
+deploy/setup.sh    # once / idempotent: APIs, bucket, KMS key, SAs, IAM, session-key
 deploy/deploy.sh   # build (Cloud Build), job + scheduler, web
 ```
 
-Každý push do `main` nasadí GitHub Actions ([.github/workflows/deploy.yml](../.github/workflows/deploy.yml)) spuštěním `deploy/deploy.sh`. Ručně jde workflow spustit v záložce Actions (Run workflow). Přihlašuje se bez klíče přes Workload Identity Federation (pool `github`) jako `fitdata-deployer`; token dostane jen workflow z `jsedlacek/fitdata` na `main`. Pool i role nastaví `setup.sh`. Image se staví znovu jen při změně `Dockerfile*`, `.dockerignore`, `Cargo.*`, `src/`, `crates/` nebo `frontend/`, takže push samotných docs jen znovu nasadí stávající image. V Actions se binárka i dashboard staví přímo na runneru (`ubuntu-24.04`) a [Dockerfile.ci](../Dockerfile.ci) je jen zabalí do distroless image (Debian 13, kvůli glibc), který se pushne do Artifact Registry; `deploy.sh` ho pak najde a Cloud Build přeskočí. Přeložené crates drží [rust-cache](https://github.com/Swatinem/rust-cache) v cache GitHub Actions, takže změna jedné závislosti přeloží jen ji a to, co na ní závisí. Lokální `deploy.sh` staví dál plný `Dockerfile` (cargo-chef) v Cloud Buildu, bez cache.
+Every push to `main` is deployed by GitHub Actions ([.github/workflows/deploy.yml](../.github/workflows/deploy.yml)) running `deploy/deploy.sh`. The workflow can also be run by hand in the Actions tab (Run workflow). It authenticates without a key through Workload Identity Federation (pool `github`) as `fitdata-deployer`; only the workflow from `jsedlacek/fitdata` on `main` gets a token. `setup.sh` sets up the pool and the roles. The image is rebuilt only when `Dockerfile*`, `.dockerignore`, `Cargo.*`, `src/`, `crates/` or `frontend/` change, so a docs-only push just redeploys the current image. In Actions the binary and the dashboard are built right on the runner (`ubuntu-24.04`) and [Dockerfile.ci](../Dockerfile.ci) only packs them into a distroless image (Debian 13, for glibc) that is pushed to Artifact Registry; `deploy.sh` then finds it and skips Cloud Build. [rust-cache](https://github.com/Swatinem/rust-cache) keeps compiled crates in the GitHub Actions cache, so a change to one dependency recompiles only it and what depends on it. A local `deploy.sh` still builds the full `Dockerfile` (cargo-chef) in Cloud Build, without a cache.
 
-Nastavení je v [deploy/config.sh](../deploy/config.sh). Sloupce tabulek jsou pole row structů v [src/model.rs](../src/model.rs) (`#[derive(Columns)]`, popis sloupce je doc komentář pole); nový sloupec stačí přidat tam a pushnout.
+Settings are in [deploy/config.sh](../deploy/config.sh). Table columns are the fields of the row structs in [src/model.rs](../src/model.rs) (`#[derive(Columns)]`, a column's description is the field's doc comment); a new column only needs adding there and a push.
 
-OAuth Web client musí mít mezi *Authorized redirect URIs* adresu `https://fitdata.jakub.contact/auth/callback`.
+The OAuth Web client must list `https://fitdata.jakub.contact/auth/callback` among its *Authorized redirect URIs*.
 
-### Vlastní doména
+### Custom domain
 
-- Doména musí být ověřená pro účet, pod kterým běží `gcloud` (`gcloud domains list-user-verified`). Pokud není, ověří ji `gcloud domains verify jakub.contact`.
-- `deploy.sh` vytvoří domain mapping a vypíše DNS záznam: `CNAME fitdata → ghs.googlehosted.com`.
-- V Cloudflare musí být záznam **DNS only** (šedý mráček). Přes proxy Google nevydá certifikát.
-- Certifikát se vydává 15–60 minut po nastavení DNS. Stav ukáže `gcloud beta run domain-mappings describe --domain fitdata.jakub.contact --region europe-west1`.
+- The domain must be verified for the account `gcloud` runs as (`gcloud domains list-user-verified`). If it is not, verify it with `gcloud domains verify jakub.contact`.
+- `deploy.sh` creates the domain mapping and prints the DNS record: `CNAME fitdata → ghs.googlehosted.com`.
+- In Cloudflare the record must be **DNS only** (grey cloud). Behind the proxy, Google will not issue a certificate.
+- The certificate is issued 15–60 minutes after DNS is set. `gcloud beta run domain-mappings describe --domain fitdata.jakub.contact --region europe-west1` shows its state.
 
-## Uživatelé
+## Users
 
-Přihlásit se může každý účet z `ALLOWED_EMAILS` (pozvánky, `deploy/config.sh`). Uživatel je Google účet, klíčem je jeho `sub`. První přihlášení založí záznam `users/{uid}.json`, dashboard pak nabídne **Připojit Fitbit**. Po souhlasu web zašifruje refresh token klíčem KMS, uloží ho do záznamu a spustí job pro tohoto uživatele, který stáhne celou historii. Data mezi uživateli se nesdílí.
+Any account in `ALLOWED_EMAILS` (invites, `deploy/config.sh`) can sign in. A user is a Google account, keyed by its `sub`. The first sign-in creates the record `users/{uid}.json`, and the dashboard then offers **Connect Fitbit**. After consent, the web encrypts the refresh token with the KMS key, stores it in the record and starts the job for this user, which downloads the whole history. Data is never shared between users.
 
-**Smazání účtu** (menu účtu na dashboardu) označí záznam jako smazaný a spustí job. Ten odvolá token u Googlu a smaže `u/{uid}/` i záznam. Web sám data mazat nesmí.
+**Deleting an account** (account menu on the dashboard) marks the record as deleted and starts the job. The job revokes the token at Google and deletes `u/{uid}/` and the record. The web itself must not delete data.
 
-Přidat existujícího uživatele s tokenem (např. při migraci):
+To add an existing user with a token (e.g. when migrating):
 
 ```bash
-cargo run -- import-user --user <sub> --email <e-mail> --refresh-token <sm://secret | soubor>
+cargo run -- import-user --user <sub> --email <e-mail> --refresh-token <sm://secret | file>
 ```
 
 ## Data
 
 ```
-users/{uid}.json                           profil, časová zóna, šifrovaný refresh token
-u/{uid}/raw/{typ}/{den|měsíc}.jsonl         odpovědi Health API beze změny
-u/{uid}/data/{tabulka}/{YYYY-MM}.parquet    heart_rate, activity, spo2, hrv (měsíc na soubor)
-u/{uid}/data/{tabulka}.parquet              daily, nights, exercises
-u/{uid}/data/manifest.json                  soubory s generation; job ho zapíše jako poslední
-u/{uid}/status.json                         poslední běh syncu, poslední úspěšný, běží-li
+users/{uid}.json                           profile, time zone, encrypted refresh token
+u/{uid}/raw/{type}/{day|month}.jsonl        Health API responses, unchanged
+u/{uid}/data/{table}/{YYYY-MM}.parquet      heart_rate, activity, spo2, hrv (a month per file)
+u/{uid}/data/{table}.parquet                daily, nights, exercises
+u/{uid}/data/manifest.json                  files with their generation; the job writes it last
+u/{uid}/status.json                         last sync run, last successful one, whether one is running
 ```
 
-- **Raw:** job při každém běhu přepíše posledních 7 dní, protože hodinky synchronizují se zpožděním. Nový uživatel dostane nejdřív celou historii (backfill).
-- **Tabulky:** `fitdata load` nahradí v souborech dny z rozsahu a zbytek nechá, takže opakovaný běh nic nezdvojí. Sloupce jsou pole row structů v `model.rs`; nový sloupec stačí přidat tam, ve starších souborech se čte jako NULL.
-- **Čtení:** web drží soubory uživatelů v cache instance (`/tmp`, tedy RAM, nejvýš 256 MB) a podle `manifest.json` stahuje jen změněné a jen měsíce, které požadavek potřebuje. Dotazy běží v DataFusion nad tabulkami zaregistrovanými jen pro daného uživatele ([src/warehouse.rs](../src/warehouse.rs), [src/engine.rs](../src/engine.rs)).
-- **Noc** (`nights`) patří ke dni probuzení a spojuje všechny spánky, které skončily před 14:00.
-- **Čas:** časové sloupce jsou okamžiky, v Parquetu uložené v UTC. Místní datum (`date`) i místní čas se počítají v časové zóně uživatele (`users/{uid}.json`, zapsaná i v `manifest.json`), ne podle `utcOffset` z API: ten u HRV platí pro celou noc podle jejího konce, takže v noc změny času je o hodinu vedle. Dotazy vidí časy v zóně uživatele, i s posunem (`2026-10-25T02:30:00+01:00`); hodina, která se při přechodu na zimní čas opakuje, tak zůstane dvěma hodinami a nic se nesloučí. Změna typu sloupce vyžaduje znovu načíst všechny dny (`fitdata load` od prvního dne s daty), jinak by se staré soubory četly špatně.
+- **Raw:** every run rewrites the last 7 days, because the watch syncs with a delay. A new user first gets the whole history (backfill).
+- **Tables:** `fitdata load` replaces the days in its range in the files and keeps the rest, so running it again duplicates nothing. Columns are the fields of the row structs in `model.rs`; a new column only needs adding there and reads as NULL in older files.
+- **Reading:** the web keeps users' files in the instance cache (`/tmp`, which is RAM, at most 256 MB) and, going by `manifest.json`, downloads only changed files and only the months a request needs. Queries run in DataFusion over tables registered for that user only ([src/warehouse.rs](../src/warehouse.rs), [src/engine.rs](../src/engine.rs)).
+- **A night** (`nights`) belongs to the day the user woke up and merges all sleeps that ended before 14:00.
+- **Time:** time columns are instants, stored in UTC in Parquet. The local date (`date`) and local times are computed in the user's time zone (`users/{uid}.json`, also written to `manifest.json`), not from the API's `utcOffset`: for HRV that holds for the whole night, by its end, so on the night the clocks change it is an hour off. Queries see times in the user's zone, with the offset (`2026-10-25T02:30:00+01:00`); the hour repeated when clocks go back stays two hours and nothing is merged. Changing a column's type requires reloading all days (`fitdata load` from the first day with data), or old files would be read wrong.
 
-## Bezpečnost
+## Security
 
-| Identita | Smí |
+| Identity | May |
 |---|---|
-| `fitdata-job` | číst `oauth-client`, zapisovat do bucketu, šifrovat a dešifrovat klíčem `refresh-token` (KMS), zapisovat spany do Cloud Trace |
-| `fitdata-web` | číst `oauth-client` a `session-key`, číst bucket, zapisovat jen `users/` (podmínka IAM), jen šifrovat klíčem `refresh-token`, spustit job (i s argumenty pro jednoho uživatele) a číst jeho stav, zapisovat spany do Cloud Trace |
-| `fitdata-scheduler` | spustit job |
-| `fitdata-deployer` | nasadit job, scheduler a web (GitHub Actions), číst projekt |
+| `fitdata-job` | read `oauth-client`, write to the bucket, encrypt and decrypt with the `refresh-token` key (KMS), write spans to Cloud Trace |
+| `fitdata-web` | read `oauth-client` and `session-key`, read the bucket, write only `users/` (an IAM condition), only encrypt with the `refresh-token` key, run the job (also with arguments for one user) and read its state, write spans to Cloud Trace |
+| `fitdata-scheduler` | run the job |
+| `fitdata-deployer` | deploy the job, scheduler and web (GitHub Actions), read the project |
 
-Web je na Cloud Runu veřejný, ale každá stránka i API vyžaduje přihlášení Googlem s e-mailem z `ALLOWED_EMAILS`. Session je HMAC podepsaná cookie (klíč `session-key`, platnost 30 dní) s ID uživatele; každý požadavek čte jen data toho uživatele.
+The web is public on Cloud Run, but every page and API call requires Google sign-in with an e-mail from `ALLOWED_EMAILS`. The session is an HMAC-signed cookie (key `session-key`, valid for 30 days) with the user ID; every request reads only that user's data.
 
-Refresh tokeny jsou v záznamech uživatelů zašifrované klíčem Cloud KMS `fitdata/refresh-token` a ID uživatele je k šifře přivázané (additional authenticated data), takže token zkopírovaný k jinému uživateli nejde dešifrovat. Web token zašifruje, ale přečíst ho nedokáže.
+Refresh tokens are encrypted in the user records with the Cloud KMS key `fitdata/refresh-token`, and the user ID is bound to the ciphertext (additional authenticated data), so a token copied to another user cannot be decrypted. The web encrypts the token but cannot read it.
 
 ## MCP server
 
-`https://fitdata.jakub.contact/mcp` je MCP server (Streamable HTTP) s nástroji jen pro čtení nad daty přihlášeného uživatele: `get_daily_metrics`, `get_day`, `get_sleep`, `get_exercises`, `get_schema` a `query`. Kód je v [src/mcp.rs](../src/mcp.rs).
+`https://fitdata.jakub.contact/mcp` is an MCP server (Streamable HTTP) with read-only tools over the signed-in user's data: `get_daily_metrics`, `get_day`, `get_sleep`, `get_exercises`, `get_schema` and `query`. The code is in [src/mcp.rs](../src/mcp.rs).
 
-`query` je jeden SELECT v SQL DataFusion (blízké PostgreSQL), nejvýš 1000 řádků. Minutové tabulky (`heart_rate`, `activity`, `spo2`, `hrv`) obsahují jen dny `from`..`to` (výchozí posledních 90 dní, nejvýš 400), ostatní celé. Kód je v [src/query.rs](../src/query.rs):
+`query` is a single SELECT in DataFusion SQL (close to PostgreSQL), at most 1000 rows. The per-minute tables (`heart_rate`, `activity`, `spo2`, `hrv`) hold only the days `from`..`to` (by default the last 90 days, at most 400); the others are complete. The code is in [src/query.rs](../src/query.rs):
 
-- Dotaz dostane vlastní session, ve které jsou zaregistrované jen tabulky přihlášeného uživatele. DataFusion nemá SQL, které by sáhlo na soubory nebo síť (cesty a URL jako tabulky ani funkce typu `read_csv` neexistují), a DDL, DML i `SET` jsou vypnuté, takže `CREATE EXTERNAL TABLE` ani `COPY TO` neprojdou. Data jiných uživatelů ani server dotaz nevidí.
-- Proti přetížení: dotazy běží na vlastním runtime se dvěma vlákny (nezablokují dashboard), nejvýš dva najednou, s limitem 256 MB na stav dotazu (bez zápisu na disk) a timeoutem 30 s.
-- Testy v `query.rs` zkoušejí cesty a URL jako tabulky, `CREATE EXTERNAL TABLE`, `COPY`, `INSERT`, `DROP`, `SET`, `PREPARE`, víc příkazů najednou a limit paměti.
+- A query gets its own session in which only the signed-in user's tables are registered. DataFusion has no SQL that reaches files or the network (paths and URLs as tables, or functions like `read_csv`, do not exist), and DDL, DML and `SET` are disabled, so neither `CREATE EXTERNAL TABLE` nor `COPY TO` gets through. A query sees neither other users' data nor the server.
+- Against overload: queries run on their own runtime with two threads (they cannot block the dashboard), at most two at once, with a 256 MB limit on query state (no spilling to disk) and a 30 s timeout.
+- Tests in `query.rs` try paths and URLs as tables, `CREATE EXTERNAL TABLE`, `COPY`, `INSERT`, `DROP`, `SET`, `PREPARE`, several statements at once and the memory limit.
 
-Připojení:
+Connecting:
 
 - **Claude:** Settings → Connectors → Add custom connector, URL `https://fitdata.jakub.contact/mcp`.
-- **ChatGPT:** Settings → Apps & Connectors → Advanced → Developer mode, pak Create, URL stejná, autentizace OAuth.
+- **ChatGPT:** Settings → Apps & Connectors → Advanced → Developer mode, then Create, the same URL, OAuth authentication.
 
-Na dashboardu je návod v menu účtu (**Připojit Claude / ChatGPT**) a v patičce. Prohlížeč na `/mcp` (GET s `Accept: text/html`) dostane stránku s návodem; MCP klienti na GET dál dostanou 405, protože SSE stream nenabízíme.
+The dashboard has the instructions in the account menu (**Connect Claude / ChatGPT**) and in the footer. A browser on `/mcp` (GET with `Accept: text/html`) gets a page with the instructions; MCP clients still get 405 on GET, because we do not offer an SSE stream.
 
-Klient se zaregistruje sám (dynamická registrace), pošle uživatele na přihlášení Googlem (stejné `ALLOWED_EMAILS`) a na stránku se souhlasem. Tokeny nesou ID uživatele; tokeny vydané před zavedením více uživatelů ho nemají a dohledá se podle e-mailu. Autorizační server je v [src/authz.rs](../src/authz.rs) a nic neukládá: client ID, kódy i tokeny jsou podepsané klíčem `session-key`. Access token platí hodinu, refresh token 30 dní od posledního obnovení. Odebrání přístupu všem klientům i všem přihlášeným prohlížečům najednou: nová verze `session-key` a nové nasazení webu.
+A client registers itself (dynamic registration), sends the user to Google sign-in (the same `ALLOWED_EMAILS`) and to a consent page. Tokens carry the user ID; tokens issued before multi-user support lack it and the user is looked up by e-mail. The authorization server is in [src/authz.rs](../src/authz.rs) and stores nothing: client IDs, codes and tokens are signed with the `session-key` key. An access token is valid for an hour, a refresh token for 30 days from its last refresh. To revoke access for all clients and all signed-in browsers at once: a new version of `session-key` and a new deployment of the web.
 
-Když přestane fungovat refresh token (odvolaný přístup), dashboard to uživateli ukáže a stačí kliknout na **Obnovit přístup k datům**. Pro job to není chyba (běh uživatele skončí stavem `auth_error`), alert ho nehlásí.
+When a refresh token stops working (access revoked), the dashboard shows the user and a click on **Restore access to data** is enough. For the job it is not an error (the user's run ends with the state `auth_error`), and the alert does not report it.
 
-## Provoz
+## Operations
 
-Synchronizaci jde spustit i ručně ikonou ⟳ vedle „Synchronizováno“ v hlavičce dashboardu. Web spustí job jen pro přihlášeného uživatele (`job --user <uid>` přes Cloud Run Admin API, `POST /api/sync`), ikona se točí, dokud uživatelův běh (nebo poslední execution jobu) neskončí, a pak se data na stránce načtou znovu.
+A sync can also be started by hand with the ⟳ icon next to "Synced" in the dashboard header. The web runs the job only for the signed-in user (`job --user <uid>` through the Cloud Run Admin API, `POST /api/sync`); the icon spins until the user's run (or the job's last execution) finishes, and then the page reloads its data.
 
-Job zpracuje až 8 uživatelů najednou a selhání jednoho neshodí ostatní. Při větším počtu uživatelů jde job pustit ve víc taskách (`--tasks N`); uživatelé se rozdělí podle hashe ID (`CLOUD_RUN_TASK_INDEX`).
+The job processes up to 8 users at once, and one failing does not bring down the others. With more users the job can run in several tasks (`--tasks N`); users are split by a hash of their ID (`CLOUD_RUN_TASK_INDEX`).
 
-**Kvóta Health API** je 300 požadavků za minutu na uživatele (klouzavé okno; odpověď 429 neříká, kdy čekat), 120 000 za minutu na projekt. Proto ([src/job.rs](../src/job.rs), [src/api.rs](../src/api.rs)):
+**The Health API quota** is 300 requests per minute per user (a sliding window; a 429 response does not say how long to wait) and 120,000 per minute per project. Therefore ([src/job.rs](../src/job.rs), [src/api.rs](../src/api.rs)):
 
-- Uživatele synchronizuje vždy jen jeden proces: zámek `u/{uid}/lock` vzniká atomicky (GCS `ifGenerationMatch=0`), druhý běh uživatele přeskočí, zámek starší než 45 min se převezme.
-- Požadavky jednoho uživatele hlídá rate limiter (`governor`, GCRA): burst 40, pak 240 za minutu, tedy v libovolné minutě nejvýš 280. Kdyby přesto přišla 429, požadavek počká 2–5 s.
-- Hodinový běh stahuje jen včerejšek a dnešek a přeskakuje datové typy, pro které uživatel nemá žádná data. Jednou za 20 h je běh plný: celé okno 7 dní a u každého typu jeden dotaz, jestli data má (`status.json`: `last_full`, `absent`). Dny před založením účtu se nestahují (`since`).
-- Na tvém účtu: hodinový běh 51 požadavků, plný 121 (dřív 173 každou hodinu).
+- Only one process syncs a user at a time: the lock `u/{uid}/lock` is created atomically (GCS `ifGenerationMatch=0`), a second run skips the user, and a lock older than 45 min is taken over.
+- A rate limiter (`governor`, GCRA) guards one user's requests: a burst of 40, then 240 a minute, so at most 280 in any minute. Should a 429 come anyway, the request waits 2–5 s.
+- The hourly run downloads only yesterday and today and skips data types for which the user has no data at all. Once every 20 h the run is full: the whole 7-day window and one query per type to see whether it has data (`status.json`: `last_full`, `absent`). Days before the account was created are not downloaded (`since`).
+- On your account: the hourly run makes 51 requests, a full one 121 (it used to be 173 every hour).
 
-Každý neúspěšný běh jobu (chyba u kteréhokoli uživatele kromě odvolaného tokenu) otevře v Cloud Monitoring incident **fitdata-sync failed** a pošle e-mail na `ALERT_EMAIL` (`deploy/config.sh`). Při trvalé poruše přijde jeden e-mail, ne jeden za hodinu. Až běhy znovu projdou, incident se sám zavře. Politika je v [deploy/alert-policy.json](../deploy/alert-policy.json) a nastaví ji `setup.sh`.
+Every failed job run (an error for any user other than a revoked token) opens the Cloud Monitoring incident **fitdata-sync failed** and sends an e-mail to `ALERT_EMAIL` (`deploy/config.sh`). A lasting failure sends one e-mail, not one per hour. Once runs succeed again, the incident closes itself. The policy is in [deploy/alert-policy.json](../deploy/alert-policy.json) and `setup.sh` sets it up.
 
-Druhá politika, **fitdata-web errors** ([deploy/alert-web-errors.json](../deploy/alert-web-errors.json)), pošle e-mail, když web zaloguje chybu nebo odpoví 5xx, nejvýš jednou za hodinu.
+A second policy, **fitdata-web errors** ([deploy/alert-web-errors.json](../deploy/alert-web-errors.json)), sends an e-mail when the web logs an error or answers with a 5xx, at most once an hour.
 
-### Logy, trace a chyby
+### Logs, traces and errors
 
-Nastavení je v [src/telemetry.rs](../src/telemetry.rs).
+Configured in [src/telemetry.rs](../src/telemetry.rs).
 
-- **Logy:** na Cloud Runu (`K_SERVICE` nebo `CLOUD_RUN_JOB`) píše binárka JSON řádky ve formátu Cloud Loggingu: `severity`, `message`, zdrojový řádek a pole události i nadřazených spanů (např. `data_type`, `table`, `http.route`) v `jsonPayload`. Lokálně je výstup čitelný text. Formát jde vynutit přes `LOG_FORMAT=json` nebo `LOG_FORMAT=text`, úroveň přes `RUST_LOG`.
-- **Trace:** spany se posílají přes OpenTelemetry (OTLP) do Cloud Trace (Telemetry API `telemetry.googleapis.com`). Každý HTTP požadavek na web je jeden trace, který navazuje na trace Cloud Runu (`traceparent`). Každý běh jobu je jeden trace `sync job` se spany pro uživatele, datové typy, volání Health API, čtení a zápis v GCS a zápis tabulek.
-- **Korelace:** každý log nese `logging.googleapis.com/trace` a `spanId`. V Logs Explorer se logy požadavku seskupí pod jeho request log a v Cloud Trace se u spanu zobrazí jeho logy.
-- **Error Reporting:** logy úrovně ERROR (i panic) mají typ `ReportedErrorEvent` a verzi image (`APP_VERSION`), takže je [Error Reporting](https://console.cloud.google.com/errors?project=fitdata-jsedlacek) seskupí.
+- **Logs:** on Cloud Run (`K_SERVICE` or `CLOUD_RUN_JOB`) the binary writes JSON lines in the Cloud Logging format: `severity`, `message`, the source line and the fields of the event and its parent spans (e.g. `data_type`, `table`, `http.route`) in `jsonPayload`. Locally the output is readable text. The format can be forced with `LOG_FORMAT=json` or `LOG_FORMAT=text`, the level with `RUST_LOG`.
+- **Traces:** spans are sent through OpenTelemetry (OTLP) to Cloud Trace (Telemetry API `telemetry.googleapis.com`). Every HTTP request to the web is one trace, continuing Cloud Run's trace (`traceparent`). Every job run is one `sync job` trace with spans for users, data types, Health API calls, GCS reads and writes, and table writes.
+- **Correlation:** every log carries `logging.googleapis.com/trace` and `spanId`. In Logs Explorer a request's logs are grouped under its request log, and Cloud Trace shows a span's logs.
+- **Error Reporting:** ERROR-level logs (panics included) have the type `ReportedErrorEvent` and the image version (`APP_VERSION`), so [Error Reporting](https://console.cloud.google.com/errors?project=fitdata-jsedlacek) groups them.
 
 ```bash
-gcloud run jobs execute fitdata-sync --region europe-west1 --wait     # spustit job hned
+gcloud run jobs execute fitdata-sync --region europe-west1 --wait     # run the job now
 gcloud run jobs executions list --job fitdata-sync --region europe-west1
 gcloud logging read 'resource.type="cloud_run_job"' --limit 50 --format 'value(severity, jsonPayload.message)'
 ```
 
-Načíst starší rozsah uživatele znovu (např. po změně normalizace), lokálně s ADC:
+To reload an older range for a user (e.g. after a normalization change), locally with ADC:
 
 ```bash
 STORAGE=gs://fitdata-jsedlacek-data cargo run -- load --user <uid> --from 2026-10-21

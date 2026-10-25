@@ -4,23 +4,23 @@ import { clock, duration, num, plural } from '@/lib/format';
 import { Card, CardBody, CardHeader } from './ui/card';
 
 const KIND: Record<string, { label: string; icon: typeof Bike }> = {
-  BIKING: { label: 'Kolo', icon: Bike },
-  WALKING: { label: 'Chůze', icon: Footprints },
-  RUNNING: { label: 'Běh', icon: Footprints },
-  SWIMMING_POOL: { label: 'Plavání', icon: Waves },
-  SWIMMING_OPEN_WATER: { label: 'Plavání', icon: Waves },
+  BIKING: { label: 'Cycling', icon: Bike },
+  WALKING: { label: 'Walking', icon: Footprints },
+  RUNNING: { label: 'Running', icon: Footprints },
+  SWIMMING_POOL: { label: 'Swimming', icon: Waves },
+  SWIMMING_OPEN_WATER: { label: 'Open water swimming', icon: Waves },
 };
 
 const kind = (k: string) => KIND[k] ?? { label: k.toLowerCase().replace(/_/g, ' '), icon: Dumbbell };
 
-/** The recorded name, else the activity type in Czech. */
+/** The recorded name, else the activity type in words. */
 export const exerciseLabel = (e: Exercise) => e.name || kind(e.kind).label;
 
 export function ExerciseList({ exercises }: { exercises: Exercise[] }) {
   if (!exercises.length) return null;
   return (
     <Card>
-      <CardHeader title="Cvičení" subtitle={`${exercises.length} ${plural(exercises.length, 'záznam', 'záznamy', 'záznamů')}`} />
+      <CardHeader title="Exercise" subtitle={`${exercises.length} ${plural(exercises.length, 'session', 'sessions')}`} />
       <CardBody className="grid gap-3">
         {exercises.map((e) => {
           const k = kind(e.kind);
@@ -36,10 +36,10 @@ export function ExerciseList({ exercises }: { exercises: Exercise[] }) {
                   <span className="shrink-0 text-xs tabular-nums text-muted">{clock(e.start)}–{clock(e.end)}</span>
                 </div>
                 <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
-                  <Metric label="Délka" value={duration(e.active_minutes ?? mins)} />
-                  <Metric label="Ø tep" value={e.avg_hr != null ? `${num(e.avg_hr)} bpm` : '–'} />
+                  <Metric label="Duration" value={duration(e.active_minutes ?? mins)} />
+                  <Metric label="Avg HR" value={e.avg_hr != null ? `${num(e.avg_hr)} bpm` : '–'} />
                   <Metric label="kcal" value={num(e.kcal)} />
-                  <Metric label={<span className="inline-flex items-center gap-0.5"><Zap className="size-3" />AZM</span>} title="Minuty v aktivních zónách" value={num(e.azm)} />
+                  <Metric label={<span className="inline-flex items-center gap-0.5"><Zap className="size-3" />AZM</span>} title="Active Zone Minutes" value={num(e.azm)} />
                 </dl>
               </div>
             </div>

@@ -1,52 +1,52 @@
 # fitdata
 
-Stahuje data z Fitbitu (Fitbit Air) přes [Google Health API v4](https://developers.google.com/health) a ukládá je pro analýzu.
+Downloads data from Fitbit (Fitbit Air) through the [Google Health API v4](https://developers.google.com/health) and stores it for analysis.
 
-Fitbit Web API se vypíná 30. 10. 2026; tohle používá jeho náhradu, Google Health API.
+The Fitbit Web API shuts down on 30 October 2026; this uses its replacement, the Google Health API.
 
-## Stav
+## Status
 
-Běží v produkci na Google Cloud pro víc uživatelů (na pozvánku): hodinový Cloud Run job stahuje data každého uživatele do GCS jako raw JSON a Parquet tabulky a dashboard s MCP serverem je čte přes DataFusion za přihlášením Googlem. Popis je v [docs/production.md](docs/production.md).
+Runs in production on Google Cloud for multiple users (invite only): an hourly Cloud Run job downloads each user's data to GCS as raw JSON and Parquet tables, and the dashboard and MCP server read it through DataFusion behind Google sign-in. See [docs/production.md](docs/production.md).
 
-## Použití
+## Usage
 
-Nejdřív nastav GCP projekt a OAuth klienta: [docs/setup.md](docs/setup.md). OAuth client je v Secret Manageru, lokálně se k němu přistupuje přes přihlášený `gcloud`. Příkazy pracují s jedním uživatelem (`--user` je jeho Google `sub`):
+First set up the GCP project and the OAuth client: [docs/setup.md](docs/setup.md). The OAuth client lives in Secret Manager; locally it is read through a signed-in `gcloud`. The commands work on one user (`--user` is their Google `sub`):
 
 ```bash
-cargo run -- login --user <sub> --email <e-mail>   # OAuth souhlas, uloží refresh token uživatele
-cargo run -- whoami --user <sub>     # identita, profil, spárovaná zařízení
-cargo run -- probe --user <sub>      # které datové typy jsou dostupné a mají data
-cargo run -- backfill --user <sub>   # celá historie (lze přerušit a pustit znovu)
-cargo run -- sync --user <sub>       # posledních 7 dní
-cargo run -- load --user <sub> --from 2026-10-21   # raw data -> Parquet tabulky
-cargo run -- job                     # sync + load posledních 7 dní všech uživatelů (hodinový job)
-cargo run -- serve --dev-user <sub>  # API + dashboard + MCP, lokálně bez přihlášení
+cargo run -- login --user <sub> --email <e-mail>   # OAuth consent, stores the user's refresh token
+cargo run -- whoami --user <sub>     # identity, profile, paired devices
+cargo run -- probe --user <sub>      # which data types are available and have data
+cargo run -- backfill --user <sub>   # the whole history (can be interrupted and run again)
+cargo run -- sync --user <sub>       # the last 7 days
+cargo run -- load --user <sub> --from 2026-10-21   # raw data -> Parquet tables
+cargo run -- job                     # sync + load of the last 7 days for all users (the hourly job)
+cargo run -- serve --dev-user <sub>  # API + dashboard + MCP, locally without sign-in
 ```
 
-`backfill` i `sync` berou `--types heart-rate,sleep,...`, aby šlo stahovat jen vybrané typy.
+Both `backfill` and `sync` take `--types heart-rate,sleep,...` to download only selected types.
 
-## Uložená data
+## Stored data
 
 ```
 data/
-  users/{sub}.json                          # profil a šifrovaný refresh token
-  u/{sub}/raw/{data-type}/{YYYY-MM-DD}.jsonl   # intraday typy (tep, kroky, HRV, ...)
-  u/{sub}/raw/{data-type}/{YYYY-MM}.jsonl      # řídké, denní a session typy (spánek, cvičení, ...)
-  u/{sub}/data/{tabulka}[/{YYYY-MM}].parquet   # normalizované tabulky (src/model.rs)
-  u/{sub}/status.json                       # poslední synchronizace
+  users/{sub}.json                          # profile and encrypted refresh token
+  u/{sub}/raw/{data-type}/{YYYY-MM-DD}.jsonl   # intraday types (heart rate, steps, HRV, ...)
+  u/{sub}/raw/{data-type}/{YYYY-MM}.jsonl      # sparse, daily and session types (sleep, exercise, ...)
+  u/{sub}/data/{table}[/{YYYY-MM}].parquet     # normalized tables (src/model.rs)
+  u/{sub}/status.json                       # last sync
 ```
 
-Každý řádek obsahuje jeden data point přesně tak, jak ho vrátilo API. Seznam typů a způsob jejich filtrování je v [src/datatypes.rs](src/datatypes.rs).
+Each line holds one data point exactly as the API returned it. The list of types and how they are filtered is in [src/datatypes.rs](src/datatypes.rs).
 
 ## Dashboard (frontend/)
 
-React + Vite + TypeScript, Tailwind v4, komponenty ve stylu shadcn/ui (Radix), TanStack Router a Query, grafy ECharts.
+React + Vite + TypeScript, Tailwind v4, shadcn/ui-style components (Radix), TanStack Router and Query, ECharts charts.
 
 ```bash
 cd frontend && npm install
-npm run dev     # http://devbox.test:5173, /api a /auth jdou na `fitdata serve` (port 8080)
-npm run build   # frontend/dist, který servíruje `fitdata serve` (STATIC_DIR)
+npm run dev     # http://devbox.test:5173, /api and /auth go to `fitdata serve` (port 8080)
+npm run build   # frontend/dist, served by `fitdata serve` (STATIC_DIR)
 ```
 
-`fitdata serve` lokálně čte data z `STORAGE` (adresář nebo `gs://…`) a OAuth client ze Secret Manageru (ADC). Bez `gcloud auth application-default login` stačí
-`GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/legacy_credentials/<účet>/adc.json`.
+Locally, `fitdata serve` reads data from `STORAGE` (a directory or `gs://…`) and the OAuth client from Secret Manager (ADC). Without `gcloud auth application-default login`,
+`GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/legacy_credentials/<account>/adc.json` is enough.

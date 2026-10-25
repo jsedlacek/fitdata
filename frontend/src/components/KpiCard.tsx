@@ -44,7 +44,7 @@ export function KpiCard({
           <>
             <span
               className={cn('inline-flex items-center gap-1', tone === 'good' ? 'text-good' : tone === 'bad' ? 'text-critical' : 'text-ink-2')}
-              title={tone === 'good' ? 'Lepší než průměr' : tone === 'bad' ? 'Horší než průměr' : undefined}
+              title={tone === 'good' ? 'Better than average' : tone === 'bad' ? 'Worse than average' : undefined}
             >
               <Arrow className="size-3.5" />
               {delta}

@@ -15,7 +15,7 @@ export function DateNav({ date, available, onChange }: { date: string; available
 
   return (
     <div className="flex items-center gap-1.5">
-      <Button variant="outline" size="icon-sm" disabled={!prev} onClick={() => prev && onChange(prev)} aria-label="Předchozí den">
+      <Button variant="outline" size="icon-sm" disabled={!prev} onClick={() => prev && onChange(prev)} aria-label="Previous day">
         <ChevronLeft />
       </Button>
       <Popover open={open} onOpenChange={setOpen}>
@@ -37,14 +37,14 @@ export function DateNav({ date, available, onChange }: { date: string; available
           />
         </PopoverContent>
       </Popover>
-      <Button variant="outline" size="icon-sm" disabled={!next} onClick={() => next && onChange(next)} aria-label="Další den">
+      <Button variant="outline" size="icon-sm" disabled={!next} onClick={() => next && onChange(next)} aria-label="Next day">
         <ChevronRight />
       </Button>
     </div>
   );
 }
 
-const WEEKDAYS = ['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'];
+const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 
 function MiniCalendar({ selected, available, onSelect }: { selected: string; available: string[]; onSelect: (d: string) => void }) {
   const [month, setMonth] = useState(() => selected.slice(0, 7));
@@ -64,13 +64,13 @@ function MiniCalendar({ selected, available, onSelect }: { selected: string; ava
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <Button variant="ghost" size="icon-sm" onClick={() => shift(-1)} aria-label="Předchozí měsíc">
+        <Button variant="ghost" size="icon-sm" onClick={() => shift(-1)} aria-label="Previous month">
           <ChevronLeft />
         </Button>
         <div className="text-sm font-medium first-letter:uppercase">
-          {first.toLocaleDateString('cs-CZ', { month: 'long', year: 'numeric' })}
+          {first.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
         </div>
-        <Button variant="ghost" size="icon-sm" onClick={() => shift(1)} aria-label="Další měsíc">
+        <Button variant="ghost" size="icon-sm" onClick={() => shift(1)} aria-label="Next month">
           <ChevronRight />
         </Button>
       </div>
@@ -101,7 +101,7 @@ function MiniCalendar({ selected, available, onSelect }: { selected: string; ava
           ),
         )}
       </div>
-      <p className="mt-2 text-[11px] text-muted">Tečka = den s daty</p>
+      <p className="mt-2 text-[11px] text-muted">Dot = day with data</p>
     </div>
   );
 }

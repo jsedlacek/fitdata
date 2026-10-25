@@ -1,7 +1,7 @@
 {
   "name": "fitdata",
   "short_name": "fitdata",
-  "lang": "cs",
+  "lang": "en",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f9f9f7",

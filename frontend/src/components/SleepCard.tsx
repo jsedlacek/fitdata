@@ -9,13 +9,13 @@ import { Card, CardBody, CardHeader } from './ui/card';
 
 /** Stages in the fixed categorical color order; rows top to bottom as awake → deep. */
 export const STAGES: { key: Stage; label: string; color: string }[] = [
-  { key: 'DEEP', label: 'Hluboký', color: '--s1' },
-  { key: 'LIGHT', label: 'Lehký', color: '--s2' },
+  { key: 'DEEP', label: 'Deep', color: '--s1' },
+  { key: 'LIGHT', label: 'Light', color: '--s2' },
   { key: 'REM', label: 'REM', color: '--s3' },
-  { key: 'AWAKE', label: 'Bdění', color: '--s4' },
+  { key: 'AWAKE', label: 'Awake', color: '--s4' },
 ];
 /** Short awakenings get their own row between REM and awake, as in Google Health. */
-const RESTLESS = { label: 'Neklidný', color: '--s5' };
+const RESTLESS = { label: 'Restless', color: '--s5' };
 const ROW: Record<Stage | 'RESTLESS', number> = { DEEP: 0, LIGHT: 1, REM: 2, RESTLESS: 3, AWAKE: 4 };
 
 export function SleepCard({ night, timeZone }: { night: Night | null; timeZone: string }) {
@@ -70,9 +70,9 @@ export function SleepCard({ night, timeZone }: { night: Night | null; timeZone: 
   if (!night) {
     return (
       <Card>
-        <CardHeader title="Spánek" />
+        <CardHeader title="Sleep" />
         <CardBody>
-          <p className="py-8 text-center text-sm text-muted">Pro tuhle noc nejsou data o spánku.</p>
+          <p className="py-8 text-center text-sm text-muted">No sleep data for this night.</p>
         </CardBody>
       </Card>
     );
@@ -85,13 +85,13 @@ export function SleepCard({ night, timeZone }: { night: Night | null; timeZone: 
 
   return (
     <Card>
-      <CardHeader title="Spánek" subtitle="Noc před vybraným dnem; víc záznamů z jedné noci je spojených a mezery mezi nimi se počítají jako bdění." />
+      <CardHeader title="Sleep" subtitle="The night before the selected day; several records from one night are merged and the gaps between them count as awake." />
       <CardBody>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Stat icon={Moon} label="Usnutí" value={clock(night.start)} />
-          <Stat icon={Sunrise} label="Probuzení" value={clock(night.end)} />
-          <Stat icon={BedDouble} label="Spánek" value={duration(asleep)} />
-          <Stat icon={Timer} label="Efektivita" value={`${num((asleep / inBed) * 100)} %`} hint={`z ${duration(inBed)} v posteli`} />
+          <Stat icon={Moon} label="Fell asleep" value={clock(night.start)} />
+          <Stat icon={Sunrise} label="Woke up" value={clock(night.end)} />
+          <Stat icon={BedDouble} label="Asleep" value={duration(asleep)} />
+          <Stat icon={Timer} label="Efficiency" value={`${num((asleep / inBed) * 100)}%`} hint={`of ${duration(inBed)} in bed`} />
         </div>
 
         <div className="mt-4 flex h-2.5 overflow-hidden rounded-full" aria-hidden>
@@ -107,12 +107,12 @@ export function SleepCard({ night, timeZone }: { night: Night | null; timeZone: 
                 <i className="inline-block size-2.5 shrink-0 rounded-[3px]" style={{ background: `var(${s.color})` }} />
                 {s.label}
                 <span className="ml-auto tabular-nums text-ink">{duration(m)}</span>
-                <span className="w-9 text-right tabular-nums text-muted">{num((m / total) * 100)} %</span>
+                <span className="w-9 text-right tabular-nums text-muted">{num((m / total) * 100)}%</span>
               </li>
             );
           })}
           {night.restless_minutes != null && (
-            <li className="flex items-center gap-1.5 whitespace-nowrap text-ink-2" title="Krátká probuzení během lehkého spánku; jsou započtená v lehkém spánku.">
+            <li className="flex items-center gap-1.5 whitespace-nowrap text-ink-2" title="Short awakenings during light sleep; counted as light sleep.">
               <i className="inline-block size-2.5 shrink-0 rounded-[3px]" style={{ background: `var(${RESTLESS.color})` }} />
               {RESTLESS.label}
               <span className="ml-auto tabular-nums text-ink">{duration(night.restless_minutes)}</span>
@@ -121,7 +121,7 @@ export function SleepCard({ night, timeZone }: { night: Night | null; timeZone: 
           )}
         </ul>
 
-        {option && <EChart option={option} className="mt-3 h-[220px]" label="Hypnogram: fáze spánku v čase" />}
+        {option && <EChart option={option} className="mt-3 h-[220px]" label="Hypnogram: sleep stages over time" />}
       </CardBody>
     </Card>
   );

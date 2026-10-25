@@ -450,11 +450,11 @@ async fn logout(State(cfg): State<Shared>) -> Response {
     (
         [(header::SET_COOKIE, set_cookie(&cfg, SESSION_COOKIE, "", 0))],
         Html(
-            r#"<!doctype html><html lang="cs"><meta charset="utf-8">
+            r#"<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Odhlášeno · fitdata</title>
+<title>Signed out · fitdata</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0 16px}</style>
-<p>Odhlášeno. <a href="/auth/login">Přihlásit se znovu</a></p></html>"#,
+<p>Signed out. <a href="/auth/login">Sign in again</a></p></html>"#,
         ),
     )
         .into_response()

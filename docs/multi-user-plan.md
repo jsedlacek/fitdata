@@ -1,121 +1,121 @@
-# Plán: více uživatelů, Parquet + DuckDB
+# Plan: multiple users, Parquet + DuckDB
 
-> **Hotovo (2026-10-24).** Oproti plánu: místo DuckDB je DataFusion (Rust, SQL bez cesty k souborům a síti, jednodušší build; srovnání níže) a MCP `query` proto běží přímo ve webu na vlastním runtime místo samostatné služby. Refresh tokeny šifruje symetrický klíč KMS s oddělenými rolemi (web jen šifruje, job i dešifruje) místo asymetrického. Nasazení proběhlo ve třech krocích místo sedmi. Aktuální popis je v [production.md](production.md).
+> **Done (2026-10-24).** Compared with the plan: DataFusion instead of DuckDB (Rust, SQL with no path to files or the network, a simpler build; comparison below), so the MCP `query` runs right in the web on its own runtime instead of a separate service. Refresh tokens are encrypted with a symmetric KMS key with separate roles (the web only encrypts, the job also decrypts) instead of an asymmetric one. The rollout took three steps instead of seven. The current description is in [production.md](production.md).
 >
-> Srovnání na roce dat (2 vlákna): stránka dne DataFusion 20 ms, DuckDB 27 ms; roční agregace tepu 43 ms, resp. 65 ms. Všechny pokusy o čtení souborů, síť, DDL, DML a `SET` DataFusion odmítl už při plánování.
+> Comparison on a year of data (2 threads): day page DataFusion 20 ms, DuckDB 27 ms; yearly heart rate aggregation 43 ms and 65 ms. DataFusion rejected every attempt to read files, reach the network, or run DDL, DML and `SET` already at planning.
 
-Cíl: z fitdata pro jednoho uživatele udělat službu pro víc lidí (zatím na pozvánku, ale připravenou na širší nasazení) a BigQuery nahradit Parquetem v GCS čteným přes DuckDB.
+Goal: turn the single-user fitdata into a service for several people (invite only for now, but ready for wider use) and replace BigQuery with Parquet in GCS read through DuckDB.
 
-## Rozhodnutí
+## Decisions
 
-- **Uživatel** = Google `sub` (ne e-mail). Data mezi uživateli se nesdílí.
-- **Přístup** zatím přes `ALLOWED_EMAILS` (pozvánky); první přihlášení povoleného e-mailu založí uživatele.
-- **Data:** Parquet v GCS podle uživatele, žádný BigQuery. Vlastní analytika napříč uživateli není potřeba.
-- **Čtení:** DuckDB ve webu pro dashboard a strukturované MCP nástroje (SQL píšeme my).
-- **MCP `query`** (cizí SQL) běží v samostatné Cloud Run službě `fitdata-query`, jejíž SA nemá žádné role. Služba dostane v požadavku jen soubory daného uživatele a nemá klíče, cizí data ani oprávnění, takže i při chybě v DuckDB útočník uvidí nanejvýš svá vlastní data. Nastavení DuckDB je druhá vrstva, ne hranice.
-- **Refresh tokeny** zašifrované asymetrickým klíčem Cloud KMS: web šifruje veřejným klíčem, dešifrovat smí jen `fitdata-job`.
-- **Stávající data** vlastníka se přesunou pod jeho ID (stejně jako u ostatních uživatelů).
-- OAuth app je *In production*, takže refresh tokeny nevyprší po 7 dnech.
+- **User** = Google `sub` (not the e-mail). Data is never shared between users.
+- **Access** through `ALLOWED_EMAILS` (invites) for now; the first sign-in of an allowed e-mail creates the user.
+- **Data:** Parquet in GCS per user, no BigQuery. No analytics across users is needed.
+- **Reading:** DuckDB in the web for the dashboard and the structured MCP tools (we write the SQL).
+- **MCP `query`** (foreign SQL) runs in a separate Cloud Run service `fitdata-query` whose SA has no roles. The service gets only the given user's files in the request and has no keys, no other data and no permissions, so even with a bug in DuckDB an attacker sees at most their own data. The DuckDB settings are a second layer, not the boundary.
+- **Refresh tokens** encrypted with an asymmetric Cloud KMS key: the web encrypts with the public key, only `fitdata-job` may decrypt.
+- **The owner's existing data** moves under their ID (just like for the other users).
+- The OAuth app is *In production*, so refresh tokens do not expire after 7 days.
 
-Měření (Cloud Run europe-west1, 1 vCPU, 512 MiB, rok dat): stránka dne v BigQuery 309 ms (medián), v DuckDB s teplou cache 57 ms včetně kontroly změn v GCS, se studenou cache 112 ms. Roční agregace tepu (10 mil. řádků) v DuckDB 206 ms. Rok tepu má 48,5 MB Parquetu.
+Measurements (Cloud Run europe-west1, 1 vCPU, 512 MiB, a year of data): day page in BigQuery 309 ms (median), in DuckDB with a warm cache 57 ms including the GCS change check, with a cold cache 112 ms. Yearly heart rate aggregation (10 M rows) in DuckDB 206 ms. A year of heart rate is 48.5 MB of Parquet.
 
-## Rozložení v GCS
+## GCS layout
 
 ```
-users/{uid}.json                           profil: e-mail, časová zóna, šifrovaný refresh token
-u/{uid}/raw/{typ}/{den|měsíc}.jsonl         odpovědi Health API (dnes raw/{typ}/…)
-u/{uid}/data/{tabulka}/{YYYY-MM}.parquet    heart_rate, activity, spo2, hrv
-u/{uid}/data/{tabulka}.parquet              daily, nights, exercises (malé, jeden soubor)
-u/{uid}/data/manifest.json                  seznam souborů s generation, zapisuje se jako poslední
-u/{uid}/status.json                         poslední běh syncu: čas, ok, auth_error, chyba, běží
+users/{uid}.json                           profile: e-mail, time zone, encrypted refresh token
+u/{uid}/raw/{type}/{day|month}.jsonl        Health API responses (today raw/{type}/…)
+u/{uid}/data/{table}/{YYYY-MM}.parquet      heart_rate, activity, spo2, hrv
+u/{uid}/data/{table}.parquet                daily, nights, exercises (small, one file)
+u/{uid}/data/manifest.json                  list of files with their generation, written last
+u/{uid}/status.json                         last sync run: time, ok, auth_error, error, running
 ```
 
-Všechno o uživateli kromě záznamu v registru je pod jedním prefixem `u/{uid}/`, takže smazání účtu je smazání prefixu.
+Everything about a user except the registry record is under one prefix `u/{uid}/`, so deleting an account is deleting the prefix.
 
-`manifest.json` dává webu konzistentní snímek (job ho přepíše až po všech souborech) a jednu kontrolu změn na požadavek místo jedné na soubor.
+`manifest.json` gives the web a consistent snapshot (the job rewrites it only after all files) and one change check per request instead of one per file.
 
-## Fáze
+## Phases
 
-Každá fáze jde samostatně nasadit (push do `main` = produkce) a produkce mezi fázemi funguje.
+Each phase can be deployed on its own (push to `main` = production) and production works between phases.
 
-### Fáze 1: zápis Parquetu (vedle BigQuery)
+### Phase 1: writing Parquet (next to BigQuery)
 
-Jeden uživatel, ale cesty už podle `uid`, aby se data nemigrovala dvakrát.
+One user, but the paths already by `uid`, so the data is not migrated twice.
 
-- `OWNER_ID` (Google `sub` vlastníka) v `deploy/config.sh` a env jobu.
-- Nový modul `src/parquet.rs` (zápis přes DuckDB v jobu, žádná další závislost):
-  - řádky z `model::table_rows` → DuckDB Appender → `COPY … TO … (FORMAT parquet, COMPRESSION zstd)` → `Store::put`;
-  - přepisují se jen měsíce v rozsahu běhu: stávající soubor bez dní z rozsahu `UNION ALL` nové řádky;
-  - nakonec `manifest.json`.
-- `fitdata load` zapisuje do BigQuery i do Parquetu, takže se jím jednorázově naplní celá historie.
-- `duckdb` crate s `bundled`; ověřit čas buildu v Actions (cargo-chef) a že `distroless/cc` má `libstdc++`.
-- Testy: zápis a slučování měsíce na lokálním `Store` (rozsah uprostřed měsíce, přes hranici měsíce, prázdný rozsah).
-- Hotovo, když: v produkci vzniknou soubory a skript porovná počty a agregace po dnech a tabulkách s BigQuery bez rozdílu.
+- `OWNER_ID` (the owner's Google `sub`) in `deploy/config.sh` and the job's env.
+- New module `src/parquet.rs` (writing through DuckDB in the job, no other dependency):
+  - rows from `model::table_rows` → DuckDB Appender → `COPY … TO … (FORMAT parquet, COMPRESSION zstd)` → `Store::put`;
+  - only the months in the run's range are rewritten: the existing file without the days in the range `UNION ALL` the new rows;
+  - finally `manifest.json`.
+- `fitdata load` writes to both BigQuery and Parquet, so one run fills the whole history.
+- `duckdb` crate with `bundled`; check the build time in Actions (cargo-chef) and that `distroless/cc` has `libstdc++`.
+- Tests: writing and merging a month on a local `Store` (a range in the middle of a month, across a month boundary, an empty range).
+- Done when: the files exist in production and a script comparing counts and aggregates by day and table with BigQuery finds no difference.
 
-### Fáze 2: čtení přes DuckDB (web a MCP)
+### Phase 2: reading through DuckDB (web and MCP)
 
-- Nový modul `src/warehouse.rs`:
-  - cache souborů uživatele v `/tmp/fitdata/{uid}/` (na Cloud Runu je to RAM, proto limit velikosti s LRU, například 128 MB);
-  - na každý požadavek načte `manifest.json` a stáhne jen změněné soubory;
-  - dotazy přes `spawn_blocking`, výsledky do stávajících serde struktur (`DailyMetrics`, `NightRow`, `HrMinute`, …), nejspíš přes `serde_arrow`, aby zůstalo API jako `query_as`.
-- `web.rs`: `day_detail` a `overview` přepsané na DuckDB SQL.
-- `mcp.rs`: `get_daily_metrics`, `get_day`, `get_sleep`, `get_exercises` a `get_schema` (`DESCRIBE`) nad DuckDB; popis nástrojů přepnout na DuckDB dialekt.
-- **MCP `query` v samostatné službě `fitdata-query`** (stejná binárka, příkaz `fitdata query-serve`):
-  - Cloud Run služba se SA `fitdata-query`, který **nemá žádné role** (`setup.sh` ho založí a ověří, že nemá žádnou vazbu v IAM projektu ani bucketu). Bez secretů a bez env s konfigurací.
-  - Volat ji smí jen `fitdata-web` (`roles/run.invoker` jen pro něj, žádné `allUsers`); web se prokáže ID tokenem z metadata serveru s audience URL služby. Ingress zůstane `all`, protože `internal` by vyžadoval Direct VPC egress webu; hranici drží IAM.
-  - `concurrency=1`: instance obsluhuje vždy jen jeden dotaz, takže se data různých uživatelů nepotkají v paměti ani v `/tmp`. Dále `--memory 1Gi`, `--cpu 1`, `--timeout 60`, `--max-instances` jako strop ceny (při vyčerpání vrátí web nástroji chybu „zkuste později“).
-  - Požadavek: SQL a Parquet soubory uživatele z cache webu (multipart). Rok tepu má asi 50 MB, víc než limit 32 MiB pro HTTP/1 na Cloud Runu, proto HTTP/2 end-to-end (`--use-http2`, h2c na straně služby, `http2_prior_knowledge` v klientovi webu).
-  - Služba soubory zapíše do `/tmp/q-<náhodné>/`, vytvoří nad nimi views a pak DuckDB uzamkne: `allowed_directories=[ten adresář]`, `enable_external_access=false`, `autoload_known_extensions=false`, `autoinstall_known_extensions=false`, `allow_community_extensions=false`, `memory_limit=768MB`, `threads=1`, `lock_configuration=true`. Po dotazu adresář smaže.
-  - Jen jeden příkaz `SELECT` (typ příkazu z `extract_statements`), nejvýš 1000 řádků a omezená velikost odpovědi, timeout 30 s přes přerušení dotazu.
-  - Logy jen na stdout (Cloud Run je sbírá bez oprávnění); spany do Cloud Trace služba neposílá, protože by k tomu potřebovala roli. Trvání a chyby dotazu zachytí span volání ve webu.
-  - Studený start služby (kolem sekundy) se projeví jen u `query`; `min-instances` necháme na 0.
-- **Testy služby** (`cargo test`), všechny musí skončit chybou: soubor mimo adresář požadavku, `read_csv('/etc/passwd')`, `read_text`, `read_blob`, glob `/**`, `COPY … TO`, `ATTACH`, `INSTALL` a `LOAD`, `SET` a `PRAGMA`, `CREATE`, `getenv()`, víc příkazů najednou, dotaz přes limit paměti a přes timeout. Jsou to testy druhé vrstvy; hranici tvoří služba bez oprávnění a bez cizích dat.
-- Paměť webu nejspíš zvednout na 1 GiB (podle měření v produkci).
-- Hotovo, když: dashboard ověřený v prohlížeči (Playwright), MCP nástroje včetně `query` fungují z Claude, volání `fitdata-query` bez ID tokenu webu skončí 403, latence v Cloud Trace odpovídá měření.
+- New module `src/warehouse.rs`:
+  - cache of the user's files in `/tmp/fitdata/{uid}/` (on Cloud Run that is RAM, hence a size limit with LRU, for example 128 MB);
+  - on every request it loads `manifest.json` and downloads only changed files;
+  - queries through `spawn_blocking`, results into the existing serde structs (`DailyMetrics`, `NightRow`, `HrMinute`, …), probably through `serde_arrow`, to keep an API like `query_as`.
+- `web.rs`: `day_detail` and `overview` rewritten in DuckDB SQL.
+- `mcp.rs`: `get_daily_metrics`, `get_day`, `get_sleep`, `get_exercises` and `get_schema` (`DESCRIBE`) over DuckDB; switch the tool descriptions to the DuckDB dialect.
+- **MCP `query` in a separate service `fitdata-query`** (the same binary, command `fitdata query-serve`):
+  - A Cloud Run service with the SA `fitdata-query`, which **has no roles** (`setup.sh` creates it and checks it has no binding in the project or bucket IAM). No secrets and no env with configuration.
+  - Only `fitdata-web` may call it (`roles/run.invoker` for it alone, no `allUsers`); the web proves itself with an ID token from the metadata server with the service URL as audience. Ingress stays `all`, because `internal` would need Direct VPC egress for the web; IAM holds the boundary.
+  - `concurrency=1`: an instance serves only one query at a time, so different users' data never meet in memory or in `/tmp`. Further `--memory 1Gi`, `--cpu 1`, `--timeout 60`, `--max-instances` as a cost cap (when exhausted, the web returns the tool an error "try later").
+  - Request: the SQL and the user's Parquet files from the web's cache (multipart). A year of heart rate is about 50 MB, more than Cloud Run's 32 MiB limit for HTTP/1, hence HTTP/2 end to end (`--use-http2`, h2c in the service, `http2_prior_knowledge` in the web's client).
+  - The service writes the files to `/tmp/q-<random>/`, creates views over them and then locks DuckDB down: `allowed_directories=[that directory]`, `enable_external_access=false`, `autoload_known_extensions=false`, `autoinstall_known_extensions=false`, `allow_community_extensions=false`, `memory_limit=768MB`, `threads=1`, `lock_configuration=true`. After the query it deletes the directory.
+  - Only one `SELECT` statement (statement type from `extract_statements`), at most 1000 rows and a limited response size, a 30 s timeout by interrupting the query.
+  - Logs only to stdout (Cloud Run collects them without permissions); the service sends no spans to Cloud Trace, since it would need a role for that. The span of the call in the web captures the query's duration and errors.
+  - The service's cold start (around a second) shows only for `query`; `min-instances` stays at 0.
+- **Service tests** (`cargo test`), all must end in an error: a file outside the request's directory, `read_csv('/etc/passwd')`, `read_text`, `read_blob`, the glob `/**`, `COPY … TO`, `ATTACH`, `INSTALL` and `LOAD`, `SET` and `PRAGMA`, `CREATE`, `getenv()`, several statements at once, a query over the memory limit and over the timeout. These are second-layer tests; the boundary is the service with no permissions and no other data.
+- Probably raise the web's memory to 1 GiB (depending on production measurements).
+- Done when: the dashboard is checked in a browser (Playwright), the MCP tools including `query` work from Claude, a call to `fitdata-query` without the web's ID token ends with 403, and the latency in Cloud Trace matches the measurements.
 
-### Fáze 3: odstranění BigQuery
+### Phase 3: removing BigQuery
 
-- `sync_runs` nahradí `u/{uid}/status.json`; historie běhů zůstane v logu.
-- Smazat `bq.rs`, `google-cloud-bigquery-v2`, `deploy/schema/`, `deploy/schema.sh`, staging v bucketu a role BigQuery v IAM (`setup.sh`).
-- Dataset `health` smazat ručně až po potvrzení (zdrojem pravdy jsou raw data a Parquet).
-- Hotovo, když: v kódu ani v IAM nezůstane nic z BigQuery a job i web fungují.
+- `u/{uid}/status.json` replaces `sync_runs`; the run history stays in the log.
+- Delete `bq.rs`, `google-cloud-bigquery-v2`, `deploy/schema/`, `deploy/schema.sh`, the staging in the bucket and the BigQuery roles in IAM (`setup.sh`).
+- Delete the `health` dataset by hand only after confirmation (the source of truth is the raw data and Parquet).
+- Done when: nothing of BigQuery is left in the code or IAM and both the job and the web work.
 
-### Fáze 4: uživatelé a tokeny
+### Phase 4: users and tokens
 
-- **Identita:** `sub` z ID tokenu. `Claims::Session`, `Consent`, `Code`, `Access` a `Refresh` ponesou `uid` (a e-mail jen pro zobrazení). Po nasazení se všichni znovu přihlásí a MCP klienti znovu autorizují (staré tokeny formát nepřečtou).
-- **Registr:** `users/{uid}.json`; první přihlášení e-mailu z `ALLOWED_EMAILS` ho založí. Pozdější krok pro širší nasazení: pozvánky v GCS místo env.
-- **KMS:** keyring `fitdata`, klíč `refresh-token` (`ASYMMETRIC_DECRYPT`, `RSA_DECRYPT_OAEP_3072_SHA256`).
-  - web: `cloudkms.cryptoKeyVersions.viewPublicKey`, veřejný klíč v cache, šifruje lokálně (`rsa` crate);
-  - job: `roles/cloudkms.cryptoKeyDecrypter`; dešifruje přes KMS REST;
-  - když Google vrátí nový refresh token, job ho zašifruje a uloží sám.
-- **Připojení Fitbitu:** stávající flow `connect_fitbit` uloží šifrovaný token do záznamu uživatele a spustí job pro něj (historie od `membership_start`).
-- **Migrace vlastníka:** jednorázový příkaz přesune token ze secretu `refresh-token` do `users/{OWNER_ID}.json` a `raw/{typ}/…` do `u/{OWNER_ID}/raw/{typ}/…`. Secret `refresh-token` a jeho IAM se smažou až po potvrzení.
-- `fitdata login` (CLI) uloží token pro zadaného uživatele, nebo ho zrušíme.
+- **Identity:** `sub` from the ID token. `Claims::Session`, `Consent`, `Code`, `Access` and `Refresh` carry `uid` (and the e-mail only for display). After the deployment everyone signs in again and MCP clients authorize again (old tokens do not parse in the new format).
+- **Registry:** `users/{uid}.json`; the first sign-in of an e-mail from `ALLOWED_EMAILS` creates it. A later step for wider use: invites in GCS instead of env.
+- **KMS:** keyring `fitdata`, key `refresh-token` (`ASYMMETRIC_DECRYPT`, `RSA_DECRYPT_OAEP_3072_SHA256`).
+  - web: `cloudkms.cryptoKeyVersions.viewPublicKey`, the public key cached, encrypts locally (`rsa` crate);
+  - job: `roles/cloudkms.cryptoKeyDecrypter`; decrypts through the KMS REST API;
+  - when Google returns a new refresh token, the job encrypts and stores it itself.
+- **Connecting Fitbit:** the existing `connect_fitbit` flow stores the encrypted token in the user's record and starts the job for them (history from `membership_start`).
+- **Owner migration:** a one-time command moves the token from the `refresh-token` secret to `users/{OWNER_ID}.json` and `raw/{type}/…` to `u/{OWNER_ID}/raw/{type}/…`. The `refresh-token` secret and its IAM are deleted only after confirmation.
+- `fitdata login` (CLI) stores the token for the given user, or we drop it.
 
-### Fáze 5: job pro všechny uživatele
+### Phase 5: the job for all users
 
-- `fitdata job` projde `users/` a zpracuje uživatele s tokenem; selhání jednoho neshodí ostatní.
-- `AuthError` je stav uživatele (`needs_reconnect` v `status.json`), ne chyba jobu. Job skončí chybou (a alert se spustí) jen při jiné chybě.
-- `--user <uid>` pro ruční sync: web spustí execution s přepsanými argumenty; „běží“ se čte ze `status.json`, ne ze seznamu executions.
-- „Dnes“ podle časové zóny uživatele (`users/{uid}.json`, výchozí `Europe/Prague`), ne podle `TZ` kontejneru.
-- Škálování: uživatelé rozdělení mezi tasky jobu podle `hash(uid) % CLOUD_RUN_TASK_COUNT`; zatím 1 task, ale kód připravený. Health API retry a backoff už existuje.
+- `fitdata job` walks `users/` and processes the users with a token; one failing does not bring down the others.
+- `AuthError` is a user state (`needs_reconnect` in `status.json`), not a job error. The job ends with an error (and the alert fires) only on another error.
+- `--user <uid>` for a manual sync: the web starts an execution with overridden arguments; "running" is read from `status.json`, not from the list of executions.
+- "Today" by the user's time zone (`users/{uid}.json`, by default `Europe/Prague`), not by the container's `TZ`.
+- Scaling: users split between the job's tasks by `hash(uid) % CLOUD_RUN_TASK_COUNT`; 1 task for now, but the code is ready. Health API retry and backoff already exist.
 
-### Fáze 6: web a MCP pro více uživatelů
+### Phase 6: web and MCP for multiple users
 
-- Každý handler bere `uid` ze session nebo bearer tokenu; `warehouse` čte jen adresář toho uživatele a `fitdata-query` dostane jen jeho soubory.
-- Dashboard: přihlášený e-mail a odhlášení, stav „bez dat / probíhá první načtení“, banner pro znovupřipojení podle `status.json`.
-- MCP instrukce s časovou zónou uživatele místo napevno `Europe/Prague`.
-- Smazání účtu: odvolá token u Googlu a smaže `users/{uid}.json` a celý prefix `u/{uid}/`.
-- Test: dva uživatelé, každý vidí jen svá data (web, MCP nástroje, MCP `query`).
+- Every handler takes `uid` from the session or the bearer token; `warehouse` reads only that user's directory and `fitdata-query` gets only their files.
+- Dashboard: the signed-in e-mail and sign-out, a "no data / first load in progress" state, a reconnect banner based on `status.json`.
+- MCP instructions with the user's time zone instead of a hard-coded `Europe/Prague`.
+- Deleting an account: revokes the token at Google and deletes `users/{uid}.json` and the whole `u/{uid}/` prefix.
+- Test: two users, each sees only their own data (web, MCP tools, MCP `query`).
 
-### Fáze 7: úklid a dokumentace
+### Phase 7: cleanup and documentation
 
-- `docs/production.md` (schéma, IAM tabulka včetně `fitdata-query` bez rolí, provoz), `docs/setup.md`, `AGENTS.md`, `README.md`.
-- Smazat zdroje benchmarku: dataset `bench`, `gs://fitdata-jsedlacek-data/bench/`, job `fitdata-bench`, image `fitdata/bench`.
+- `docs/production.md` (diagram, IAM table including `fitdata-query` with no roles, operations), `docs/setup.md`, `AGENTS.md`, `README.md`.
+- Delete the benchmark resources: the `bench` dataset, `gs://fitdata-jsedlacek-data/bench/`, the `fitdata-bench` job, the `fitdata/bench` image.
 
-## Rizika
+## Risks
 
-- **MCP `query`:** hranici tvoří služba `fitdata-query` bez oprávnění, která dostane jen data jednoho uživatele. Kdyby jí někdo omylem přidal roli nebo secret, hranice zmizí, proto to `setup.sh` při každém běhu kontroluje. Chyba v nastavení DuckDB nebo v DuckDB samotné ohrozí nanejvýš data uživatele, který dotaz poslal.
-- **Paměť instance:** cache webu v `/tmp` i DuckDB jsou v RAM; limit cache je nutné nastavit spolu s pamětí Cloud Runu. U `fitdata-query` se do 1 GiB musí vejít soubory požadavku i `memory_limit`; u uživatelů s mnohaletou historií bude potřeba posílat jen měsíce v rozsahu dotazu, nebo paměť zvýšit.
-- **Studený start:** první požadavek uživatele po startu instance stahuje soubory (asi 110 ms pro den, víc pro dotazy přes celou historii).
-- **Kvóty Health API** při mnoha uživatelích: zjistit limity v konzoli a případně rozložit uživatele v hodině.
+- **MCP `query`:** the boundary is the `fitdata-query` service with no permissions, which gets only one user's data. If someone accidentally gave it a role or a secret, the boundary would be gone, so `setup.sh` checks it on every run. A bug in the DuckDB settings or in DuckDB itself endangers at most the data of the user who sent the query.
+- **Instance memory:** both the web's cache in `/tmp` and DuckDB live in RAM; the cache limit has to be set together with the Cloud Run memory. For `fitdata-query`, the request's files and `memory_limit` must fit in 1 GiB; for users with many years of history it will need sending only the months in the query's range, or more memory.
+- **Cold start:** a user's first request after an instance starts downloads files (about 110 ms for a day, more for queries over the whole history).
+- **Health API quotas** with many users: find the limits in the console and possibly spread users over the hour.
