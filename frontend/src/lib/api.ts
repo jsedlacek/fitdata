@@ -29,7 +29,12 @@ export type Daily = {
 
 export type SyncRun = { run_at: string; ok: boolean; auth_error: boolean };
 
-export type SyncState = { running: boolean };
+/** How far a first sync has got (the job's `status::Progress`). */
+export type SyncProgress =
+  | { step: 'recent' }
+  | { step: 'history'; done: number; total: number }
+  | { step: 'tables' };
+export type SyncState = { running: boolean; progress?: SyncProgress | null };
 
 /** The signed-in user; `connected` once Fitbit data may be read. */
 export type Me = { connected: boolean };

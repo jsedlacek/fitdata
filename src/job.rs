@@ -26,7 +26,7 @@ use crate::api::HealthClient;
 use crate::datatypes::DataType;
 use crate::kms::Kms;
 use crate::oauth::{self, ClientCredentials, StoredToken, TokenSource};
-use crate::status::{self, Run, Status};
+use crate::status::{self, Progress, Run, Status};
 use crate::store::Store;
 use crate::tables::user_prefix;
 use crate::users::{self, User};
@@ -275,6 +275,13 @@ async fn sync_user(ctx: &Ctx<'_>, user: &User, days: u64, before: &Status) -> Re
     let today = today(user);
     let first = before.last_ok.is_none();
     let full = full_run(before, Utc::now());
+    // The first run takes minutes; the dashboard shows how far it got.
+    let report = async |p: Progress| {
+        if first && let Err(e) = status::progress(ctx.store, &user.uid, p).await {
+            tracing::warn!("writing the progress failed: {e:#}");
+        }
+    };
+    report(Progress::Recent).await;
 
     let since = match before.since {
         Some(d) if !full => Some(d),
@@ -314,8 +321,24 @@ async fn sync_user(ctx: &Ctx<'_>, user: &User, days: u64, before: &Status) -> Re
         tracing::warn!("data types not readable: {}", fetched.skipped.join(", "));
     }
     if first {
-        let n = sync::backfill(&client, &raw, &types, since, MAX_EMPTY_MONTHS).await?;
-        tracing::info!("backfilled {n} data points");
+        let total = types.len();
+        report(Progress::History { done: 0, total }).await;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let backfill = async {
+            // Dropping the sender at the end ends the progress loop.
+            let tx = tx;
+            sync::backfill(&client, &raw, &types, since, MAX_EMPTY_MONTHS, Some(&tx)).await
+        };
+        let progress = async {
+            let mut done = 0;
+            while rx.recv().await.is_some() {
+                done += 1;
+                report(Progress::History { done, total }).await;
+            }
+        };
+        let (n, ()) = tokio::join!(backfill, progress);
+        tracing::info!("backfilled {} data points", n?);
+        report(Progress::Tables).await;
         let start = since.unwrap_or(from).min(from);
         load(ctx.store, &raw, user, start, today).await?;
     } else {

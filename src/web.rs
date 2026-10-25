@@ -525,9 +525,18 @@ async fn overview(State(cfg): State<Shared>, Extension(user): Extension<SignedIn
 }
 
 /// `{"running": bool}`: whether a sync of the user (or a scheduled one) is in progress.
+/// Whether a sync is running, and how far a first sync has got.
 async fn sync_status(State(cfg): State<Shared>, Extension(user): Extension<SignedIn>) -> Response {
-    match running(&cfg, &user.uid).await {
-        Ok(running) => Json(json!({ "running": running })).into_response(),
+    let result = async {
+        let s = status::get(&cfg.store, &user.uid).await?;
+        if s.running(chrono::Utc::now()) {
+            return Ok(json!({ "running": true, "progress": s.progress }));
+        }
+        // A run that was just started has not written its status yet.
+        Ok::<_, anyhow::Error>(json!({ "running": cfg.sync_job.running().await? }))
+    };
+    match result.await {
+        Ok(state) => Json(state).into_response(),
         Err(e) => internal(e),
     }
 }
@@ -539,7 +548,6 @@ async fn running(cfg: &Config, uid: &str) -> Result<bool> {
     {
         return Ok(true);
     }
-    // A run that was just started has not written its status yet.
     cfg.sync_job.running().await
 }
 

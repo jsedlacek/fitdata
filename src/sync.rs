@@ -7,6 +7,7 @@ use anyhow::Result;
 use chrono::{Datelike, Months, NaiveDate};
 use futures::{StreamExt, TryStreamExt, stream};
 use serde_json::{Value, json};
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::Instrument;
 
 use crate::api::{ApiError, HealthClient};
@@ -205,24 +206,30 @@ pub async fn fetch_range(
 /// Walks back month by month from the newest data point of each type until
 /// `max_empty_months` consecutive months have no data (or `since` is reached).
 /// Already stored slots are skipped, so an interrupted backfill can resume.
+/// Each finished data type sends a message to `done`, for progress.
 pub async fn backfill(
     client: &HealthClient,
     store: &Store,
     types: &[&'static DataType],
     since: Option<NaiveDate>,
     max_empty_months: u32,
+    done: Option<&UnboundedSender<()>>,
 ) -> Result<usize> {
     let totals: Vec<usize> = stream::iter(types.iter().copied())
         .map(|dt| {
             async move {
-                match backfill_type(client, store, dt, since, max_empty_months).await {
-                    Ok(n) => Ok(n),
+                let n = match backfill_type(client, store, dt, since, max_empty_months).await {
+                    Ok(n) => n,
                     Err(e) if is_unavailable(&e) => {
                         tracing::warn!("skipped ({e})");
-                        Ok(0)
+                        0
                     }
-                    Err(e) => Err(e.context(dt.id)),
+                    Err(e) => return Err(e.context(dt.id)),
+                };
+                if let Some(done) = done {
+                    let _ = done.send(());
                 }
+                Ok(n)
             }
             .instrument(type_span(dt))
         })

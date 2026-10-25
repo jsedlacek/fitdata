@@ -345,6 +345,7 @@ async fn run(cli: Cli) -> Result<()> {
                 &select_types(&types)?,
                 since,
                 max_empty_months,
+                None,
             )
             .await?;
             println!("Backfill done: {n} new data points in {}", raw.location());

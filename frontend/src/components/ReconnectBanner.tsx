@@ -13,14 +13,13 @@ export function ReconnectBanner({ run, user }: { run: SyncRun | null; user: Me |
     if (justConnected) history.replaceState(null, '', location.pathname);
   }, [justConnected]);
 
-  if (justConnected) {
+  // A new user's first sync has its own card on the page (FirstSync).
+  if (justConnected && run) {
     return (
       <div role="status" className="mb-5 flex items-start gap-3 rounded-xl border border-l-4 border-l-good bg-surface px-4 py-3 text-sm">
         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-good" />
         <p>
-          {run
-            ? 'Access to your data is restored. Missing days will be filled in at the next sync (every hour).'
-            : 'Fitbit is connected. Loading your history, the first days will appear in a few minutes.'}
+          Access to your data is restored. Missing days will be filled in at the next sync (every hour).
         </p>
       </div>
     );

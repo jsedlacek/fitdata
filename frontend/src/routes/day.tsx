@@ -2,12 +2,13 @@ import { useEffect } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { Activity, BedDouble, Flame, Footprints, HeartPulse, RefreshCw, Waves, Wind, Zap } from 'lucide-react';
-import { dayQuery, overviewQuery, type Daily } from '@/lib/api';
+import { dayQuery, overviewQuery, syncQuery, type Daily } from '@/lib/api';
 import { duration, hm, num } from '@/lib/format';
 import { before, mean, type MetricKey } from '@/lib/stats';
 import { DateNav } from '@/components/DateNav';
 import { DayTimeline } from '@/components/DayTimeline';
 import { ExerciseList } from '@/components/ExerciseList';
+import { FirstSync } from '@/components/FirstSync';
 import { KpiCard } from '@/components/KpiCard';
 import { NightVitals } from '@/components/NightVitals';
 import { SleepCard } from '@/components/SleepCard';
@@ -36,6 +37,7 @@ export const withData = (days: Daily[]) => days.filter((d) => d.hr_avg != null |
 export function DayPage({ date: wanted }: { date?: string }) {
   const navigate = useNavigate();
   const overview = useQuery(overviewQuery);
+  const sync = useQuery(syncQuery);
   const days = withData(overview.data?.days ?? []);
   const date = wanted && days.some((d) => d.date === wanted) ? wanted : days.at(-1)?.date;
   // Keep the previous day on screen while the next one loads, so the page doesn't jump.
@@ -66,6 +68,9 @@ export function DayPage({ date: wanted }: { date?: string }) {
 
   if (overview.isError) return <ErrorCard onRetry={() => overview.refetch()} />;
   if (overview.isPending) return <DaySkeleton />;
+  if (!date && overview.data.user.connected && sync.data?.running) {
+    return <FirstSync progress={sync.data.progress} />;
+  }
   if (!date) {
     return (
       <Card>

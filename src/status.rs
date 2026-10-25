@@ -29,6 +29,22 @@ pub struct Status {
     /// The day the account was created; there is nothing to fetch before it.
     #[serde(default)]
     pub since: Option<NaiveDate>,
+    /// How far the running first sync has got.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<Progress>,
+}
+
+/// The steps of a user's first sync, which downloads their whole history and
+/// takes minutes; the dashboard shows them meanwhile.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "step", rename_all = "lowercase")]
+pub enum Progress {
+    /// Finding the data types with data, and fetching the last days.
+    Recent,
+    /// The whole history, `done` of `total` data types.
+    History { done: usize, total: usize },
+    /// Building the tables from the downloaded data.
+    Tables,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +83,14 @@ async fn put(store: &Store, uid: &str, s: &Status) -> Result<()> {
 pub async fn started(store: &Store, uid: &str, at: DateTime<Utc>) -> Result<()> {
     let mut s = get(store, uid).await?;
     s.running_since = Some(at);
+    s.progress = None;
+    put(store, uid, &s).await
+}
+
+/// Records how far a running sync has got.
+pub async fn progress(store: &Store, uid: &str, p: Progress) -> Result<()> {
+    let mut s = get(store, uid).await?;
+    s.progress = Some(p);
     put(store, uid, &s).await
 }
 
@@ -79,6 +103,7 @@ pub async fn finished(
 ) -> Result<()> {
     let mut s = get(store, uid).await?;
     s.running_since = None;
+    s.progress = None;
     update(&mut s);
     if run.ok {
         s.last_ok = Some(run.at);
@@ -98,6 +123,13 @@ mod tests {
         let t0 = Utc::now();
         assert!(get(&store, "1").await.unwrap().last_run.is_none());
         started(&store, "1", t0).await.unwrap();
+        progress(&store, "1", Progress::History { done: 1, total: 3 })
+            .await
+            .unwrap();
+        assert_eq!(
+            get(&store, "1").await.unwrap().progress,
+            Some(Progress::History { done: 1, total: 3 })
+        );
         assert!(
             get(&store, "1")
                 .await
@@ -122,6 +154,7 @@ mod tests {
         let s = get(&store, "1").await.unwrap();
         assert!(!s.running(t0));
         assert_eq!(s.last_ok, Some(t0));
+        assert!(s.progress.is_none());
         assert!(s.last_run.unwrap().auth_error);
     }
 }
