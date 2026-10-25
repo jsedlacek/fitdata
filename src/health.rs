@@ -9,7 +9,7 @@ use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 
-/// Data types that are normalized into the BigQuery tables.
+/// Data types that are normalized into the tables (`model.rs`).
 pub const NORMALIZED: &[&str] = &[
     "heart-rate",
     "heart-rate-variability",

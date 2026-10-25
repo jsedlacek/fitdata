@@ -1,5 +1,5 @@
 //! Normalizes parsed API data points (`health.rs`) into typed series, per-day
-//! metrics and the rows of the BigQuery tables.
+//! metrics and the rows of the Parquet tables (`tables.rs`).
 //!
 //! All timestamps are converted to the user's local wall-clock time using the
 //! UTC offset stored with each point, so days split at local midnight.
@@ -46,8 +46,8 @@ impl Sleep {
     }
 }
 
-/// A row of a BigQuery table; `TABLE` is its name and the file name of its
-/// schema in deploy/schema/.
+/// A row of a table; `TABLE` is its name and the file name of its schema
+/// in schema/.
 pub trait Row: Serialize {
     const TABLE: &'static str;
 }
@@ -453,7 +453,7 @@ impl Dataset {
     }
 }
 
-/// Rows of every BigQuery table for local dates in `[from, to]`.
+/// Rows of every table for local dates in `[from, to]`.
 pub struct Tables {
     pub heart_rate: Vec<HeartRateRow>,
     pub activity: Vec<ActivityRow>,
@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(n.restless_minutes(), 4);
     }
 
-    /// Column paths of a schema in deploy/schema/, nested records as `a.b`.
+    /// Column paths of a schema in schema/, nested records as `a.b`.
     fn schema_columns(table: &str) -> Vec<String> {
         fn walk(fields: &Value, prefix: &str, out: &mut Vec<String>) {
             for f in fields.as_array().unwrap() {
@@ -693,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn rows_serialize_as_bigquery_values() {
+    fn rows_serialize_as_the_tables_read_them() {
         let ts = t("2026-10-22 07:00");
         let row = NightRow {
             date: ts.date(),
