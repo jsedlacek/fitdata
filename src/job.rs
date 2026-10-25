@@ -113,18 +113,22 @@ async fn run_user(ctx: &Ctx<'_>, user: &User, days: u64) -> bool {
         }
     };
     let ok = if user.deleted {
-        match delete_user(ctx, user).await {
-            Ok(()) => true,
-            Err(e) => {
-                tracing::error!("deleting user failed: {e:#}");
-                false
-            }
-        }
+        delete_logged(ctx, &user.uid).await
     } else {
-        match sync_and_record(ctx, user, days).await {
+        let ok = match sync_and_record(ctx, user, days).await {
             Ok(ok) => ok,
             Err(e) => {
                 tracing::error!("recording the run failed: {e:#}");
+                false
+            }
+        };
+        // "Delete account" while this sync ran: the run it started found
+        // the lock taken and skipped the user, so the deletion is ours.
+        match users::get(ctx.store, &user.uid).await {
+            Ok(Some(u)) if u.deleted => delete_logged(ctx, &u.uid).await && ok,
+            Ok(_) => ok,
+            Err(e) => {
+                tracing::error!("re-reading the user failed: {e:#}");
                 false
             }
         }
@@ -386,21 +390,61 @@ pub async fn load(
     Ok(())
 }
 
+async fn delete_logged(ctx: &Ctx<'_>, uid: &str) -> bool {
+    match delete_user(ctx, uid).await {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::error!("deleting user failed: {e:#}");
+            false
+        }
+    }
+}
+
 /// "Delete account": revoke the token, remove the data, then the record.
-async fn delete_user(ctx: &Ctx<'_>, user: &User) -> Result<()> {
+/// Runs under the user's lock.
+async fn delete_user(ctx: &Ctx<'_>, uid: &str) -> Result<()> {
+    let Some((user, generation)) = pending_deletion(ctx.store, uid).await? else {
+        return Ok(());
+    };
     if user.token.is_some() {
-        match client_token(ctx, user).await {
+        match client_token(ctx, &user).await {
             Ok(t) => oauth::revoke(ctx.http, &t).await.unwrap_or_else(|e| {
                 tracing::warn!("revoking the token failed: {e:#}");
             }),
             Err(e) => tracing::warn!("reading the token failed: {e:#}"),
         }
     }
-    let prefix = format!("{}/", user_prefix(&user.uid));
-    for (name, _) in ctx.store.list(&prefix).await? {
-        ctx.store.delete(&name).await?;
+    remove_user(ctx.store, uid, generation).await
+}
+
+/// The user's record as it is now (the run's list may be stale) with its
+/// generation, if it is marked for deletion.
+async fn pending_deletion(store: &Store, uid: &str) -> Result<Option<(User, i64)>> {
+    // The generation first: a write after it makes the final delete fail.
+    let Some(generation) = store.generation(&users::path(uid)).await? else {
+        return Ok(None);
+    };
+    Ok(users::get(store, uid)
+        .await?
+        .filter(|u| u.deleted)
+        .map(|u| (u, generation)))
+}
+
+/// Removes the user's data, except the lock the caller releases, then their
+/// record if it is still at `generation`.
+async fn remove_user(store: &Store, uid: &str, generation: i64) -> Result<()> {
+    let prefix = format!("{}/", user_prefix(uid));
+    for (name, _) in store.list(&prefix).await? {
+        if name != lock_path(uid) {
+            store.delete(&name).await?;
+        }
     }
-    ctx.store.delete(&users::path(&user.uid)).await?;
+    if !store
+        .delete_generation(&users::path(uid), generation)
+        .await?
+    {
+        bail!("the user's record changed during the deletion");
+    }
     tracing::info!("deleted the user and their data");
     Ok(())
 }
@@ -455,5 +499,28 @@ mod tests {
             .unwrap();
         assert!(Lock::acquire(&store, "3").await.unwrap().is_some());
         b.release(&store).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn deletes_only_marked_users() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(tmp.path().to_str().unwrap()).await.unwrap();
+        let data = format!("{}/raw.json", user_prefix("1"));
+        store.put(&data, b"{}".to_vec()).await.unwrap();
+        users::put(&store, &User::new("1")).await.unwrap();
+        assert!(pending_deletion(&store, "1").await.unwrap().is_none());
+        assert!(pending_deletion(&store, "2").await.unwrap().is_none());
+
+        let mut u = User::new("1");
+        u.deleted = true;
+        users::put(&store, &u).await.unwrap();
+        let lock = Lock::acquire(&store, "1").await.unwrap().unwrap();
+        let (_, generation) = pending_deletion(&store, "1").await.unwrap().unwrap();
+        remove_user(&store, "1", generation).await.unwrap();
+        assert!(!store.exists(&data).await.unwrap());
+        assert!(users::get(&store, "1").await.unwrap().is_none());
+        // The lock stays for its holder to release.
+        lock.release(&store).await.unwrap();
+        assert!(!store.exists(&lock_path("1")).await.unwrap());
     }
 }

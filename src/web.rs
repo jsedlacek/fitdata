@@ -398,11 +398,9 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     users::check_uid(&uid)?;
     match users::get(&cfg.store, &uid).await? {
         Some(u) if !u.deleted => {}
-        Some(mut u) => {
-            // Signing in again while a deletion waits.
-            u.deleted = false;
-            users::put(&cfg.store, &u).await?;
-        }
+        // "Delete account" is final: signing in again does not cancel it,
+        // the old data goes and only then can the user start afresh.
+        Some(_) => bail!("your account is still being deleted. Try again in a minute"),
         None => {
             users::put(&cfg.store, &User::new(&uid)).await?;
             tracing::info!(%uid, "new user");

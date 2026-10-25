@@ -23,7 +23,8 @@ pub struct User {
     #[serde(default)]
     pub token: Option<EncryptedToken>,
     /// Set by "delete account"; the job then removes the user's data,
-    /// revokes the token and drops this record.
+    /// revokes the token and drops this record. Until then the user cannot
+    /// sign in again.
     #[serde(default)]
     pub deleted: bool,
 }
