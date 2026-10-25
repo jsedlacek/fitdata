@@ -41,7 +41,7 @@ const SESSION_COOKIE: &str = "fd_session";
 const OAUTH_COOKIE: &str = "fd_oauth";
 const SESSION_DAYS: i64 = 30;
 /// Where invites and privacy requests go; also on the public pages (`frontend/*.html`).
-const CONTACT_EMAIL: &str = "sedlacek.jakub@gmail.com";
+const CONTACT_EMAIL: &str = "fitdata@jakub.contact";
 /// Files from `frontend/public` served without sign-in.
 const PUBLIC_FILES: &[&str] = &[
     "favicon.ico",
