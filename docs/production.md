@@ -19,9 +19,9 @@ deploy/setup.sh    # jednorázově / idempotentně: API, bucket, KMS klíč, SA,
 deploy/deploy.sh   # build (Cloud Build), job + scheduler, web
 ```
 
-Každý push do `main` nasadí GitHub Actions ([.github/workflows/deploy.yml](../.github/workflows/deploy.yml)) spuštěním `deploy/deploy.sh`. Ručně jde workflow spustit v záložce Actions (Run workflow). Přihlašuje se bez klíče přes Workload Identity Federation (pool `github`) jako `fitdata-deployer`; token dostane jen workflow z `jsedlacek/fitdata` na `main`. Pool i role nastaví `setup.sh`. Image se staví znovu jen při změně `Dockerfile*`, `.dockerignore`, `Cargo.*`, `src/`, `schema/` nebo `frontend/`, takže push samotných docs jen znovu nasadí stávající image. V Actions se binárka i dashboard staví přímo na runneru (`ubuntu-24.04`) a [Dockerfile.ci](../Dockerfile.ci) je jen zabalí do distroless image (Debian 13, kvůli glibc), který se pushne do Artifact Registry; `deploy.sh` ho pak najde a Cloud Build přeskočí. Přeložené crates drží [rust-cache](https://github.com/Swatinem/rust-cache) v cache GitHub Actions, takže změna jedné závislosti přeloží jen ji a to, co na ní závisí. Lokální `deploy.sh` staví dál plný `Dockerfile` (cargo-chef) v Cloud Buildu, bez cache.
+Každý push do `main` nasadí GitHub Actions ([.github/workflows/deploy.yml](../.github/workflows/deploy.yml)) spuštěním `deploy/deploy.sh`. Ručně jde workflow spustit v záložce Actions (Run workflow). Přihlašuje se bez klíče přes Workload Identity Federation (pool `github`) jako `fitdata-deployer`; token dostane jen workflow z `jsedlacek/fitdata` na `main`. Pool i role nastaví `setup.sh`. Image se staví znovu jen při změně `Dockerfile*`, `.dockerignore`, `Cargo.*`, `src/`, `crates/` nebo `frontend/`, takže push samotných docs jen znovu nasadí stávající image. V Actions se binárka i dashboard staví přímo na runneru (`ubuntu-24.04`) a [Dockerfile.ci](../Dockerfile.ci) je jen zabalí do distroless image (Debian 13, kvůli glibc), který se pushne do Artifact Registry; `deploy.sh` ho pak najde a Cloud Build přeskočí. Přeložené crates drží [rust-cache](https://github.com/Swatinem/rust-cache) v cache GitHub Actions, takže změna jedné závislosti přeloží jen ji a to, co na ní závisí. Lokální `deploy.sh` staví dál plný `Dockerfile` (cargo-chef) v Cloud Buildu, bez cache.
 
-Nastavení je v [deploy/config.sh](../deploy/config.sh). Schémata tabulek jsou v [schema/](../schema/); nový sloupec stačí přidat do schématu i do `model.rs` a pushnout.
+Nastavení je v [deploy/config.sh](../deploy/config.sh). Sloupce tabulek jsou pole row structů v [src/model.rs](../src/model.rs) (`#[derive(Columns)]`, popis sloupce je doc komentář pole); nový sloupec stačí přidat tam a pushnout.
 
 OAuth Web client musí mít mezi *Authorized redirect URIs* adresu `https://fitdata.jakub.contact/auth/callback`.
 
@@ -56,7 +56,7 @@ u/{uid}/status.json                         poslední běh syncu, poslední úsp
 ```
 
 - **Raw:** job při každém běhu přepíše posledních 7 dní, protože hodinky synchronizují se zpožděním. Nový uživatel dostane nejdřív celou historii (backfill).
-- **Tabulky:** `fitdata load` nahradí v souborech dny z rozsahu a zbytek nechá, takže opakovaný běh nic nezdvojí. Schéma sloupců je v [schema/](../schema/) (formát schémat BigQuery); nový sloupec stačí přidat tam a do `model.rs`, ve starších souborech se čte jako NULL.
+- **Tabulky:** `fitdata load` nahradí v souborech dny z rozsahu a zbytek nechá, takže opakovaný běh nic nezdvojí. Sloupce jsou pole row structů v `model.rs`; nový sloupec stačí přidat tam, ve starších souborech se čte jako NULL.
 - **Čtení:** web drží soubory uživatelů v cache instance (`/tmp`, tedy RAM, nejvýš 256 MB) a podle `manifest.json` stahuje jen změněné a jen měsíce, které požadavek potřebuje. Dotazy běží v DataFusion nad tabulkami zaregistrovanými jen pro daného uživatele ([src/warehouse.rs](../src/warehouse.rs), [src/engine.rs](../src/engine.rs)).
 - **Noc** (`nights`) patří ke dni probuzení a spojuje všechny spánky, které skončily před 14:00.
 

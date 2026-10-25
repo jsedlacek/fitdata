@@ -24,8 +24,6 @@ RUN cargo chef cook --release --locked --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY src src
 COPY crates crates
-# Table schemas, compiled in (src/engine.rs).
-COPY schema schema
 RUN cargo build --release --locked
 
 # Runtime: distroless (glibc, CA certs, tzdata).

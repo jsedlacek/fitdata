@@ -493,16 +493,16 @@ async fn call_tool(cfg: &Config, uid: &str, tool: ToolCall) -> Result<Value> {
 
 /// `get_schema`: every table with its columns, types and descriptions.
 fn schema() -> Value {
-    let tables: Map<String, Value> = engine::TABLES
-        .iter()
+    let tables: Map<String, Value> = engine::tables()
         .map(|t| {
-            let cols: Vec<Value> = engine::columns(t)
+            let cols: Vec<Value> = engine::schema(t)
+                .fields()
                 .iter()
-                .map(|c| {
+                .map(|f| {
                     compact(json!({
-                        "column": c.name,
-                        "type": engine::sql_type(c),
-                        "description": c.description,
+                        "column": f.name(),
+                        "type": engine::sql_type(f.data_type()),
+                        "description": engine::description(f),
                     }))
                 })
                 .collect();

@@ -1,0 +1,14 @@
+[package]
+name = "fitdata-derive"
+version = "0.1.0"
+edition = "2024"
+
+# `#[derive(Columns)]`: a table's columns declared by its row struct.
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.107"
+quote = "1.0.47"
+syn = "2.0.119"

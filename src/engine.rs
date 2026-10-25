@@ -1,18 +1,20 @@
-//! DataFusion over the users' Parquet tables: the table schemas (schema/,
-//! in BigQuery's JSON schema format), sessions that know only the tables
-//! registered on them, and query results as JSON.
+//! DataFusion over the users' Parquet tables: the table schemas, sessions
+//! that know only the tables registered on them, and query results as JSON.
+//!
+//! A table's columns are the fields of its row struct (`model.rs`,
+//! `#[derive(Columns)]`).
 //!
 //! A session has no way to files or the network of its own: there is no
 //! SQL function that reads a path, and DDL, DML and `SET` are refused
 //! (`sql_options`). What a query can read is what was registered.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context, Result};
+use chrono::{NaiveDate, NaiveDateTime};
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef, TimeUnit};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::arrow::json::ArrayWriter;
 use datafusion::datasource::MemTable;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
@@ -23,125 +25,125 @@ use datafusion::execution::SessionStateBuilder;
 use datafusion::execution::disk_manager::{DiskManagerBuilder, DiskManagerMode};
 use datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use datafusion::prelude::{SQLOptions, SessionConfig, SessionContext};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-/// A column of a table schema.
-#[derive(Debug, Deserialize)]
-pub struct Column {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    #[serde(default)]
-    pub mode: String,
-    pub description: Option<String>,
-    #[serde(default)]
-    pub fields: Vec<Column>,
-}
+use crate::model::{
+    ActivityRow, DailyMetrics, Exercise, HeartRateRow, HrvRow, NightRow, Row, Spo2Row,
+};
 
-macro_rules! schemas {
-    ($($t:literal),*) => {
-        [$(($t, include_str!(concat!("../schema/", $t, ".json")))),*]
-    };
-}
+pub use fitdata_derive::Columns;
 
-/// The normalized tables, in the order `get_schema` lists them.
-pub const TABLES: &[&str] = &[
-    "daily",
-    "nights",
-    "exercises",
-    "heart_rate",
-    "activity",
-    "spo2",
-    "hrv",
-];
-
-static COLUMNS: LazyLock<BTreeMap<&'static str, Vec<Column>>> = LazyLock::new(|| {
-    schemas!(
-        "daily",
-        "nights",
-        "exercises",
-        "heart_rate",
-        "activity",
-        "spo2",
-        "hrv"
-    )
-    .into_iter()
-    .map(|(t, json)| (t, serde_json::from_str(json).expect("valid schema JSON")))
-    .collect()
-});
-
-pub fn columns(table: &str) -> &'static [Column] {
-    COLUMNS.get(table).map_or(&[], Vec::as_slice)
-}
-
-/// The Arrow type of a schema column.
-fn arrow_type(c: &Column) -> DataType {
-    let base = match c.kind.as_str() {
-        "DATE" => DataType::Date32,
-        "DATETIME" => DataType::Timestamp(TimeUnit::Microsecond, None),
-        "TIMESTAMP" => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
-        "FLOAT" | "FLOAT64" => DataType::Float64,
-        "INTEGER" | "INT64" => DataType::Int64,
-        "BOOLEAN" | "BOOL" => DataType::Boolean,
-        "RECORD" | "STRUCT" => {
-            DataType::Struct(Fields::from(c.fields.iter().map(field).collect::<Vec<_>>()))
-        }
-        _ => DataType::Utf8,
-    };
-    if c.mode == "REPEATED" {
-        DataType::List(Arc::new(Field::new("item", base, true)))
-    } else {
-        base
+/// The normalized tables with their schemas, in the order `get_schema`
+/// lists them.
+static TABLES: LazyLock<Vec<(&'static str, SchemaRef)>> = LazyLock::new(|| {
+    fn table<R: Row>() -> (&'static str, SchemaRef) {
+        (R::TABLE, Arc::new(Schema::new(R::columns())))
     }
-}
-
-/// Every column nullable: files from before a column existed lack it.
-fn field(c: &Column) -> Field {
-    Field::new(&c.name, arrow_type(c), true)
-}
-
-static SCHEMAS: LazyLock<BTreeMap<&'static str, SchemaRef>> = LazyLock::new(|| {
-    TABLES
-        .iter()
-        .map(|t| {
-            let fields: Vec<Field> = columns(t).iter().map(field).collect();
-            (*t, Arc::new(Schema::new(fields)))
-        })
-        .collect()
+    vec![
+        table::<DailyMetrics>(),
+        table::<NightRow>(),
+        table::<Exercise>(),
+        table::<HeartRateRow>(),
+        table::<ActivityRow>(),
+        table::<Spo2Row>(),
+        table::<HrvRow>(),
+    ]
 });
+
+/// The names of the normalized tables.
+pub fn tables() -> impl Iterator<Item = &'static str> {
+    TABLES.iter().map(|(t, _)| *t)
+}
 
 pub fn schema(table: &str) -> SchemaRef {
-    SCHEMAS
-        .get(table)
-        .cloned()
+    TABLES
+        .iter()
+        .find(|(t, _)| *t == table)
+        .map(|(_, s)| s.clone())
         .unwrap_or_else(|| Arc::new(Schema::empty()))
 }
 
+/// A struct whose fields are columns: a table's row, or a struct nested in
+/// one. Derived (`#[derive(Columns)]`) as one column per field, named as
+/// serde names it, typed by its `ColumnType`, described by its doc comment.
+pub trait Columns {
+    fn columns() -> Vec<Field>;
+}
+
+/// A Rust type stored in a column, and its Arrow type.
+pub trait ColumnType {
+    fn data_type() -> DataType;
+}
+
+macro_rules! column_types {
+    ($($t:ty => $dt:expr),* $(,)?) => {
+        $(impl ColumnType for $t {
+            fn data_type() -> DataType {
+                $dt
+            }
+        })*
+    };
+}
+
+column_types! {
+    f64 => DataType::Float64,
+    i64 => DataType::Int64,
+    bool => DataType::Boolean,
+    String => DataType::Utf8,
+    NaiveDate => DataType::Date32,
+    NaiveDateTime => DataType::Timestamp(TimeUnit::Microsecond, None),
+}
+
+impl<T: ColumnType> ColumnType for Option<T> {
+    fn data_type() -> DataType {
+        T::data_type()
+    }
+}
+
+impl<T: ColumnType> ColumnType for Vec<T> {
+    fn data_type() -> DataType {
+        DataType::List(Arc::new(Field::new("item", T::data_type(), true)))
+    }
+}
+
+const DESCRIPTION: &str = "description";
+
+/// A column of type `T`, described by the lines of `doc`. Every column is
+/// nullable: files from before a column existed lack it.
+pub fn column<T: ColumnType>(name: &str, doc: &[&str]) -> Field {
+    let field = Field::new(name, T::data_type(), true);
+    let text = doc.iter().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
+    if text.is_empty() {
+        return field;
+    }
+    field.with_metadata([(DESCRIPTION.to_string(), text)].into())
+}
+
+/// What a column holds, as `get_schema` shows it.
+pub fn description(field: &Field) -> Option<&str> {
+    field.metadata().get(DESCRIPTION).map(String::as_str)
+}
+
 /// The SQL type of a column, as `get_schema` shows it.
-pub fn sql_type(c: &Column) -> String {
-    let base = match c.kind.as_str() {
-        "DATE" => "DATE".to_string(),
-        "DATETIME" => "TIMESTAMP".to_string(),
-        "TIMESTAMP" => "TIMESTAMP WITH TIME ZONE".to_string(),
-        "FLOAT" | "FLOAT64" => "DOUBLE".to_string(),
-        "INTEGER" | "INT64" => "BIGINT".to_string(),
-        "BOOLEAN" | "BOOL" => "BOOLEAN".to_string(),
-        "RECORD" | "STRUCT" => format!(
+pub fn sql_type(t: &DataType) -> String {
+    match t {
+        DataType::Date32 => "DATE".to_string(),
+        DataType::Timestamp(_, None) => "TIMESTAMP".to_string(),
+        DataType::Timestamp(_, Some(_)) => "TIMESTAMP WITH TIME ZONE".to_string(),
+        DataType::Float64 => "DOUBLE".to_string(),
+        DataType::Int64 => "BIGINT".to_string(),
+        DataType::Boolean => "BOOLEAN".to_string(),
+        DataType::List(item) => format!("ARRAY<{}>", sql_type(item.data_type())),
+        DataType::Struct(fields) => format!(
             "STRUCT<{}>",
-            c.fields
+            fields
                 .iter()
-                .map(|f| format!("{} {}", f.name, sql_type(f)))
+                .map(|f| format!("{} {}", f.name(), sql_type(f.data_type())))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
         _ => "VARCHAR".to_string(),
-    };
-    if c.mode == "REPEATED" {
-        format!("ARRAY<{base}>")
-    } else {
-        base
     }
 }
 
@@ -270,17 +272,46 @@ mod tests {
             nights.field_with_name("stages").unwrap().data_type(),
             DataType::List(_)
         ));
-        let stages = columns("nights")
-            .iter()
-            .find(|c| c.name == "stages")
-            .unwrap();
         assert_eq!(
-            sql_type(stages),
+            sql_type(nights.field_with_name("stages").unwrap().data_type()),
             "ARRAY<STRUCT<start TIMESTAMP, end TIMESTAMP, stage VARCHAR>>"
         );
-        for t in TABLES {
-            assert!(!columns(t).is_empty(), "{t}");
+        for t in tables() {
+            assert!(!schema(t).fields().is_empty(), "{t}");
         }
+    }
+
+    #[test]
+    fn row_structs_declare_their_columns() {
+        let hr = schema("heart_rate");
+        let ts = hr.field_with_name("ts").unwrap();
+        assert_eq!(
+            ts.data_type(),
+            &DataType::Timestamp(TimeUnit::Microsecond, None)
+        );
+        assert!(ts.is_nullable());
+        assert_eq!(description(ts), Some("Local wall-clock time"));
+        assert_eq!(description(hr.field_with_name("bpm").unwrap()), None);
+        let names: Vec<_> = hr.fields().iter().map(|f| f.name().as_str()).collect();
+        assert_eq!(names, ["date", "ts", "bpm"]);
+    }
+
+    #[test]
+    fn columns_follow_serde_names() {
+        #[derive(serde::Serialize, Columns)]
+        struct R {
+            /// Two
+            /// lines.
+            #[serde(rename = "b")]
+            a: Option<f64>,
+            #[serde(skip)]
+            _x: i64,
+        }
+        let cols = R::columns();
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].name(), "b");
+        assert_eq!(cols[0].data_type(), &DataType::Float64);
+        assert_eq!(description(&cols[0]), Some("Two lines."));
     }
 
     #[tokio::test]

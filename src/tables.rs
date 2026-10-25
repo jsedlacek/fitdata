@@ -11,14 +11,12 @@
 //! written last, so a reader that follows it sees whole files of one load.
 
 use std::collections::BTreeMap;
-use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::{Datelike, Months, NaiveDate};
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::json::ReaderBuilder;
 use datafusion::datasource::MemTable;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::{Compression, ZstdLevel};
@@ -27,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine;
 use crate::model::{Row, Tables};
-use crate::store::{self, Store};
+use crate::store::Store;
 
 /// Tables split into one file per month; the others are small.
 pub const MONTHLY: &[&str] = &["heart_rate", "activity", "spo2", "hrv"];
@@ -64,23 +62,20 @@ pub fn months(from: NaiveDate, to: NaiveDate) -> Vec<String> {
 /// The columns rows are sorted by within a file (for compression and for
 /// row-group statistics on time).
 fn sort_key(table: &str) -> String {
-    let cols = engine::columns(table);
+    let schema = engine::schema(table);
     let time = ["ts", "start"]
         .into_iter()
-        .find(|t| cols.iter().any(|c| c.name == *t));
+        .find(|t| schema.field_with_name(t).is_ok());
     match time {
         Some(t) => format!("date, \"{t}\""),
         None => "date".to_string(),
     }
 }
 
-/// `rows` as record batches of the table's schema.
-fn batches<R: Row>(rows: &[R]) -> Result<Vec<RecordBatch>> {
-    let jsonl = store::to_jsonl(rows)?;
-    ReaderBuilder::new(engine::schema(R::TABLE))
-        .build(Cursor::new(jsonl))?
-        .map(|b| b.map_err(anyhow::Error::from))
-        .collect()
+/// `rows` as a record batch of the table's schema.
+fn batch<R: Row>(rows: &[R]) -> Result<RecordBatch> {
+    let schema = engine::schema(R::TABLE);
+    Ok(serde_arrow::to_record_batch(schema.fields(), &rows)?)
 }
 
 /// One file's new content: the old file without the dates in `[from, to]`,
@@ -99,9 +94,10 @@ async fn merge(
         "incoming",
         Arc::new(MemTable::try_new(schema.clone(), vec![new])?),
     )?;
-    let cols = engine::columns(table)
+    let cols = schema
+        .fields()
         .iter()
-        .map(|c| format!("\"{}\"", c.name))
+        .map(|f| format!("\"{}\"", f.name()))
         .collect::<Vec<_>>()
         .join(", ");
     let kept = match old {
@@ -152,7 +148,7 @@ pub async fn replace_range<R: Row>(
 ) -> Result<()> {
     let table = R::TABLE;
     let dir = tempfile::tempdir()?;
-    let new = batches(rows)?;
+    let new = vec![batch(rows)?];
     let targets: Vec<Option<String>> = if MONTHLY.contains(&table) {
         months(from, to).into_iter().map(Some).collect()
     } else {
@@ -240,7 +236,8 @@ pub async fn write_manifest(store: &Store, uid: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{DailyMetrics, HeartRateRow};
+    use crate::health::StageType;
+    use crate::model::{DailyMetrics, HeartRateRow, NightRow, SleepStage};
     use chrono::NaiveDateTime;
 
     fn d(s: &str) -> NaiveDate {
@@ -377,5 +374,43 @@ mod tests {
             got,
             [(d("2026-09-30"), Some(1.0)), (d("2026-10-01"), Some(3.0))]
         );
+    }
+
+    #[tokio::test]
+    async fn nested_columns_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(tmp.path().to_str().unwrap()).await.unwrap();
+        let t = |s: &str| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap();
+        let night = NightRow {
+            date: d("2026-10-02"),
+            start: t("2026-10-01 23:00"),
+            end: t("2026-10-02 07:00"),
+            minutes_asleep: Some(450),
+            minutes_awake: None,
+            deep_minutes: None,
+            light_minutes: None,
+            rem_minutes: None,
+            awake_minutes: None,
+            restless_minutes: Some(0),
+            stages: vec![SleepStage {
+                start: t("2026-10-01 23:10"),
+                end: t("2026-10-02 00:40"),
+                stage: StageType::Deep,
+            }],
+            restless: vec![],
+        };
+        replace_range(&store, "x", &[night], d("2026-10-02"), d("2026-10-02"))
+            .await
+            .unwrap();
+        let ctx = engine::session(64 << 20).unwrap();
+        let file = tmp.path().join("u/x/data/nights.parquet");
+        engine::register(&ctx, "nights", &[file]).await.unwrap();
+        let rows: Vec<NightRow> = engine::query_as(&ctx, "SELECT * FROM nights")
+            .await
+            .unwrap();
+        assert_eq!(rows[0].stages[0].stage, StageType::Deep);
+        assert_eq!(rows[0].stages[0].end, t("2026-10-02 00:40"));
+        assert_eq!(rows[0].minutes_asleep, Some(450));
+        assert!(rows[0].restless.is_empty());
     }
 }

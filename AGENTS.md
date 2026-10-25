@@ -19,7 +19,7 @@ Stahuje data z Fitbit Air přes Google Health API v4 a ukazuje je na dashboardu.
 - Dashboard v `frontend/` (React, Vite, Tailwind, shadcn-style, TanStack, ECharts); `fitdata serve` servíruje jeho `dist`.
 - Produkce na Google Cloud, vše v `europe-west1`: Cloud Run job `fitdata-sync` (každou hodinu), Cloud Run service `fitdata-web` na https://fitdata.jakub.contact, GCS `fitdata-jsedlacek-data`, KMS klíč `fitdata/refresh-token`. Popis: [docs/production.md](docs/production.md).
 - Push do `main` automaticky nasadí do produkce (GitHub Actions, `.github/workflows/deploy.yml`); po pushi zkontroluj běh přes `gh run watch`.
-- Nasazení: `deploy/setup.sh` (infrastruktura, idempotentní) a `deploy/deploy.sh` (build + nasazení). Nastavení v `deploy/config.sh`, schémata tabulek v `schema/`.
+- Nasazení: `deploy/setup.sh` (infrastruktura, idempotentní) a `deploy/deploy.sh` (build + nasazení). Nastavení v `deploy/config.sh`; sloupce tabulek jsou pole row structů v `src/model.rs` (`#[derive(Columns)]` z `crates/derive`).
 - Tajemství jsou jen v Secret Manageru (`oauth-client`, `session-key`) a refresh tokeny uživatelů jen zašifrované KMS v `users/{sub}.json`; nikdy je nevypisuj ani neukládej do souborů.
 
 ## Než commitneš

@@ -72,7 +72,7 @@ impl Snapshot {
     /// `memory` bytes for query state.
     pub async fn session(&self, memory: usize) -> Result<SessionContext> {
         let ctx = engine::session(memory)?;
-        for table in engine::TABLES {
+        for table in engine::tables() {
             let files = self.files.get(table).map(Vec::as_slice).unwrap_or_default();
             engine::register(&ctx, table, files).await?;
         }
@@ -174,7 +174,7 @@ impl Warehouse {
         let mut files: BTreeMap<&'static str, Vec<PathBuf>> = BTreeMap::new();
         for name in &wanted {
             let table = name.split(['/', '.']).next().unwrap_or_default();
-            if let Some(t) = engine::TABLES.iter().find(|t| **t == table) {
+            if let Some(t) = engine::tables().find(|t| *t == table) {
                 files.entry(t).or_default().push(dir.join(name));
             }
         }

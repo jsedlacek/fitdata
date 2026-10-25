@@ -9,16 +9,24 @@ use std::collections::BTreeMap;
 use chrono::{Duration, NaiveDate, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 
+use crate::engine::{ColumnType, Columns};
 use crate::health::{Points, StageType};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Stored by its serde name (`DEEP`, `REM`, ...).
+impl ColumnType for StageType {
+    fn data_type() -> datafusion::arrow::datatypes::DataType {
+        datafusion::arrow::datatypes::DataType::Utf8
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Columns)]
 pub struct SleepStage {
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
     pub stage: StageType,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Columns)]
 pub struct Span {
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
@@ -46,15 +54,15 @@ impl Sleep {
     }
 }
 
-/// A row of a table; `TABLE` is its name and the file name of its schema
-/// in schema/.
-pub trait Row: Serialize {
+/// A row of a table: `TABLE` is its name, its fields are the columns.
+pub trait Row: Serialize + Columns {
     const TABLE: &'static str;
 }
 
 /// Row of `exercises`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Columns)]
 pub struct Exercise {
+    /// Local calendar date (partition key)
     pub date: NaiveDate,
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
@@ -72,8 +80,9 @@ impl Row for Exercise {
 
 /// Row of `daily`: one per local calendar day; every metric optional because
 /// devices and days differ in what they report.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Columns)]
 pub struct DailyMetrics {
+    /// Local calendar date (partition key)
     pub date: NaiveDate,
     pub resting_hr: Option<f64>,
     pub hrv_ms: Option<f64>,
@@ -104,9 +113,11 @@ impl Row for DailyMetrics {
     const TABLE: &'static str = "daily";
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Columns)]
 pub struct HeartRateRow {
+    /// Local calendar date (partition key)
     pub date: NaiveDate,
+    /// Local wall-clock time
     pub ts: NaiveDateTime,
     pub bpm: f64,
 }
@@ -115,9 +126,11 @@ impl Row for HeartRateRow {
     const TABLE: &'static str = "heart_rate";
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Columns)]
 pub struct Spo2Row {
+    /// Local calendar date (partition key)
     pub date: NaiveDate,
+    /// Local wall-clock time
     pub ts: NaiveDateTime,
     pub pct: f64,
 }
@@ -126,10 +139,13 @@ impl Row for Spo2Row {
     const TABLE: &'static str = "spo2";
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Columns)]
 pub struct HrvRow {
+    /// Local calendar date (partition key)
     pub date: NaiveDate,
+    /// Local wall-clock time
     pub ts: NaiveDateTime,
+    /// RMSSD over a 5 minute window
     pub rmssd_ms: f64,
 }
 
@@ -138,12 +154,15 @@ impl Row for HrvRow {
 }
 
 /// Row of `activity`: one minute, merged from three interval series.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Columns)]
 pub struct ActivityRow {
+    /// Local calendar date (partition key)
     pub date: NaiveDate,
+    /// Start of the minute, local time
     pub ts: NaiveDateTime,
     pub steps: Option<f64>,
     pub active_kcal: Option<f64>,
+    /// Active zone minutes
     pub azm: Option<f64>,
 }
 
@@ -152,8 +171,9 @@ impl Row for ActivityRow {
 }
 
 /// Row of `nights`: the night that ended on `date` (see `Dataset::night_before`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Columns)]
 pub struct NightRow {
+    /// Wake-up date
     pub date: NaiveDate,
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
@@ -163,7 +183,8 @@ pub struct NightRow {
     pub light_minutes: Option<i64>,
     pub rem_minutes: Option<i64>,
     pub awake_minutes: Option<i64>,
-    /// NULL in rows loaded before restless sleep was tracked.
+    /// Short awakenings (restless sleep in Google Health); NULL in rows
+    /// loaded before restless sleep was tracked.
     pub restless_minutes: Option<i64>,
     pub stages: Vec<SleepStage>,
     pub restless: Vec<Span>,
@@ -591,21 +612,24 @@ mod tests {
         assert_eq!(n.restless_minutes(), 4);
     }
 
-    /// Column paths of a schema in schema/, nested records as `a.b`.
+    /// Column paths of a table's schema, nested records as `a.b`.
     fn schema_columns(table: &str) -> Vec<String> {
-        fn walk(fields: &Value, prefix: &str, out: &mut Vec<String>) {
-            for f in fields.as_array().unwrap() {
-                let name = format!("{prefix}{}", f["name"].as_str().unwrap());
-                if let Some(sub) = f.get("fields") {
+        use datafusion::arrow::datatypes::{DataType, Fields};
+        fn walk(fields: &Fields, prefix: &str, out: &mut Vec<String>) {
+            for f in fields {
+                let name = format!("{prefix}{}", f.name());
+                let inner = match f.data_type() {
+                    DataType::List(item) => item.data_type(),
+                    t => t,
+                };
+                if let DataType::Struct(sub) = inner {
                     walk(sub, &format!("{name}."), out);
                 }
                 out.push(name);
             }
         }
-        let path = format!("{}/schema/{table}.json", env!("CARGO_MANIFEST_DIR"));
-        let schema: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let mut out = Vec::new();
-        walk(&schema, "", &mut out);
+        walk(crate::engine::schema(table).fields(), "", &mut out);
         out.sort();
         out
     }

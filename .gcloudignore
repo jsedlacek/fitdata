@@ -5,7 +5,6 @@
 !Cargo.lock
 !src/**
 !crates/**
-!schema/**
 !frontend/
 !frontend/**
 frontend/node_modules/

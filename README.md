@@ -32,7 +32,7 @@ data/
   users/{sub}.json                          # profil a šifrovaný refresh token
   u/{sub}/raw/{data-type}/{YYYY-MM-DD}.jsonl   # intraday typy (tep, kroky, HRV, ...)
   u/{sub}/raw/{data-type}/{YYYY-MM}.jsonl      # řídké, denní a session typy (spánek, cvičení, ...)
-  u/{sub}/data/{tabulka}[/{YYYY-MM}].parquet   # normalizované tabulky (schema/)
+  u/{sub}/data/{tabulka}[/{YYYY-MM}].parquet   # normalizované tabulky (src/model.rs)
   u/{sub}/status.json                       # poslední synchronizace
 ```
 
