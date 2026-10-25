@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { BedDouble, Moon, Sunrise, Timer } from 'lucide-react';
 import type { Night, Stage } from '@/lib/api';
-import { chrome } from '@/lib/chart';
+import { chrome, wall } from '@/lib/chart';
 import { clock, duration, num } from '@/lib/format';
 import { useResolvedTheme } from '@/lib/theme';
 import { EChart } from './EChart';
@@ -39,7 +39,7 @@ export function SleepCard({ night }: { night: Night | null }) {
           return `<b>${label[st]}</b><br>${clock(s)}–${clock(e)} · ${Math.round((+new Date(e) - +new Date(s)) / 60000)} min`;
         },
       },
-      xAxis: { ...t.timeAxis, min: night.start, max: night.end },
+      xAxis: { ...t.timeAxis, min: wall(night.start), max: wall(night.end) },
       yAxis: {
         type: 'category', data: rows.map((k) => label[k]), axisLabel: t.axisLabel,
         axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: true, lineStyle: { color: t.c.grid } },
@@ -47,8 +47,8 @@ export function SleepCard({ night }: { night: Night | null }) {
       series: [{
         type: 'custom',
         data: [
-          ...night.stages.map((s) => [s.start, s.end, ROW[s.stage], s.stage]),
-          ...(night.restless ?? []).map((s) => [s.start, s.end, ROW.RESTLESS, 'RESTLESS']),
+          ...night.stages.map((s) => [wall(s.start), wall(s.end), ROW[s.stage], s.stage]),
+          ...(night.restless ?? []).map((s) => [wall(s.start), wall(s.end), ROW.RESTLESS, 'RESTLESS']),
         ],
         encode: { x: [0, 1], y: 2 },
         renderItem: (_: unknown, api: { value: (i: number) => number | string; coord: (v: unknown[]) => number[]; size: (v: number[]) => number[] }) => {

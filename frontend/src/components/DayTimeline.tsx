@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { DayDetail } from '@/lib/api';
-import { chrome, row } from '@/lib/chart';
+import { chrome, row, wall, wallMinutes } from '@/lib/chart';
 import { clock, num } from '@/lib/format';
 import { useResolvedTheme } from '@/lib/theme';
 import { EChart } from './EChart';
@@ -11,8 +11,8 @@ import { Card, CardBody, CardHeader } from './ui/card';
 function withGaps<T extends [string, ...unknown[]]>(rows: T[], maxGapMin: number): (T | [string, null, null, null])[] {
   const out: (T | [string, null, null, null])[] = [];
   for (let i = 0; i < rows.length; i++) {
-    if (i && +new Date(rows[i][0]) - +new Date(rows[i - 1][0]) > maxGapMin * 60_000) out.push([rows[i - 1][0], null, null, null]);
-    out.push(rows[i]);
+    if (i && wallMinutes(rows[i - 1][0], rows[i][0]) > maxGapMin) out.push([wall(rows[i - 1][0]), null, null, null]);
+    out.push([wall(rows[i][0]), ...rows[i].slice(1)] as T);
   }
   return out;
 }
@@ -24,10 +24,10 @@ export function DayTimeline({ day }: { day: DayDetail }) {
     const t = chrome();
     const { c } = t;
     const rows = withGaps(day.heartRate, 5);
-    const sleepArea = day.sleep ? [[{ xAxis: day.sleep.start, name: 'Spánek' }, { xAxis: day.sleep.end }]] : [];
-    const exerciseAreas = day.exercises.map((e) => [{ xAxis: e.start, name: exerciseLabel(e) }, { xAxis: e.end }]);
+    const sleepArea = day.sleep ? [[{ xAxis: wall(day.sleep.start), name: 'Spánek' }, { xAxis: wall(day.sleep.end) }]] : [];
+    const exerciseAreas = day.exercises.map((e) => [{ xAxis: wall(e.start), name: exerciseLabel(e) }, { xAxis: wall(e.end) }]);
     const midnight = `${day.date}T00:00:00`;
-    const x = { ...t.timeAxis, min: day.range[0], max: day.range[1] };
+    const x = { ...t.timeAxis, min: wall(day.range[0]), max: wall(day.range[1]) };
     return {
       animation: false,
       textStyle: t.textStyle,
@@ -39,8 +39,8 @@ export function DayTimeline({ day }: { day: DayDetail }) {
         formatter: (ps: { seriesId: string; value: [string, number | null] }[]) => {
           const ts = ps[0]?.value[0];
           if (!ts) return '';
-          const r = day.heartRate.find((h) => h[0] === ts);
-          const s = day.steps.find((st) => +new Date(st[0]) <= +new Date(ts) && +new Date(ts) < +new Date(st[0]) + 15 * 60_000);
+          const r = day.heartRate.find((h) => wall(h[0]) === ts);
+          const s = day.steps.find((st) => Date.parse(wall(st[0])) <= Date.parse(ts) && Date.parse(ts) < Date.parse(wall(st[0])) + 15 * 60_000);
           let html = `<div style="font-weight:600;margin-bottom:2px">${clock(ts)}</div>`;
           if (r) html += row(c.s1, 'Tep', `${num(r[2])} bpm`) + row(c.band, 'Rozsah', `${num(r[1])}–${num(r[3])}`);
           if (s) html += row(c.s3, 'Kroky (15 min)', num(s[1]));
@@ -78,12 +78,12 @@ export function DayTimeline({ day }: { day: DayDetail }) {
           },
           markLine: day.range[0] < midnight ? {
             silent: true, symbol: 'none', label: { show: false },
-            lineStyle: { color: c.axis, type: 'dashed', width: 1 }, data: [{ xAxis: midnight }],
+            lineStyle: { color: c.axis, type: 'dashed', width: 1 }, data: [{ xAxis: wall(midnight) }],
           } : undefined,
         },
         {
           id: 'steps', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
-          data: day.steps.map(([ts, v]) => [new Date(+new Date(ts) + 7.5 * 60_000).toISOString(), v]),
+          data: day.steps.map(([ts, v]) => [new Date(Date.parse(wall(ts)) + 7.5 * 60_000).toISOString(), v]),
           barWidth: '55%', itemStyle: { color: c.s3, borderRadius: [2, 2, 0, 0] },
         },
       ],

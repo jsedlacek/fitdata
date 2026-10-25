@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { DayDetail } from '@/lib/api';
-import { chrome } from '@/lib/chart';
+import { chrome, wall, wallMinutes } from '@/lib/chart';
 import { clock, num } from '@/lib/format';
 import { useResolvedTheme } from '@/lib/theme';
 import { EChart } from './EChart';
@@ -9,8 +9,8 @@ import { Card, CardBody, CardHeader } from './ui/card';
 function series(points: [string, number][], maxGapMin: number) {
   const out: [string, number | null][] = [];
   points.forEach((p, i) => {
-    if (i && +new Date(p[0]) - +new Date(points[i - 1][0]) > maxGapMin * 60_000) out.push([points[i - 1][0], null]);
-    out.push(p);
+    if (i && wallMinutes(points[i - 1][0], p[0]) > maxGapMin) out.push([wall(points[i - 1][0]), null]);
+    out.push([wall(p[0]), p[1]]);
   });
   return out;
 }

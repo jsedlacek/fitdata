@@ -38,7 +38,8 @@ export function EChart({ option, className, label }: { option: Option; className
   }, []);
 
   useEffect(() => {
-    chart.current?.setOption(option, { notMerge: true });
+    // Time axes carry wall-clock times as UTC instants, see `wall`.
+    chart.current?.setOption({ useUTC: true, ...option }, { notMerge: true });
   }, [option]);
 
   return <div ref={el} role="img" aria-label={label} className={cn('w-full', className)} />;

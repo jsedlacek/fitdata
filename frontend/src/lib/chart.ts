@@ -49,6 +49,16 @@ export function chrome() {
   };
 }
 
+/**
+ * The API's local wall-clock time as an ECharts instant. Charts plot and label
+ * it in UTC (`useUTC` in EChart), so the axis follows the wall clock and a DST
+ * change neither opens nor swallows an hour.
+ */
+export const wall = (s: string) => `${s}Z`;
+
+/** Minutes between two wall-clock times. */
+export const wallMinutes = (a: string, b: string) => (Date.parse(wall(b)) - Date.parse(wall(a))) / 60_000;
+
 /** HTML for a tooltip row: colored marker + label + value. */
 export const row = (color: string, label: string, value: string) =>
   `<div style="display:flex;align-items:center;gap:8px;margin-top:2px"><span style="width:8px;height:8px;border-radius:2px;background:${color}"></span><span style="flex:1;opacity:.75">${label}</span><b style="font-variant-numeric:tabular-nums">${value}</b></div>`;
