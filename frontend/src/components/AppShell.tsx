@@ -1,7 +1,7 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, ArrowLeft, Bot, CheckCircle2, Laptop, LogOut, Moon, RefreshCw, Sun, Trash2, TriangleAlert, UserRound } from 'lucide-react';
+import { ArrowLeft, Bot, CheckCircle2, Laptop, LogOut, Moon, RefreshCw, Sun, Trash2, TriangleAlert, UserRound } from 'lucide-react';
 import { deleteAccount, overviewQuery, startSync, syncQuery, type SyncRun } from '@/lib/api';
 import { ago } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -19,9 +19,7 @@ export function AppShell() {
       <header className="sticky top-0 z-40 border-b bg-page/85 backdrop-blur supports-[backdrop-filter]:bg-page/70">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6">
           <Link to="/" search={{}} className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid size-7 place-items-center rounded-lg bg-s1 text-white">
-              <Activity className="size-4" strokeWidth={2.5} />
-            </span>
+            <img src="/favicon.svg" alt="" className="size-7" />
             <span className="hidden sm:inline">Fitdata</span>
           </Link>
           <nav className="flex items-center gap-1 text-sm">
