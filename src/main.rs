@@ -9,14 +9,11 @@ mod datatypes;
 mod engine;
 mod health;
 mod job;
-mod kms;
 mod mcp;
 mod model;
 mod oauth;
 mod query;
-mod secrets;
 mod status;
-mod store;
 mod sync;
 mod tables;
 mod telemetry;
@@ -32,6 +29,8 @@ use chrono::{Days, NaiveDate};
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 use tracing::Instrument;
+
+use fitdata_gcp::{kms, secrets, store};
 
 use datatypes::DataType;
 use kms::Kms;

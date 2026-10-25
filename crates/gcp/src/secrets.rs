@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use crate::BoxFuture;
 use anyhow::{Context, Result};
 use google_cloud_gax::error::rpc::Code;
 use google_cloud_secretmanager_v1::client::SecretManagerService;
@@ -44,34 +45,36 @@ impl SecretRef {
     }
 
     /// The latest secret version, or `None` if there is none yet.
-    pub async fn read(&self) -> Result<Option<Vec<u8>>> {
-        match self {
-            Self::File(p) => match std::fs::read(p) {
-                Ok(b) => Ok(Some(b)),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                Err(e) => Err(e).with_context(|| format!("reading {}", p.display())),
-            },
-            Self::Manager(name) => {
-                let resp = client()
-                    .await?
-                    .access_secret_version()
-                    .set_name(format!("{name}/versions/latest"))
-                    .send()
-                    .await;
-                match resp {
-                    Ok(r) => Ok(r.payload.map(|p| p.data.to_vec())),
-                    // No secret, or a secret without enabled versions yet.
-                    Err(e)
-                        if e.status().is_some_and(|s| {
-                            matches!(s.code, Code::NotFound | Code::FailedPrecondition)
-                        }) =>
-                    {
-                        Ok(None)
+    pub fn read(&self) -> BoxFuture<'_, Result<Option<Vec<u8>>>> {
+        Box::pin(async move {
+            match self {
+                Self::File(p) => match std::fs::read(p) {
+                    Ok(b) => Ok(Some(b)),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                    Err(e) => Err(e).with_context(|| format!("reading {}", p.display())),
+                },
+                Self::Manager(name) => {
+                    let resp = client()
+                        .await?
+                        .access_secret_version()
+                        .set_name(format!("{name}/versions/latest"))
+                        .send()
+                        .await;
+                    match resp {
+                        Ok(r) => Ok(r.payload.map(|p| p.data.to_vec())),
+                        // No secret, or a secret without enabled versions yet.
+                        Err(e)
+                            if e.status().is_some_and(|s| {
+                                matches!(s.code, Code::NotFound | Code::FailedPrecondition)
+                            }) =>
+                        {
+                            Ok(None)
+                        }
+                        Err(e) => Err(e).with_context(|| format!("reading secret {name}")),
                     }
-                    Err(e) => Err(e).with_context(|| format!("reading secret {name}")),
                 }
             }
-        }
+        })
     }
 }
 

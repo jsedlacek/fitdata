@@ -5,6 +5,7 @@
 //! authenticated data: a token copied into another user's record does not
 //! decrypt.
 
+use crate::BoxFuture;
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use google_cloud_gax::options::RequestOptionsBuilder;
@@ -51,44 +52,56 @@ impl Kms {
 
     /// The ciphertext as base64, as it is stored in the user's record.
     #[tracing::instrument(name = "kms encrypt", skip_all, fields(otel.kind = "client"))]
-    pub async fn encrypt(&self, plaintext: &[u8], uid: &str) -> Result<String> {
-        match self {
-            Self::Plain => Ok(STANDARD.encode(plaintext)),
-            Self::Cloud(key) => {
-                let resp = client()
-                    .await?
-                    .encrypt()
-                    .set_name(key)
-                    .set_plaintext(plaintext.to_vec())
-                    .set_additional_authenticated_data(uid.as_bytes().to_vec())
-                    .with_idempotency(true)
-                    .send()
-                    .await
-                    .context("Cloud KMS encrypt")?;
-                Ok(STANDARD.encode(resp.ciphertext))
+    pub fn encrypt<'a>(
+        &'a self,
+        plaintext: &'a [u8],
+        uid: &'a str,
+    ) -> BoxFuture<'a, Result<String>> {
+        Box::pin(async move {
+            match self {
+                Self::Plain => Ok(STANDARD.encode(plaintext)),
+                Self::Cloud(key) => {
+                    let resp = client()
+                        .await?
+                        .encrypt()
+                        .set_name(key)
+                        .set_plaintext(plaintext.to_vec())
+                        .set_additional_authenticated_data(uid.as_bytes().to_vec())
+                        .with_idempotency(true)
+                        .send()
+                        .await
+                        .context("Cloud KMS encrypt")?;
+                    Ok(STANDARD.encode(resp.ciphertext))
+                }
             }
-        }
+        })
     }
 
     #[tracing::instrument(name = "kms decrypt", skip_all, fields(otel.kind = "client"))]
-    pub async fn decrypt(&self, ciphertext: &str, uid: &str) -> Result<Vec<u8>> {
-        let ciphertext = STANDARD.decode(ciphertext)?;
-        match self {
-            Self::Plain => Ok(ciphertext),
-            Self::Cloud(key) => {
-                let resp = client()
-                    .await?
-                    .decrypt()
-                    .set_name(key)
-                    .set_ciphertext(ciphertext)
-                    .set_additional_authenticated_data(uid.as_bytes().to_vec())
-                    .with_idempotency(true)
-                    .send()
-                    .await
-                    .context("Cloud KMS decrypt")?;
-                Ok(resp.plaintext.to_vec())
+    pub fn decrypt<'a>(
+        &'a self,
+        ciphertext: &'a str,
+        uid: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<u8>>> {
+        Box::pin(async move {
+            let ciphertext = STANDARD.decode(ciphertext)?;
+            match self {
+                Self::Plain => Ok(ciphertext),
+                Self::Cloud(key) => {
+                    let resp = client()
+                        .await?
+                        .decrypt()
+                        .set_name(key)
+                        .set_ciphertext(ciphertext)
+                        .set_additional_authenticated_data(uid.as_bytes().to_vec())
+                        .with_idempotency(true)
+                        .send()
+                        .await
+                        .context("Cloud KMS decrypt")?;
+                    Ok(resp.plaintext.to_vec())
+                }
             }
-        }
+        })
     }
 }
 

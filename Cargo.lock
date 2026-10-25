@@ -1613,12 +1613,9 @@ dependencies = [
  "clap",
  "datafusion",
  "dotenvy",
+ "fitdata-gcp",
  "futures",
  "google-cloud-auth",
- "google-cloud-gax",
- "google-cloud-kms-v1",
- "google-cloud-secretmanager-v1",
- "google-cloud-storage",
  "governor",
  "hmac",
  "http",
@@ -1640,6 +1637,24 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "fitdata-gcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "bytes",
+ "google-cloud-gax",
+ "google-cloud-kms-v1",
+ "google-cloud-secretmanager-v1",
+ "google-cloud-storage",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

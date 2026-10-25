@@ -15,6 +15,7 @@ WORKDIR /src
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY src src
+COPY crates crates
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS build
@@ -22,7 +23,8 @@ COPY --from=planner /src/recipe.json recipe.json
 RUN cargo chef cook --release --locked --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY src src
-# Table schemas, compiled in (src/duck.rs).
+COPY crates crates
+# Table schemas, compiled in (src/engine.rs).
 COPY schema schema
 RUN cargo build --release --locked
 

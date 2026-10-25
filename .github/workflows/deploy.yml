@@ -49,10 +49,30 @@ jobs:
           fi
       - if: steps.image.outputs.exists != 'true'
         uses: dtolnay/rust-toolchain@1.99
+      # The workspace crates are cached too: fitdata-gcp (the Google Cloud
+      # clients) takes as long to compile as fitdata and rarely changes.
       - if: steps.image.outputs.exists != 'true'
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-workspace-crates: true
+          cache-directories: .ci-cache
+      # Checkout gives every file a new mtime, which cargo takes as a change.
+      # Files unchanged since the commit the cached target was built from get
+      # an old one, so only the crates with changes rebuild. Without that
+      # commit (a new cache), everything stays new and rebuilds.
       - if: steps.image.outputs.exists != 'true'
-        run: cargo build --release --locked
+        run: |
+          built=$(cat .ci-cache/built-commit 2>/dev/null || true)
+          if [[ -n $built ]] && git merge-base --is-ancestor "$built" HEAD; then
+            git ls-files -z | xargs -0 touch -d 2000-01-01
+            git diff --name-only --diff-filter=d -z "$built" HEAD | xargs -0 -r touch
+            echo "Unchanged since $built: $(git diff --name-only "$built" HEAD | wc -l) files changed"
+          fi
+      - if: steps.image.outputs.exists != 'true'
+        run: |
+          cargo build --release --locked
+          # Read on the next run, if this run creates the cache.
+          mkdir -p .ci-cache && git rev-parse HEAD > .ci-cache/built-commit
       - if: steps.image.outputs.exists != 'true'
         uses: actions/setup-node@v7
         with:

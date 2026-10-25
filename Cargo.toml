@@ -3,6 +3,11 @@ name = "fitdata"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["crates/gcp"]
+# cargo build/test/clippy cover the whole workspace.
+default-members = [".", "crates/gcp"]
+
 [dependencies]
 anyhow = "1.0.104"
 async-trait = "0.1.92"
@@ -13,13 +18,10 @@ chrono = { version = "0.4.45", features = ["serde"] }
 chrono-tz = "0.10.4"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 datafusion = { version = "=55.2.0", default-features = false, features = ["sql", "parquet", "nested_expressions", "datetime_expressions", "string_expressions", "unicode_expressions", "math_expressions", "regex_expressions"] }
+fitdata-gcp = { path = "crates/gcp" }
 dotenvy = "0.15.7"
 futures = "0.3.34"
 google-cloud-auth = "1.18.0"
-google-cloud-gax = "1.15.0"
-google-cloud-kms-v1 = "1.16.0"
-google-cloud-secretmanager-v1 = "1.14.0"
-google-cloud-storage = "1.21.0"
 governor = { version = "=0.10.4", default-features = false, features = ["std", "quanta"] }
 hmac = "0.13.0"
 http = "1"
@@ -42,7 +44,6 @@ tracing-opentelemetry = { version = "0.34", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
 
-# DuckDB (C++) is big: without debug info for dependencies the dev build
-# stays a few GB, and an optimized DuckDB keeps the tests quick.
+# Without debug info for dependencies the dev build stays a few GB smaller.
 [profile.dev.package."*"]
 debug = false

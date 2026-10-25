@@ -13,6 +13,7 @@ Pokyny pro AI agenty pracující v tomto repu.
 Stahuje data z Fitbit Air přes Google Health API v4 a ukazuje je na dashboardu.
 
 - Rust binárka `fitdata` (`src/`): CLI, hodinový job i API v jednom.
+- Google Cloud klienti (KMS, Secret Manager, GCS) jsou ve workspace crate `crates/gcp` (`fitdata-gcp`), aby se jejich velký kód nepřekládal s každou změnou `fitdata`. Jeho async metody vrací `BoxFuture`, ne `async fn` (tělo `async fn` se kompiluje v crate, který ho awaituje); tak to drž i u nových.
 - Víc uživatelů (na pozvánku, `ALLOWED_EMAILS`), uživatel = Google `sub`; data každého v GCS pod `u/{sub}/` jako raw JSON a Parquet, čtená přes DataFusion. Data jednoho uživatele nikdy nesmí uvidět jiný.
 - MCP server pro Claude/ChatGPT na `/mcp` (`src/mcp.rs`) s vlastním OAuth serverem (`src/authz.rs`) nad Google přihlášením.
 - Dashboard v `frontend/` (React, Vite, Tailwind, shadcn-style, TanStack, ECharts); `fitdata serve` servíruje jeho `dist`.

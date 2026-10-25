@@ -4,6 +4,7 @@
 !Cargo.toml
 !Cargo.lock
 !src/**
+!crates/**
 !schema/**
 !frontend/
 !frontend/**
