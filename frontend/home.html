@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)" />
-    <title>Fitdata · your Fitbit data, yours to explore</title>
+    <title>Fitdata · all your Fitbit data on one page</title>
     <meta
       name="description"
-      content="Fitdata downloads your Fitbit data through the Google Health API and shows it on a dashboard of sleep, heart rate, HRV, SpO₂ and activity. Ask Claude or ChatGPT about it, too."
+      content="Sleep, heart rate, HRV, SpO₂ and activity from your Fitbit in one clean dashboard, and in Claude or ChatGPT, so you can simply ask."
     />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -23,8 +23,8 @@
     </script>
   </head>
   <body class="min-h-dvh">
-    <header class="border-b">
-      <div class="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4">
+    <header class="sticky top-0 z-10 border-b bg-page/85 backdrop-blur">
+      <div class="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4">
         <a href="/" class="flex items-center gap-2 font-semibold tracking-tight">
           <img src="/favicon.svg" alt="" class="size-7" />
           Fitdata
@@ -35,70 +35,105 @@
       </div>
     </header>
 
-    <main class="mx-auto max-w-5xl px-4">
-      <section class="py-16 sm:py-24">
-        <h1 class="max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">Your Fitbit data, yours to explore.</h1>
-        <p class="mt-5 max-w-2xl text-lg text-ink-2 text-pretty">
-          Fitdata downloads your data from Fitbit through the Google Health API every hour and shows it on a clean
-          dashboard: sleep, heart rate, HRV, blood oxygen and activity, day by day and over time. Connect Claude or
-          ChatGPT and ask questions about it in plain language.
+    <main>
+      <section class="mx-auto max-w-5xl px-4 pt-16 text-center sm:pt-24">
+        <h1 class="mx-auto max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-6xl">All your Fitbit data on one page</h1>
+        <p class="mx-auto mt-5 max-w-xl text-lg text-ink-2 text-pretty">
+          Sleep, heart rate, HRV, SpO₂ and activity in one clean dashboard. And in Claude or ChatGPT, so you can simply ask.
         </p>
-        <div class="mt-8 flex flex-wrap gap-3">
-          <a href="/auth/login" class="inline-flex h-10 items-center rounded-lg bg-ink px-4 text-sm font-medium text-page hover:opacity-90">Sign in with Google</a>
-          <a href="https://github.com/jsedlacek/fitdata" class="inline-flex h-10 items-center rounded-lg border bg-surface px-4 text-sm font-medium hover:bg-shade">View the source</a>
+        <div class="mt-8 flex flex-wrap justify-center gap-3">
+          <a href="/auth/login" class="inline-flex h-11 items-center rounded-lg bg-ink px-5 text-sm font-medium text-page hover:opacity-90">Sign in with Google</a>
+          <a href="https://github.com/jsedlacek/fitdata" class="inline-flex h-11 items-center rounded-lg border bg-surface px-5 text-sm font-medium hover:bg-shade">Open source</a>
+        </div>
+        <p class="mt-3 text-[13px] text-muted">Free · read-only · works with Fitbit through the Google Health API</p>
+      </section>
+
+      <section class="mx-auto mt-14 max-w-6xl px-4">
+        <figure class="overflow-hidden rounded-xl border bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.35)]">
+          <div class="flex items-center gap-1.5 border-b px-3 py-2">
+            <span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span>
+            <span class="mx-auto rounded-md bg-surface-2 px-3 py-0.5 text-[11px] text-muted">fitdata.jakub.contact</span>
+          </div>
+          <picture>
+            <source srcset="/src/home/day-dark.jpg" media="(prefers-color-scheme: dark)" />
+            <img src="/src/home/day-light.jpg" alt="The Fitdata day view: sleep, resting heart rate, HRV, steps and other metrics above a chart of heart rate and steps through the day" width="2560" height="1600" class="block h-auto w-full" />
+          </picture>
+        </figure>
+      </section>
+
+      <section class="mx-auto grid max-w-5xl items-center gap-10 px-4 py-24 md:grid-cols-2">
+        <div>
+          <h2 class="text-3xl font-semibold tracking-tight text-balance">Ask Claude or ChatGPT about your health</h2>
+          <p class="mt-4 text-ink-2 text-pretty">
+            Connect Fitdata to your AI assistant in a minute. It reads your data only when you ask, and only yours.
+          </p>
+        </div>
+        <figure>
+          <div class="space-y-4 rounded-2xl border bg-surface p-5 text-[15px] leading-relaxed shadow-[0_24px_60px_-28px_rgba(11,11,11,0.35)]">
+            <p class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-4 py-2.5 text-white">
+              How have my resting heart rate and HRV changed since summer?
+            </p>
+            <p class="inline-flex items-center gap-2 rounded-full border bg-surface-2 px-3 py-1 text-xs text-ink-2">
+              <img src="/favicon.svg" alt="" class="size-4" /> Fitdata · get_daily_metrics
+            </p>
+            <div class="space-y-2 text-ink">
+              <p>Both are moving the right way. Resting heart rate dropped from about <strong>58 to 54 bpm</strong> since August, and HRV averages <strong>46 ms</strong> this month, up from 43.</p>
+              <p class="text-ink-2">The dip in mid-September, HRV at 33 ms with a higher breathing rate, matches a week without workouts. It looks like you were ill.</p>
+            </div>
+          </div>
+          <figcaption class="mt-3 text-center text-xs text-muted">Illustration with demo data</figcaption>
+        </figure>
+      </section>
+
+      <section class="bg-surface-2 py-24">
+        <div class="mx-auto max-w-5xl px-4 text-center">
+          <h2 class="text-3xl font-semibold tracking-tight">Months at a glance</h2>
+          <p class="mx-auto mt-4 max-w-xl text-ink-2">Sleep, resting heart rate, HRV and activity over a week, a quarter or your whole history.</p>
+        </div>
+        <div class="mx-auto mt-12 max-w-6xl px-4">
+          <figure class="overflow-hidden rounded-xl border bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.35)]">
+          <div class="flex items-center gap-1.5 border-b px-3 py-2">
+            <span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span>
+            <span class="mx-auto rounded-md bg-surface-2 px-3 py-0.5 text-[11px] text-muted">fitdata.jakub.contact</span>
+          </div>
+          <picture>
+            <source srcset="/src/home/trends-dark.jpg" media="(prefers-color-scheme: dark)" />
+            <img src="/src/home/trends-light.jpg" alt="The Fitdata trends view: sleep stages by night and resting heart rate and HRV over 90 days" width="2560" height="1560" class="block h-auto w-full" loading="lazy" />
+          </picture>
+        </figure>
         </div>
       </section>
 
-      <section class="grid gap-4 sm:grid-cols-3">
-        <div class="rounded-xl border bg-surface p-5">
-          <h2 class="font-semibold">One day at a glance</h2>
-          <p class="mt-2 text-sm text-ink-2">Last night's sleep stages, heart rate through the day, HRV, SpO₂, steps and workouts on one page.</p>
-        </div>
-        <div class="rounded-xl border bg-surface p-5">
-          <h2 class="font-semibold">Trends over months</h2>
-          <p class="mt-2 text-sm text-ink-2">Resting heart rate, HRV, sleep and activity over a week, a month, a quarter or your whole history.</p>
-        </div>
-        <div class="rounded-xl border bg-surface p-5">
-          <h2 class="font-semibold">Ask your AI assistant</h2>
-          <p class="mt-2 text-sm text-ink-2">A read-only MCP server lets Claude or ChatGPT look at your data when you ask them to, and only yours.</p>
-        </div>
-      </section>
-
-      <section class="py-16">
-        <h2 class="text-2xl font-semibold tracking-tight">How it works</h2>
-        <ol class="mt-6 grid gap-6 sm:grid-cols-3">
-          <li>
-            <div class="text-sm font-medium text-s1">1</div>
-            <h3 class="mt-1 font-semibold">Sign in with Google</h3>
-            <p class="mt-1 text-sm text-ink-2">With the Google account your Fitbit uses. Fitdata doesn't get your name or e-mail address.</p>
+      <section class="mx-auto max-w-5xl px-4 py-24">
+        <h2 class="text-center text-3xl font-semibold tracking-tight">Your data stays yours</h2>
+        <ul class="mt-12 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+          <li class="rounded-xl border bg-surface p-4 sm:p-5">
+            <span class="grid size-10 place-items-center rounded-full bg-s1/12 text-s1"><svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg></span>
+            <h3 class="mt-4 font-semibold">Read-only</h3>
+            <p class="mt-1 text-sm text-ink-2">Fitdata can only read your data, never change it.</p>
           </li>
-          <li>
-            <div class="text-sm font-medium text-s1">2</div>
-            <h3 class="mt-1 font-semibold">Allow read-only access</h3>
-            <p class="mt-1 text-sm text-ink-2">On the same Google screen, to activity, health metrics, sleep and your profile. Fitdata never writes to your account.</p>
+          <li class="rounded-xl border bg-surface p-4 sm:p-5">
+            <span class="grid size-10 place-items-center rounded-full bg-s2/12 text-s2"><svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg></span>
+            <h3 class="mt-4 font-semibold">No ads, no selling</h3>
+            <p class="mt-1 text-sm text-ink-2">Not shared with anyone or used to train AI.</p>
           </li>
-          <li>
-            <div class="text-sm font-medium text-s1">3</div>
-            <h3 class="mt-1 font-semibold">Explore</h3>
-            <p class="mt-1 text-sm text-ink-2">Your whole history is downloaded once, then the latest data every hour.</p>
+          <li class="rounded-xl border bg-surface p-4 sm:p-5">
+            <span class="grid size-10 place-items-center rounded-full bg-s3/12 text-s3"><svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg></span>
+            <h3 class="mt-4 font-semibold">Stored in the EU</h3>
+            <p class="mt-1 text-sm text-ink-2">Encrypted, on Google Cloud in Belgium.</p>
           </li>
-        </ol>
-      </section>
-
-      <section class="mb-16 rounded-xl border bg-surface-2 p-6 sm:p-8">
-        <h2 class="text-2xl font-semibold tracking-tight">Your data stays yours</h2>
-        <ul class="mt-4 grid gap-3 text-sm text-ink-2 sm:grid-cols-2">
-          <li><strong class="text-ink">Read-only access.</strong> Only the four Google Health scopes the dashboard needs.</li>
-          <li><strong class="text-ink">Never sold, never for ads.</strong> Your data isn't shared with anyone or used to train AI models.</li>
-          <li><strong class="text-ink">Stored in the EU.</strong> On Google Cloud in Belgium, encrypted; your access token additionally with a dedicated key.</li>
-          <li><strong class="text-ink">Delete it any time.</strong> One click removes all your data and revokes Fitdata's access.</li>
+          <li class="rounded-xl border bg-surface p-4 sm:p-5">
+            <span class="grid size-10 place-items-center rounded-full bg-s4/12 text-s4"><svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></span>
+            <h3 class="mt-4 font-semibold">Delete any time</h3>
+            <p class="mt-1 text-sm text-ink-2">One click removes everything and revokes access.</p>
+          </li>
         </ul>
-        <p class="mt-5 text-sm"><a href="/privacy" class="font-medium underline underline-offset-2">Read the privacy policy</a></p>
+        <p class="mt-8 text-center text-sm"><a href="/privacy" class="font-medium underline underline-offset-2 hover:text-ink-2">Privacy policy</a></p>
       </section>
     </main>
 
     <footer class="border-t">
-      <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-6 text-[13px] text-muted">
+      <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-6 text-[13px] text-muted">
         <a href="/privacy" class="hover:text-ink-2">Privacy</a>
         <a href="/terms" class="hover:text-ink-2">Terms</a>
         <a href="https://github.com/jsedlacek/fitdata" class="hover:text-ink-2">GitHub</a>
