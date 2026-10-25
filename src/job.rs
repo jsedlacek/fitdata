@@ -324,6 +324,12 @@ async fn sync_user(ctx: &Ctx<'_>, user: &User, days: u64, before: &Status) -> Re
     if !fetched.skipped.is_empty() {
         tracing::warn!("data types not readable: {}", fetched.skipped.join(", "));
     }
+    // Tables built in another time zone (changed in Settings) are rebuilt
+    // whole: every local date moves.
+    let moved = !first
+        && tables::read_manifest(ctx.store, &user.uid)
+            .await?
+            .is_some_and(|m| m.tz() != user.tz());
     if first {
         let total = types.len();
         report(Progress::History { done: 0, total }).await;
@@ -345,6 +351,16 @@ async fn sync_user(ctx: &Ctx<'_>, user: &User, days: u64, before: &Status) -> Re
         report(Progress::Tables).await;
         let start = since.unwrap_or(from).min(from);
         load(ctx.store, &raw, user, start, today).await?;
+    } else if moved {
+        tracing::info!(tz = %user.tz(), "time zone changed, rebuilding all tables");
+        load(
+            ctx.store,
+            &raw,
+            user,
+            since.unwrap_or(from).min(from),
+            today,
+        )
+        .await?;
     } else {
         load(ctx.store, &raw, user, from, today).await?;
     }

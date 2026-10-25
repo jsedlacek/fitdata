@@ -120,7 +120,7 @@
 
       <h2>How long we keep it</h2>
       <p>
-        As long as your account exists. When you choose <em>Delete account</em> in the account menu, Fitdata revokes
+        As long as your account exists. When you choose <em>Delete account</em> in Settings, Fitdata revokes
         its access at Google and deletes your data and your account record, usually within minutes. Deleted files can
         remain in Google Cloud's deleted-object retention for up to 7 days before they are gone for good. Logs expire
         after 30 days.
@@ -135,8 +135,10 @@
 
       <h2>Your rights</h2>
       <p>
-        You can ask for a copy of your data, its correction, deletion or a transfer to another service, object to or
-        restrict its processing, and withdraw your consent, by writing to the address above; we will reply within a
+        You can download a copy of all your data at any time with <em>Download your data</em> in Settings (a ZIP file
+        with your data as Google returned it, in JSON, and the processed tables), and delete your account there too.
+        You can also ask for a copy of your data, its correction, deletion or a transfer to another service, object to
+        or restrict its processing, and withdraw your consent, by writing to the address above; we will reply within a
         month. You can also complain to a supervisory authority, in the Czech Republic the
         <a href="https://uoou.gov.cz/en">Office for Personal Data Protection</a>.
       </p>
@@ -160,5 +162,12 @@
         <span class="sm:ml-auto">Not affiliated with Google or Fitbit. Fitbit is a trademark of Google LLC.</span>
       </div>
     </footer>
+    <script>
+      // A new account starts in this browser's time zone (Settings can change it).
+      try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz) for (const a of document.querySelectorAll('a[href="/auth/login"]')) a.href = `/auth/login?tz=${encodeURIComponent(tz)}`;
+      } catch {}
+    </script>
   </body>
 </html>

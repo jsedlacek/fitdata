@@ -1,8 +1,9 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bot, CheckCircle2, Laptop, LogOut, Moon, RefreshCw, Sun, Trash2, TriangleAlert, UserRound } from 'lucide-react';
-import { deleteAccount, overviewQuery, startSync, syncQuery, type SyncRun } from '@/lib/api';
+import { ArrowLeft, Bot, CheckCircle2, Laptop, LogOut, Moon, RefreshCw, Settings, Sun, TriangleAlert, UserRound } from 'lucide-react';
+import { overviewQuery, saveSettings, startSync, syncQuery, type Me, type Overview, type SyncRun } from '@/lib/api';
+import { detectSettings, setPrefs } from '@/lib/prefs';
 import { ago } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Button } from './ui/button';
@@ -14,6 +15,9 @@ import { McpConnect } from './McpConnect';
 
 export function AppShell() {
   const { data } = useQuery(overviewQuery);
+  // Before the pages render: the formatting helpers read the settings.
+  if (data) setPrefs(data.user.settings);
+  useDetectedSettings(data?.user);
   return (
     <div className="min-h-dvh">
       <header className="sticky top-0 z-40 border-b bg-page/85 backdrop-blur supports-[backdrop-filter]:bg-page/70">
@@ -58,6 +62,21 @@ export function AppShell() {
       )}
     </div>
   );
+}
+
+/** A new user's first visit saves settings from the browser: time zone, units, week start, clock. */
+function useDetectedSettings(user: Me | undefined) {
+  const queryClient = useQueryClient();
+  const sent = useRef(false);
+  useEffect(() => {
+    if (!user || user.settingsSaved || sent.current) return;
+    sent.current = true;
+    saveSettings(detectSettings())
+      .then((me) => queryClient.setQueryData<Overview>(overviewQuery.queryKey, (o) => o && { ...o, user: me }))
+      .catch(() => {
+        // Next visit tries again; the defaults show meanwhile.
+      });
+  }, [user, queryClient]);
 }
 
 const MCP_SEEN = 'mcp-seen';
@@ -170,21 +189,22 @@ function SyncStatus({ run }: { run: SyncRun | null }) {
 }
 
 function AccountMenu() {
-  const [confirming, setConfirming] = useState(false);
+  const [open, setOpen] = useState(false);
   const [mcp, setMcp] = useState(false);
-  const remove = useMutation({ mutationFn: deleteAccount });
-  const close = () => {
-    setConfirming(false);
-    setMcp(false);
-  };
   return (
-    <Popover onOpenChange={(open) => !open && close()}>
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) setMcp(false);
+      }}
+    >
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink" aria-label="Account">
           <UserRound />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className={cn('text-sm', mcp ? 'w-80' : 'w-72')}>
+      <PopoverContent align="end" className={cn('text-sm', mcp ? 'w-80' : 'w-64')}>
         {mcp ? (
           <>
             <Button variant="ghost" size="sm" className="-ml-2 mb-2 text-ink-2" onClick={() => setMcp(false)}>
@@ -200,6 +220,11 @@ function AccountMenu() {
               <ThemeToggle />
             </div>
             <div className="flex flex-col gap-1">
+              <Button asChild variant="ghost" size="sm" className="justify-start">
+                <Link to="/settings" onClick={() => setOpen(false)}>
+                  <Settings /> Settings
+                </Link>
+              </Button>
               <Button variant="ghost" size="sm" className="justify-start" onClick={() => setMcp(true)}>
                 <Bot /> Connect Claude / ChatGPT
               </Button>
@@ -208,24 +233,6 @@ function AccountMenu() {
                   <LogOut /> Sign out
                 </a>
               </Button>
-              {confirming ? (
-                <div className="mt-1 rounded-lg border border-l-4 border-l-critical p-2.5">
-                  <p>Delete your account and all downloaded data? This cannot be undone.</p>
-                  <div className="mt-2 flex gap-2">
-                    <Button size="sm" disabled={remove.isPending} onClick={() => remove.mutate()}>
-                      {remove.isPending ? 'Deleting…' : 'Delete'}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
-                      Cancel
-                    </Button>
-                  </div>
-                  {remove.isError && <p className="mt-2 text-critical">Could not delete the account, try again.</p>}
-                </div>
-              ) : (
-                <Button variant="ghost" size="sm" className="justify-start text-critical" onClick={() => setConfirming(true)}>
-                  <Trash2 /> Delete account
-                </Button>
-              )}
             </div>
           </>
         )}
@@ -234,7 +241,7 @@ function AccountMenu() {
   );
 }
 
-function ThemeToggle() {
+export function ThemeToggle() {
   const [choice, setChoice] = useThemeChoice();
   return (
     <Segmented<ThemeChoice>

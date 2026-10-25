@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 
 use crate::engine;
 use crate::store::Store;
-use crate::tables::{MONTHLY, Manifest, file_name, manifest_path, months, user_prefix};
+use crate::tables::{self, MONTHLY, Manifest, file_name, months, user_prefix};
 
 /// How long a fetched manifest is trusted; the dashboard asks several
 /// endpoints at once, and a sync takes minutes anyway.
@@ -130,10 +130,9 @@ impl Warehouse {
         // One request per user at a time downloads; the others wait for it.
         let mut cache = user.lock().await;
         if cache.checked.is_none_or(|t| t.elapsed() > MANIFEST_TTL) {
-            cache.manifest = match self.store.get(&manifest_path(uid)).await? {
-                Some(b) => serde_json::from_slice(&b).context("bad manifest")?,
-                None => Manifest::default(),
-            };
+            cache.manifest = tables::read_manifest(&self.store, uid)
+                .await?
+                .unwrap_or_default();
             cache.checked = Some(Instant::now());
         }
         let dir = self.user_dir(uid);

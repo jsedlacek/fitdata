@@ -239,6 +239,14 @@ pub fn manifest_path(uid: &str) -> String {
     format!("{}/manifest.json", data_prefix(uid))
 }
 
+/// The user's manifest, if their tables were ever written.
+pub async fn read_manifest(store: &Store, uid: &str) -> Result<Option<Manifest>> {
+    match store.get(&manifest_path(uid)).await? {
+        Some(b) => Ok(Some(serde_json::from_slice(&b).context("bad manifest")?)),
+        None => Ok(None),
+    }
+}
+
 pub async fn write_manifest(store: &Store, uid: &str, tz: chrono_tz::Tz) -> Result<()> {
     let prefix = format!("{}/", data_prefix(uid));
     let files = store

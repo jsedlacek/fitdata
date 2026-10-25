@@ -23,6 +23,10 @@ pub enum Claims {
         verifier: String,
         /// Local path to return to after a login.
         next: String,
+        /// The browser's time zone, for a new user's record (the first
+        /// sync already needs it for local dates).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tz: Option<String>,
     },
     /// An MCP client registration; the token is its `client_id`.
     Client {

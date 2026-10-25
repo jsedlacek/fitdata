@@ -36,8 +36,18 @@ export type SyncProgress =
   | { step: 'tables' };
 export type SyncState = { running: boolean; progress?: SyncProgress | null };
 
-/** The signed-in user; `connected` once Fitbit data may be read. */
-export type Me = { connected: boolean };
+export type Units = 'metric' | 'imperial';
+export type WeekStart = 'monday' | 'sunday' | 'saturday';
+export type Clock = '24h' | '12h';
+
+/** The Settings page's values. */
+export type Settings = { timeZone: string; units: Units; weekStart: WeekStart; clock: Clock };
+
+/**
+ * The signed-in user; `connected` once Fitbit data may be read.
+ * `settingsSaved` is false until the settings were chosen (or detected from the browser) once.
+ */
+export type Me = { id: string; connected: boolean; settings: Settings; settingsSaved: boolean };
 
 export type Overview = { days: Daily[]; lastSync: SyncRun | null; user: Me };
 
@@ -92,8 +102,12 @@ export type DayDetail = {
 
 export class UnauthorizedError extends Error {}
 
-async function request<T>(url: string, method = 'GET'): Promise<T> {
-  const r = await fetch(url, { method, credentials: 'same-origin' });
+async function request<T>(url: string, method = 'GET', body?: unknown): Promise<T> {
+  const r = await fetch(url, {
+    method,
+    credentials: 'same-origin',
+    ...(body !== undefined && { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  });
   if (r.status === 401) {
     // Session expired: sign in again and come back.
     location.href = '/auth/login';
@@ -126,6 +140,12 @@ export const syncQuery = {
 
 /** Starts a sync job (or joins the one already running). */
 export const startSync = () => request<SyncState>('/api/sync', 'POST');
+
+/** Saves the settings; a new time zone also starts a sync that recalculates the data. */
+export const saveSettings = (s: Settings) => request<Me>('/api/settings', 'PUT', s);
+
+/** Everything stored about the user, as a ZIP (GDPR export). */
+export const EXPORT_URL = '/api/export';
 
 /** Deletes the account and all its data, then signs out. */
 export async function deleteAccount() {

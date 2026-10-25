@@ -36,7 +36,11 @@ The OAuth Web client must list `https://fitdata.jakub.contact/auth/callback` amo
 
 Anyone can sign up. Sign-in asks only for the Health scopes (offline access), no `openid` or `email`: a user is keyed by the Google Health user ID (`healthUserId` from `users/me/identity`), so Fitdata never learns names or e-mail addresses, and a new user signs in and connects Fitbit on one Google consent screen. The first sign-in creates the record `users/{uid}.json`; when Google returns a refresh token (on the first consent, or a forced one), the web encrypts it with the KMS key, stores it in the record and starts the job for this user, which downloads the whole history. A returning user goes straight through without a consent screen and keeps the stored token. Without any Health scope ticked there is no identity, and the sign-in asks to try again; **Connect Fitbit** and **Restore access to data** force the consent screen. While the app is unverified, Google allows at most 100 users. Data is never shared between users.
 
-**Deleting an account** (account menu on the dashboard) marks the record as deleted and starts the job. The job revokes the token at Google and deletes `u/{uid}/` and the record. The web itself must not delete data.
+The new user's time zone comes from the browser (the sign-in links on the public pages add `?tz=`, carried through the sign-in in the pending cookie); on their first dashboard visit the page also saves units, week start and clock from the browser. All of it can be changed on the **Settings** page (`PUT /api/settings`). A new time zone moves every local date, so the web starts the job, which rebuilds all of the user's tables when the manifest's time zone differs from the record's. The MCP server instructions carry the time zone and preferences (imperial units, 12-hour clock, week start), so Claude and ChatGPT answer in them.
+
+**Download your data** (Settings, `GET /api/export`) streams a ZIP with a README, `account.json` (the record without the token), and everything under `u/{uid}/` except the lock: the raw JSON from the API, the Parquet tables and the sync status.
+
+**Deleting an account** (Settings on the dashboard) marks the record as deleted and starts the job. The job revokes the token at Google and deletes `u/{uid}/` and the record. The web itself must not delete data.
 
 To add an existing user with a token (e.g. when migrating):
 

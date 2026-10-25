@@ -1,4 +1,7 @@
-// Number, date and duration formatting (British English: 24-hour clock, day before month).
+// Number, date and duration formatting (British English: day before month), with the
+// clock and units from the user's settings.
+
+import { prefs } from './prefs';
 
 const nf = new Map<number, Intl.NumberFormat>();
 export function num(v: number | null | undefined, digits = 0): string {
@@ -26,8 +29,21 @@ export function duration(minutes: number | null | undefined): string {
   return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
 }
 
-/** "2026-10-23T06:58:00+02:00" -> "06:58", the local wall-clock time */
-export const clock = (s: string) => s.slice(11, 16);
+/** "2026-10-23T18:58:00+02:00" -> "18:58" (or "6:58 pm"), the local wall-clock time */
+export const clock = (s: string) => hhmm(s.slice(11, 16));
+
+/** "18:58" -> "18:58", or "6:58 pm" on the 12-hour clock. */
+export function hhmm(t: string): string {
+  if (prefs().clock === '24h') return t;
+  const h = Number(t.slice(0, 2));
+  return `${h % 12 || 12}:${t.slice(3, 5)} ${h < 12 ? 'am' : 'pm'}`;
+}
+
+/** A temperature stored in °C, in the user's units. */
+export function temperature(celsius: number | null | undefined): string {
+  if (celsius == null) return '–';
+  return prefs().units === 'imperial' ? `${num((celsius * 9) / 5 + 32, 1)} °F` : `${num(celsius, 1)} °C`;
+}
 
 /** Local date from "YYYY-MM-DD" (noon avoids DST edge cases). */
 export const parseDate = (d: string) => new Date(`${d}T12:00:00`);

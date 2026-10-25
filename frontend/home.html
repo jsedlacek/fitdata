@@ -150,5 +150,12 @@
         <span class="sm:ml-auto">Not affiliated with Google or Fitbit. Fitbit is a trademark of Google LLC.</span>
       </div>
     </footer>
+    <script>
+      // A new account starts in this browser's time zone (Settings can change it).
+      try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz) for (const a of document.querySelectorAll('a[href="/auth/login"]')) a.href = `/auth/login?tz=${encodeURIComponent(tz)}`;
+      } catch {}
+    </script>
   </body>
 </html>

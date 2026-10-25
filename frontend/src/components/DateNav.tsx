@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
 import { addDays, dateLong, isoDate, parseDate, relativeDay } from '@/lib/format';
+import { firstWeekday } from '@/lib/prefs';
 import { cn } from '@/lib/utils';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
@@ -44,7 +45,8 @@ export function DateNav({ date, available, onChange }: { date: string; available
   );
 }
 
-const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+/** By `Date#getDay`: Sunday first. */
+const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 function MiniCalendar({ selected, available, onSelect }: { selected: string; available: string[]; onSelect: (d: string) => void }) {
   const [month, setMonth] = useState(() => selected.slice(0, 7));
@@ -52,7 +54,9 @@ function MiniCalendar({ selected, available, onSelect }: { selected: string; ava
   const today = isoDate(new Date());
 
   const first = parseDate(`${month}-01`);
-  const offset = (first.getDay() + 6) % 7; // Monday first
+  const start = firstWeekday();
+  const offset = (first.getDay() - start + 7) % 7;
+  const weekdays = [...WEEKDAYS.slice(start), ...WEEKDAYS.slice(0, start)];
   const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
   const cells = [...Array(offset).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => `${month}-${String(i + 1).padStart(2, '0')}`)];
   const shift = (n: number) => {
@@ -75,7 +79,7 @@ function MiniCalendar({ selected, available, onSelect }: { selected: string; ava
         </Button>
       </div>
       <div className="grid grid-cols-7 gap-0.5 text-center text-[11px] text-muted">
-        {WEEKDAYS.map((w) => (
+        {weekdays.map((w) => (
           <div key={w} className="py-1">{w}</div>
         ))}
       </div>

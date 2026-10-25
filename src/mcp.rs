@@ -25,6 +25,7 @@ use crate::authz::{bearer_user, unauthorized};
 use crate::engine;
 use crate::model::{DailyMetrics, Exercise, NightRow, Time};
 use crate::query;
+use crate::users::{self, Clock, Units, User, WeekStart};
 use crate::warehouse::Need;
 use crate::web::{Config, HrMinute, Shared, SignedIn, day_detail, escape_html, last_run};
 
@@ -34,12 +35,34 @@ const MAX_DAYS: i64 = 400;
 /// Default and longest stretch of the minute tables a `query` can read.
 const QUERY_DEFAULT_DAYS: i64 = 90;
 
-const INSTRUCTIONS: &str = "Personal health data from the user's Fitbit, synced every hour. \
-Dates and times are local (Europe/Prague); times carry their UTC offset \
+/// The server instructions, with the user's time zone and their Settings.
+fn instructions(user: &User) -> String {
+    let mut s = format!(
+        "Personal health data from the user's Fitbit, synced every hour. \
+Dates and times are local ({}); times carry their UTC offset \
 (2026-10-25T02:30:00+01:00), so the hour repeated when clocks go back is told apart. \
 A night belongs to the date the user woke up. \
 Start with get_daily_metrics for trends and get_day for one day in detail; for anything else read \
-get_schema and use query.";
+get_schema and use query.",
+        user.tz().name()
+    );
+    let prefs = user.prefs.unwrap_or_default();
+    if prefs.units == Units::Imperial {
+        s.push_str(
+            " The data is in metric units; the user prefers imperial ones (°F, miles, pounds), \
+so convert when you answer.",
+        );
+    }
+    if prefs.clock == Clock::H12 {
+        s.push_str(" Write times on the 12-hour clock (6:30 pm).");
+    }
+    match prefs.week_start {
+        WeekStart::Monday => {}
+        WeekStart::Sunday => s.push_str(" The user's weeks start on Sunday."),
+        WeekStart::Saturday => s.push_str(" The user's weeks start on Saturday."),
+    }
+    s
+}
 
 /// The streamable HTTP transport's optional GET stream is not offered. A
 /// browser opening the URL gets a page on how to connect instead.
@@ -224,6 +247,14 @@ async fn dispatch(cfg: &Config, user: &SignedIn, msg: Value) -> Option<Reply> {
     };
     let result = match method.as_str() {
         "initialize" => {
+            let record = match users::get(&cfg.store, &user.uid).await {
+                Ok(Some(u)) => u,
+                Ok(None) => User::new(&user.uid),
+                Err(e) => {
+                    tracing::error!("{e:#}");
+                    return Some(Reply::error(id, -32603, "Internal error".into()));
+                }
+            };
             let asked = serde_json::from_value::<InitializeParams>(msg.params)
                 .map(|p| p.protocol_version)
                 .unwrap_or_default();
@@ -238,7 +269,7 @@ async fn dispatch(cfg: &Config, user: &SignedIn, msg: Value) -> Option<Reply> {
                     "name": "fitdata", "title": "Fitdata",
                     "version": env!("CARGO_PKG_VERSION"),
                 },
-                "instructions": INSTRUCTIONS,
+                "instructions": instructions(&record),
             })
         }
         "ping" => json!({}),
@@ -572,8 +603,8 @@ fn schema() -> Value {
         .collect();
     json!({
         "notes": "DataFusion SQL (close to PostgreSQL). Every table has `date` (local date). \
-                  TIMESTAMP WITH TIME ZONE columns are instants shown in local time \
-                  (Europe/Prague) with their UTC offset; extract, date_trunc, date_bin and \
+                  TIMESTAMP WITH TIME ZONE columns are instants shown in the user's local time \
+                  with their UTC offset; extract, date_trunc, date_bin and \
                   CAST(... AS DATE) work in local time, and so do literals without an offset \
                   (ts >= '2026-10-25 06:00:00'); give the offset to pick one of the hour repeated \
                   when clocks go back ('2026-10-25 02:30:00+01:00'). \

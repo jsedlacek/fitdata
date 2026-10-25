@@ -1,3 +1,4 @@
+import { prefs } from './prefs';
 import { cssVar } from './theme';
 
 /** Shared chart chrome read from the theme's CSS variables. */
@@ -51,12 +52,16 @@ export function chrome() {
 }
 
 /**
- * `HH:mm` of a time from the API (an instant) on the wall clock of `tz`.
+ * `HH:mm` (or `h:mm am`) of a time from the API (an instant) on the wall clock of `tz`.
  * The hour repeated when clocks go back is on the axis twice, so a time in
  * it gets its zone: `02:30 CEST`, then `02:30 CET`.
  */
 export function wallClock(tz: string) {
-  const hm = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: tz });
+  const hm = new Intl.DateTimeFormat('en-GB', {
+    ...(prefs().clock === '12h' ? { hour: 'numeric', hourCycle: 'h12' } : { hour: '2-digit', hourCycle: 'h23' }),
+    minute: '2-digit',
+    timeZone: tz,
+  });
   const zone = new Intl.DateTimeFormat('en-GB', { timeZone: tz, timeZoneName: 'short' });
   return (t: number | string) => {
     const v = typeof t === 'string' ? Date.parse(t) : t;

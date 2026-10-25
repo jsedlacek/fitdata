@@ -60,7 +60,7 @@
       <ul>
         <li>You sign in with your own Google account and are responsible for keeping it secure.</li>
         <li>You may connect only a Fitbit account that is yours.</li>
-        <li>You can delete your account at any time from the account menu, which deletes your data.</li>
+        <li>You can download a copy of your data or delete your account at any time in Settings; deleting the account deletes your data.</li>
       </ul>
 
       <h2>Fair use</h2>
@@ -113,5 +113,12 @@
         <span class="sm:ml-auto">Not affiliated with Google or Fitbit. Fitbit is a trademark of Google LLC.</span>
       </div>
     </footer>
+    <script>
+      // A new account starts in this browser's time zone (Settings can change it).
+      try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz) for (const a of document.querySelectorAll('a[href="/auth/login"]')) a.href = `/auth/login?tz=${encodeURIComponent(tz)}`;
+      } catch {}
+    </script>
   </body>
 </html>

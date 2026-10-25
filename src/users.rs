@@ -19,6 +19,10 @@ pub struct User {
     /// IANA name; local dates ("today") of the sync follow it.
     #[serde(default = "default_tz")]
     pub time_zone: String,
+    /// Display preferences (Settings page); `None` until the user (or their
+    /// browser, on the first visit) has chosen them.
+    #[serde(default)]
+    pub prefs: Option<Prefs>,
     /// The Health API refresh token, once Fitbit is connected.
     #[serde(default)]
     pub token: Option<EncryptedToken>,
@@ -35,6 +39,7 @@ impl User {
             uid: uid.to_string(),
             created: Utc::now(),
             time_zone: default_tz(),
+            prefs: None,
             token: None,
             deleted: false,
         }
@@ -50,6 +55,48 @@ impl User {
 
 fn default_tz() -> String {
     DEFAULT_TIME_ZONE.to_string()
+}
+
+/// How the dashboard (and Claude or ChatGPT, through the MCP instructions)
+/// shows the data. The data itself is always stored in metric units.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Prefs {
+    pub units: Units,
+    pub week_start: WeekStart,
+    pub clock: Clock,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Units {
+    #[default]
+    Metric,
+    Imperial,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WeekStart {
+    #[default]
+    Monday,
+    Sunday,
+    Saturday,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub enum Clock {
+    #[default]
+    #[serde(rename = "24h")]
+    H24,
+    #[serde(rename = "12h")]
+    H12,
+}
+
+/// A time zone the user may choose: a known IANA name.
+pub fn check_time_zone(name: &str) -> Result<chrono_tz::Tz> {
+    name.parse()
+        .map_err(|_| anyhow::anyhow!("unknown time zone {name:?}"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +177,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn prefs_serialize_as_the_page_sends_them() {
+        let p = Prefs {
+            units: Units::Imperial,
+            week_start: WeekStart::Sunday,
+            clock: Clock::H12,
+        };
+        let v = serde_json::to_value(p).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"units": "imperial", "weekStart": "sunday", "clock": "12h"})
+        );
+        assert!(check_time_zone("America/New_York").is_ok());
+        assert!(check_time_zone("Mars/Olympus").is_err());
+    }
+
     #[tokio::test]
     async fn stores_and_lists_users() {
         let tmp = tempfile::tempdir().unwrap();
@@ -150,5 +213,6 @@ mod tests {
         let three = get(&store, "3").await.unwrap().unwrap();
         assert_eq!(three.time_zone, DEFAULT_TIME_ZONE);
         assert!(three.token.is_none());
+        assert!(three.prefs.is_none());
     }
 }

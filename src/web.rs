@@ -12,7 +12,7 @@ use axum::extract::{Extension, MatchedPath, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Json, Redirect, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use chrono::{Duration, NaiveDate, SecondsFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -32,9 +32,9 @@ use crate::model::{self, DailyMetrics, Exercise, NightRow, Time};
 use crate::oauth::{ClientCredentials, auth_request, exchange_code};
 use crate::status;
 use crate::store::Store;
-use crate::users::{self, User};
+use crate::users::{self, Prefs, User};
 use crate::warehouse::{Need, SESSION_MEMORY, Warehouse};
-use crate::{api, authz, mcp};
+use crate::{api, authz, export, mcp};
 
 const SESSION_COOKIE: &str = "fd_session";
 const OAUTH_COOKIE: &str = "fd_oauth";
@@ -133,6 +133,8 @@ pub async fn serve(cfg: Config) -> Result<()> {
         .route("/api/day/{date}", get(day))
         .route("/api/sync", get(sync_status).post(start_sync))
         .route("/api/account", delete(delete_account))
+        .route("/api/settings", put(save_settings))
+        .route("/api/export", get(export::download))
         .route("/api/{*rest}", get(|| async { StatusCode::NOT_FOUND }))
         .route("/auth/fitbit", get(connect_fitbit))
         .fallback_service(spa)
@@ -280,7 +282,7 @@ async fn require_session(State(cfg): State<Shared>, mut req: Request, next: Next
 /// `email` and a single consent screen also connects Fitbit. `renew` forces the
 /// consent screen for a new refresh token (Connect Fitbit, Restore access).
 /// After the callback the browser returns to `next`.
-fn start_oauth(cfg: &Config, renew: bool, next: &str) -> Response {
+fn start_oauth(cfg: &Config, renew: bool, next: &str, tz: Option<String>) -> Response {
     let redirect_uri = format!("{}/auth/callback", cfg.public_url);
     let req = match auth_request(&cfg.creds, &redirect_uri, READ_SCOPES, renew) {
         Ok(r) => r,
@@ -290,6 +292,7 @@ fn start_oauth(cfg: &Config, renew: bool, next: &str) -> Response {
         state: req.state,
         verifier: req.verifier,
         next: next.to_string(),
+        tz,
     };
     let pending = claims::sign(&cfg.session_key, pending, now() + 600);
     (
@@ -305,6 +308,8 @@ fn start_oauth(cfg: &Config, renew: bool, next: &str) -> Response {
 #[derive(Deserialize)]
 struct LoginParams {
     next: Option<String>,
+    /// The browser's time zone (the sign-in links on the public pages add it).
+    tz: Option<String>,
 }
 
 /// Only paths on this site, so the login cannot be used as an open redirect.
@@ -317,11 +322,12 @@ fn local_path(next: Option<&str>) -> &str {
 
 async fn login(State(cfg): State<Shared>, Query(p): Query<LoginParams>) -> Response {
     let next = local_path(p.next.as_deref());
-    start_oauth(&cfg, false, next)
+    let tz = p.tz.filter(|tz| users::check_time_zone(tz).is_ok());
+    start_oauth(&cfg, false, next, tz)
 }
 
 async fn connect_fitbit(State(cfg): State<Shared>) -> Response {
-    start_oauth(&cfg, true, "/")
+    start_oauth(&cfg, true, "/", None)
 }
 
 #[derive(Deserialize)]
@@ -366,6 +372,7 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
         state,
         verifier,
         next,
+        tz,
     }) = cookie(headers, OAUTH_COOKIE).and_then(|t| claims::verify(&cfg.session_key, t))
     else {
         bail!("sign-in expired");
@@ -402,7 +409,11 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
         // the old data goes and only then can the user start afresh.
         Some(_) => bail!("your account is still being deleted. Try again in a minute"),
         None => {
-            users::put(&cfg.store, &User::new(&uid)).await?;
+            let mut user = User::new(&uid);
+            if let Some(tz) = tz.filter(|tz| users::check_time_zone(tz).is_ok()) {
+                user.time_zone = tz;
+            }
+            users::put(&cfg.store, &user).await?;
             tracing::info!(%uid, "new user");
         }
     }
@@ -498,9 +509,40 @@ pub(crate) async fn last_run(store: &Store, uid: &str, ok_only: bool) -> Result<
 
 /// Who is signed in, for the page.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Me {
+    /// The Google Health user ID, for support requests.
+    id: String,
     /// Fitbit is connected (a refresh token is stored).
     connected: bool,
+    settings: Settings,
+    /// The preferences were chosen (or detected from the browser) at least once.
+    settings_saved: bool,
+}
+
+/// The Settings page's values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Settings {
+    /// IANA name; local dates follow it.
+    time_zone: String,
+    #[serde(flatten)]
+    prefs: Prefs,
+}
+
+impl Me {
+    fn new(user: Option<User>, uid: &str) -> Self {
+        let user = user.unwrap_or_else(|| User::new(uid));
+        Me {
+            id: user.uid.clone(),
+            connected: user.token.is_some(),
+            settings: Settings {
+                time_zone: user.tz().name().to_string(),
+                prefs: user.prefs.unwrap_or_default(),
+            },
+            settings_saved: user.prefs.is_some(),
+        }
+    }
 }
 
 async fn overview(State(cfg): State<Shared>, Extension(user): Extension<SignedIn>) -> Response {
@@ -513,9 +555,7 @@ async fn overview(State(cfg): State<Shared>, Extension(user): Extension<SignedIn
         Ok((days, last_sync, record)) => Json(Overview {
             days,
             last_sync,
-            user: Me {
-                connected: record.is_some_and(|r| r.token.is_some()),
-            },
+            user: Me::new(record, &user.uid),
         })
         .into_response(),
         Err(e) => internal(e),
@@ -561,6 +601,52 @@ async fn start_sync(State(cfg): State<Shared>, Extension(user): Extension<Signed
     };
     match result.await {
         Ok(()) => Json(json!({ "running": true })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+/// Saves the Settings page. A new time zone moves every local date, so the
+/// sync job rebuilds the tables (`job::sync_user`); it is started now unless
+/// a run is in progress, which leaves it to the next one.
+async fn save_settings(
+    State(cfg): State<Shared>,
+    Extension(user): Extension<SignedIn>,
+    Json(new): Json<Settings>,
+) -> Response {
+    let tz = match users::check_time_zone(&new.time_zone) {
+        Ok(tz) => tz,
+        Err(e) => return (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response(),
+    };
+    let result = async {
+        let mut u = users::get(&cfg.store, &user.uid)
+            .await?
+            .context("no such user")?;
+        if u.deleted {
+            bail!("the account is being deleted");
+        }
+        let moved = u.tz() != tz;
+        u.time_zone = tz.name().to_string();
+        u.prefs = Some(new.prefs);
+        users::put(&cfg.store, &u).await?;
+        if moved && u.token.is_some() {
+            // Saved either way: if the job does not start, the next hourly run rebuilds.
+            let start = async {
+                if !running(&cfg, &user.uid).await? {
+                    cfg.sync_job.run(Some(&user.uid)).await?;
+                }
+                Ok::<_, anyhow::Error>(())
+            };
+            match start.await {
+                Ok(()) => tracing::info!(uid = %user.uid, %tz, "time zone changed, sync started"),
+                Err(e) => {
+                    tracing::warn!("starting the sync after a time zone change failed: {e:#}")
+                }
+            }
+        }
+        Ok::<_, anyhow::Error>(Me::new(Some(u), &user.uid))
+    };
+    match result.await {
+        Ok(me) => Json(me).into_response(),
         Err(e) => internal(e),
     }
 }

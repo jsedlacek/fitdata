@@ -3,7 +3,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useNavigate } from '@tanstack/react-router';
 import { Activity, BedDouble, Flame, Footprints, HeartPulse, RefreshCw, Waves, Wind, Zap } from 'lucide-react';
 import { dayQuery, overviewQuery, syncQuery, type Daily } from '@/lib/api';
-import { duration, hm, num } from '@/lib/format';
+import { duration, hm, num, temperature } from '@/lib/format';
 import { before, mean, type MetricKey } from '@/lib/stats';
 import { DateNav } from '@/components/DateNav';
 import { DayTimeline } from '@/components/DayTimeline';
@@ -164,7 +164,7 @@ function HeartSummary({ m }: { m: Daily }) {
           </div>
         ))}
         <div className="col-span-2 text-xs text-muted">
-          Exercise in total {duration(m.exercise_minutes ?? 0)} · nightly temperature {m.nightly_temp_c != null ? `${num(m.nightly_temp_c, 1)} °C` : '–'}
+          Exercise in total {duration(m.exercise_minutes ?? 0)} · nightly temperature {temperature(m.nightly_temp_c)}
         </div>
       </CardBody>
     </Card>

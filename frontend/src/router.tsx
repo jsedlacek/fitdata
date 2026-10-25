@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { AppShell } from '@/components/AppShell';
 import { DayPage } from '@/routes/day';
+import { SettingsPage } from '@/routes/settings';
 import { TrendsPage, type Range } from '@/routes/trends';
 
 const rootRoute = createRootRoute({ component: AppShell });
@@ -31,8 +32,14 @@ const trendsRoute = createRoute({
   },
 });
 
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: SettingsPage,
+});
+
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([dayRoute, trendsRoute]),
+  routeTree: rootRoute.addChildren([dayRoute, trendsRoute, settingsRoute]),
   defaultPreload: 'intent',
 });
 
