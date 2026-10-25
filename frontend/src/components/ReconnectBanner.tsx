@@ -8,18 +8,19 @@ import { Button } from './ui/button';
  * last sync could not use the token.
  */
 export function ReconnectBanner({ run, user }: { run: SyncRun | null; user: Me | null }) {
-  const [justConnected] = useState(() => new URLSearchParams(location.search).has('fitbit'));
+  // Set by the sign-in only for a user who has synced before; a new user's
+  // first sync has its own card on the page (FirstSync).
+  const [reconnected] = useState(() => new URLSearchParams(location.search).get('fitbit') === 'reconnected');
   useEffect(() => {
-    if (justConnected) history.replaceState(null, '', location.pathname);
-  }, [justConnected]);
+    if (reconnected) history.replaceState(null, '', location.pathname);
+  }, [reconnected]);
 
-  // A new user's first sync has its own card on the page (FirstSync).
-  if (justConnected && run) {
+  if (reconnected) {
     return (
       <div role="status" className="mb-5 flex items-start gap-3 rounded-xl border border-l-4 border-l-good bg-surface px-4 py-3 text-sm">
         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-good" />
         <p>
-          Access to your data is restored. Missing days will be filled in at the next sync (every hour).
+          Access to your data is restored. A sync has started and will fill in the missing days.
         </p>
       </div>
     );

@@ -410,6 +410,9 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     // A refresh token comes with the first consent (and every forced one);
     // a returning user goes straight through and keeps the stored one.
     let connected = tokens.refresh_token.is_some();
+    // A user who has synced before is restoring lost access; a new user's
+    // first sync has its own card on the dashboard.
+    let reconnected = connected && status::get(&cfg.store, &uid).await?.last_run.is_some();
     if connected {
         let token = tokens.into_stored()?;
         users::save_token(&cfg.store, &cfg.kms, &uid, &token).await?;
@@ -426,8 +429,8 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
         now() + SESSION_DAYS * 86_400,
     );
     let next = match local_path(Some(&next)) {
-        // The dashboard confirms the connection (ReconnectBanner).
-        "/" if connected => "/?fitbit=connected",
+        // The dashboard confirms restored access (ReconnectBanner).
+        "/" if reconnected => "/?fitbit=reconnected",
         n => n,
     };
     let mut resp = Redirect::to(next).into_response();
