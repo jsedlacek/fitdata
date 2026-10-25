@@ -34,7 +34,7 @@ export function chrome() {
     /** Time axis labelled with the wall clock of time zone `tz`. */
     timeAxis: (tz: string) => ({
       type: 'time' as const,
-      axisLabel: { ...axisLabel, hideOverlap: true, formatter: hhmm(tz) },
+      axisLabel: { ...axisLabel, hideOverlap: true, formatter: wallClock(tz) },
       axisLine: { lineStyle: { color: c.axis } },
       axisTick: { show: false },
       splitLine: { show: false },
@@ -51,13 +51,19 @@ export function chrome() {
 }
 
 /**
- * `HH:mm` of an instant on the wall clock of `tz`. Times from the API are
- * instants with their offset, so the hour repeated when clocks go back is
- * on the axis twice (02:00, 02:00), not one hour drawn over the other.
+ * `HH:mm` of a time from the API (an instant) on the wall clock of `tz`.
+ * The hour repeated when clocks go back is on the axis twice, so a time in
+ * it gets its zone: `02:30 SELČ`, then `02:30 SEČ`.
  */
-function hhmm(tz: string) {
-  const f = new Intl.DateTimeFormat('cs-CZ', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: tz });
-  return (v: number) => f.format(v);
+export function wallClock(tz: string) {
+  const hm = new Intl.DateTimeFormat('cs-CZ', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: tz });
+  const zone = new Intl.DateTimeFormat('cs-CZ', { timeZone: tz, timeZoneName: 'short' });
+  return (t: number | string) => {
+    const v = typeof t === 'string' ? Date.parse(t) : t;
+    const s = hm.format(v);
+    const repeated = hm.format(v - 3_600_000) === s || hm.format(v + 3_600_000) === s;
+    return repeated ? `${s} ${zone.formatToParts(v).find((p) => p.type === 'timeZoneName')?.value ?? ''}`.trim() : s;
+  };
 }
 
 /** Minutes between two times from the API. */

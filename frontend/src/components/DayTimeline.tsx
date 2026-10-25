@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { DayDetail } from '@/lib/api';
-import { chrome, minutesBetween, row } from '@/lib/chart';
-import { clock, num } from '@/lib/format';
+import { chrome, minutesBetween, row, wallClock } from '@/lib/chart';
+import { num } from '@/lib/format';
 import { useResolvedTheme } from '@/lib/theme';
 import { EChart } from './EChart';
 import { exerciseLabel } from './ExerciseList';
@@ -23,6 +23,7 @@ export function DayTimeline({ day }: { day: DayDetail }) {
   const option = useMemo(() => {
     const t = chrome();
     const { c } = t;
+    const clock = wallClock(day.timeZone);
     const rows = withGaps(day.heartRate, 5);
     const sleepArea = day.sleep ? [[{ xAxis: day.sleep.start, name: 'Spánek' }, { xAxis: day.sleep.end }]] : [];
     const exerciseAreas = day.exercises.map((e) => [{ xAxis: e.start, name: exerciseLabel(e) }, { xAxis: e.end }]);

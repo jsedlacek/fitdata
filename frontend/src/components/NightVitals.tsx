@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { DayDetail } from '@/lib/api';
-import { chrome, minutesBetween } from '@/lib/chart';
-import { clock, num } from '@/lib/format';
+import { chrome, minutesBetween, wallClock } from '@/lib/chart';
+import { num } from '@/lib/format';
 import { useResolvedTheme } from '@/lib/theme';
 import { EChart } from './EChart';
 import { Card, CardBody, CardHeader } from './ui/card';
@@ -21,6 +21,7 @@ function VitalChart({ title, subtitle, points, timeZone, unit, digits, gap, summ
   const theme = useResolvedTheme();
   const option = useMemo(() => {
     const t = chrome();
+    const clock = wallClock(timeZone);
     return {
       animation: false,
       textStyle: t.textStyle,

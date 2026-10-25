@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { BedDouble, Moon, Sunrise, Timer } from 'lucide-react';
 import type { Night, Stage } from '@/lib/api';
-import { chrome, minutesBetween } from '@/lib/chart';
-import { clock, duration, num } from '@/lib/format';
+import { chrome, minutesBetween, wallClock } from '@/lib/chart';
+import { duration, num } from '@/lib/format';
 import { useResolvedTheme } from '@/lib/theme';
 import { EChart } from './EChart';
 import { Card, CardBody, CardHeader } from './ui/card';
@@ -23,6 +23,7 @@ export function SleepCard({ night, timeZone }: { night: Night | null; timeZone: 
   const option = useMemo(() => {
     if (!night) return null;
     const t = chrome();
+    const clock = wallClock(timeZone);
     const all = [...STAGES, { key: 'RESTLESS' as const, ...RESTLESS }];
     const color = Object.fromEntries(all.map((s) => [s.key, t.c[s.color.slice(2) as 's1']])) as Record<Stage | 'RESTLESS', string>;
     const label = Object.fromEntries(all.map((s) => [s.key, s.label])) as Record<Stage | 'RESTLESS', string>;
@@ -77,6 +78,7 @@ export function SleepCard({ night, timeZone }: { night: Night | null; timeZone: 
     );
   }
 
+  const clock = wallClock(timeZone);
   const asleep = night.minutes_asleep ?? 0;
   const inBed = minutesBetween(night.start, night.end);
   const total = STAGES.reduce((a, s) => a + (night.stage_minutes[s.key] ?? 0), 0) || 1;
