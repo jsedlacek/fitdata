@@ -1,7 +1,7 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, CheckCircle2, LogOut, RefreshCw, Settings, TriangleAlert, UserRound } from 'lucide-react';
+import { Bot, CheckCircle2, RefreshCw, Settings, TriangleAlert } from 'lucide-react';
 import { overviewQuery, saveSettings, startSync, syncQuery, type Me, type Overview, type SyncRun } from '@/lib/api';
 import { detectSettings, setPrefs } from '@/lib/prefs';
 import { ago } from '@/lib/format';
@@ -31,7 +31,13 @@ export function AppShell() {
           <div className="flex-1" />
           {data && <AskAi />}
           {data?.user.connected !== false && <SyncStatus run={data?.lastSync ?? null} />}
-          {data && <AccountMenu />}
+          {data && (
+            <Button asChild variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink">
+              <Link to="/settings" aria-label="Settings" title="Settings" activeProps={{ className: 'bg-shade !text-ink' }}>
+                <Settings />
+              </Link>
+            </Button>
+          )}
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-5">
@@ -145,62 +151,36 @@ function SyncStatus({ run }: { run: SyncRun | null }) {
     return () => clearInterval(id);
   }, []);
 
-  const Icon = run?.ok ? CheckCircle2 : TriangleAlert;
+  // One control: the state of the last sync, and a click starts a new one.
+  const failed = start.isError || (run && !run.ok);
+  const [Icon, color] = running
+    ? [RefreshCw, '']
+    : failed
+      ? [TriangleAlert, 'text-critical']
+      : run
+        ? [CheckCircle2, 'text-good']
+        : [RefreshCw, ''];
+  const label = running ? 'Syncing…' : start.isError ? 'Could not start the sync' : run ? (run.ok ? 'Synced' : 'Sync failed') : 'Sync now';
+  const title = running
+    ? 'Sync in progress'
+    : `${run ? `Last sync ${new Date(run.run_at).toLocaleString('en-GB')}. ` : ''}Click to sync now`;
   return (
-    <div className="flex items-center gap-1.5 text-[13px] text-ink-2">
-      {running ? (
-        <span className="hidden md:inline">Syncing…</span>
-      ) : (
-        run && (
-          <span
-            className="hidden items-center gap-1.5 md:flex"
-            title={`Last sync ${new Date(run.run_at).toLocaleString('en-GB')}`}
-          >
-            <Icon className={run.ok ? 'size-4 text-good' : 'size-4 text-critical'} />
-            <span>{run.ok ? 'Synced' : 'Sync failed'}</span>
-            <span className="text-muted">{ago(run.run_at)}</span>
-          </span>
-        )
-      )}
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className={cn('text-ink-2 hover:text-ink disabled:opacity-100', start.isError && 'text-critical')}
-        disabled={running}
-        onClick={() => start.mutate()}
-        aria-label="Sync now"
-        title={start.isError ? 'Could not start the sync, try again' : running ? 'Sync in progress' : 'Sync now'}
-      >
-        <RefreshCw className={cn(running && 'animate-spin')} />
-      </Button>
-    </div>
+    <Button
+      variant="ghost"
+      size="sm"
+      className="group px-2 text-[13px] font-normal text-ink-2 hover:text-ink disabled:opacity-100 md:px-2.5"
+      disabled={running}
+      onClick={() => start.mutate()}
+      aria-label={running ? 'Syncing' : 'Sync now'}
+      title={title}
+    >
+      {/* At rest the icon tells how the last sync went; on hover it offers a new one. */}
+      <Icon className={cn(color, running && 'animate-spin', !running && 'group-hover:hidden')} />
+      {!running && <RefreshCw className="hidden group-hover:block" />}
+      <span className="hidden md:inline">{label}</span>
+      {run && !running && !start.isError && <span className="hidden text-muted md:inline">{ago(run.run_at)}</span>}
+    </Button>
   );
 }
 
-function AccountMenu() {
-  const [open, setOpen] = useState(false);
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink" aria-label="Account">
-          <UserRound />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-56 text-sm">
-        <div className="flex flex-col gap-1">
-          <Button asChild variant="ghost" size="sm" className="justify-start">
-            <Link to="/settings" onClick={() => setOpen(false)}>
-              <Settings /> Settings
-            </Link>
-          </Button>
-          <Button asChild variant="ghost" size="sm" className="justify-start">
-            <a href="/auth/logout">
-              <LogOut /> Sign out
-            </a>
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
 

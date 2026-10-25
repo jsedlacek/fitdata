@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Download, Laptop, LifeBuoy, Moon, Sun, Trash2 } from 'lucide-react';
+import { Check, Copy, Download, Laptop, LifeBuoy, LogOut, Moon, Sun, Trash2 } from 'lucide-react';
 import {
   deleteAccount,
   EXPORT_URL,
@@ -30,7 +30,14 @@ export function SettingsPage() {
   const user = overview.data?.user;
   return (
     <div className="mx-auto max-w-2xl space-y-5">
-      <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+        <Button asChild variant="outline" size="sm">
+          <a href="/auth/logout">
+            <LogOut /> Sign out
+          </a>
+        </Button>
+      </div>
       {user ? (
         <>
           <Preferences settings={user.settings} connected={user.connected} />
@@ -244,9 +251,7 @@ function Support({ userId }: { userId: string }) {
           </button>
         </div>
         <p className="text-[13px] text-muted">
-          Fitdata never learns your name or e-mail, so mention the user ID when you write from another device.{' '}
-          <a href="/privacy" className="underline hover:text-ink-2">Privacy</a> ·{' '}
-          <a href="/terms" className="underline hover:text-ink-2">Terms</a>
+          Fitdata never learns your name or e-mail, so mention the user ID when you write from another device.
         </p>
       </CardBody>
     </Card>
