@@ -2,6 +2,7 @@
 name = "fitdata-derive"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 # `#[derive(Columns)]`: a table's columns declared by its row struct.
 

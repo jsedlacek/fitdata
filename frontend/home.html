@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)" />
+    <title>fitdata · your Fitbit data, yours to explore</title>
+    <meta
+      name="description"
+      content="fitdata downloads your Fitbit data through the Google Health API and shows it on a dashboard of sleep, heart rate, HRV, SpO₂ and activity. Ask Claude or ChatGPT about it, too."
+    />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="stylesheet" href="/src/index.css" />
+    <script>
+      // Apply the stored theme before first paint to avoid a flash.
+      try {
+        const t = localStorage.getItem('theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
+  </head>
+  <body class="min-h-dvh">
+    <header class="border-b">
+      <div class="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4">
+        <a href="/" class="flex items-center gap-2 font-semibold tracking-tight">
+          <img src="/favicon.svg" alt="" class="size-7" />
+          fitdata
+        </a>
+        <div class="flex-1"></div>
+        <a href="https://github.com/jsedlacek/fitdata" class="rounded-md px-2.5 py-1.5 text-sm text-ink-2 hover:bg-shade hover:text-ink">GitHub</a>
+        <a href="/auth/login" class="inline-flex h-9 items-center rounded-lg bg-ink px-3.5 text-sm font-medium text-page hover:opacity-90">Sign in</a>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-5xl px-4">
+      <section class="py-16 sm:py-24">
+        <h1 class="max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">Your Fitbit data, yours to explore.</h1>
+        <p class="mt-5 max-w-2xl text-lg text-ink-2 text-pretty">
+          fitdata downloads your data from Fitbit through the Google Health API every hour and shows it on a clean
+          dashboard: sleep, heart rate, HRV, blood oxygen and activity, day by day and over time. Connect Claude or
+          ChatGPT and ask questions about it in plain language.
+        </p>
+        <div class="mt-8 flex flex-wrap gap-3">
+          <a href="/auth/login" class="inline-flex h-10 items-center rounded-lg bg-ink px-4 text-sm font-medium text-page hover:opacity-90">Sign in with Google</a>
+          <a href="https://github.com/jsedlacek/fitdata" class="inline-flex h-10 items-center rounded-lg border bg-surface px-4 text-sm font-medium hover:bg-shade">View the source</a>
+        </div>
+        <p class="mt-4 text-sm text-muted">
+          fitdata is invite-only for now. To ask for an invite, write to
+          <a href="mailto:sedlacek.jakub@gmail.com" class="underline underline-offset-2 hover:text-ink-2">sedlacek.jakub@gmail.com</a>.
+        </p>
+      </section>
+
+      <section class="grid gap-4 sm:grid-cols-3">
+        <div class="rounded-xl border bg-surface p-5">
+          <h2 class="font-semibold">One day at a glance</h2>
+          <p class="mt-2 text-sm text-ink-2">Last night's sleep stages, heart rate through the day, HRV, SpO₂, steps and workouts on one page.</p>
+        </div>
+        <div class="rounded-xl border bg-surface p-5">
+          <h2 class="font-semibold">Trends over months</h2>
+          <p class="mt-2 text-sm text-ink-2">Resting heart rate, HRV, sleep and activity over a week, a month, a quarter or your whole history.</p>
+        </div>
+        <div class="rounded-xl border bg-surface p-5">
+          <h2 class="font-semibold">Ask your AI assistant</h2>
+          <p class="mt-2 text-sm text-ink-2">A read-only MCP server lets Claude or ChatGPT look at your data when you ask them to, and only yours.</p>
+        </div>
+      </section>
+
+      <section class="py-16">
+        <h2 class="text-2xl font-semibold tracking-tight">How it works</h2>
+        <ol class="mt-6 grid gap-6 sm:grid-cols-3">
+          <li>
+            <div class="text-sm font-medium text-s1">1</div>
+            <h3 class="mt-1 font-semibold">Sign in with Google</h3>
+            <p class="mt-1 text-sm text-ink-2">The Google account your Fitbit uses. fitdata only learns your e-mail address and account ID.</p>
+          </li>
+          <li>
+            <div class="text-sm font-medium text-s1">2</div>
+            <h3 class="mt-1 font-semibold">Connect Fitbit</h3>
+            <p class="mt-1 text-sm text-ink-2">Grant read-only access to activity, health metrics, sleep and your profile. fitdata never writes to your account.</p>
+          </li>
+          <li>
+            <div class="text-sm font-medium text-s1">3</div>
+            <h3 class="mt-1 font-semibold">Explore</h3>
+            <p class="mt-1 text-sm text-ink-2">Your whole history is downloaded once, then the latest data every hour.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="mb-16 rounded-xl border bg-surface-2 p-6 sm:p-8">
+        <h2 class="text-2xl font-semibold tracking-tight">Your data stays yours</h2>
+        <ul class="mt-4 grid gap-3 text-sm text-ink-2 sm:grid-cols-2">
+          <li><strong class="text-ink">Read-only access.</strong> Only the four Google Health scopes the dashboard needs.</li>
+          <li><strong class="text-ink">Never sold, never for ads.</strong> Your data isn't shared with anyone or used to train AI models.</li>
+          <li><strong class="text-ink">Stored in the EU.</strong> On Google Cloud in Belgium, encrypted; your access token additionally with a dedicated key.</li>
+          <li><strong class="text-ink">Delete it any time.</strong> One click removes all your data and revokes fitdata's access.</li>
+        </ul>
+        <p class="mt-5 text-sm"><a href="/privacy" class="font-medium underline underline-offset-2">Read the privacy policy</a></p>
+      </section>
+    </main>
+
+    <footer class="border-t">
+      <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-6 text-[13px] text-muted">
+        <a href="/privacy" class="hover:text-ink-2">Privacy</a>
+        <a href="/terms" class="hover:text-ink-2">Terms</a>
+        <a href="https://github.com/jsedlacek/fitdata" class="hover:text-ink-2">GitHub</a>
+        <a href="mailto:sedlacek.jakub@gmail.com" class="hover:text-ink-2">Contact</a>
+        <span class="sm:ml-auto">Not affiliated with Google or Fitbit. Fitbit is a trademark of Google LLC.</span>
+      </div>
+    </footer>
+  </body>
+</html>

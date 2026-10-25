@@ -18,9 +18,9 @@ gcloud services enable health.googleapis.com --project <PROJECT_ID>
 
 Console → **Google Auth Platform**:
 
-1. **Branding**: app name (e.g. "fitdata"), support e-mail = your Gmail.
+1. **Branding**: app name (e.g. "fitdata"), support e-mail = your Gmail, logo, and the public pages the web serves without sign-in: home page `https://fitdata.jakub.contact/`, privacy policy `/privacy`, terms `/terms` (`frontend/home.html`, `privacy.html`, `terms.html`). Authorized domain `jakub.contact`.
 2. **Audience**: User type **External**. Add your Gmail to *Test users*.
-3. **Data Access** → *Add or remove scopes*: add all `googlehealth.*.readonly` scopes (listed in `src/datatypes.rs`, `READ_SCOPES`).
+3. **Data Access** → *Add or remove scopes*: add the four `googlehealth.*.readonly` scopes listed in `src/datatypes.rs` (`READ_SCOPES`), and no others: Google verification asks for the narrowest scopes.
 4. **Audience** → **Publish app** (status *In production*).
    - In *Testing*, the refresh token expires after 7 days and the daily job would stop working.
    - Health scopes are "restricted", but an unverified app may have up to 100 users. Sign-in only shows the warning *"Google hasn't verified this app"*. Click *Advanced → Go to fitdata (unsafe)*. More users (or no warning) need the app verified by Google.

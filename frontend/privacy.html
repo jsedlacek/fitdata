@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)" />
+    <title>Privacy policy · fitdata</title>
+    <meta name="description" content="How fitdata collects, uses, stores and deletes your data." />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="stylesheet" href="/src/index.css" />
+    <script>
+      // Apply the stored theme before first paint to avoid a flash.
+      try {
+        const t = localStorage.getItem('theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
+  </head>
+  <body class="min-h-dvh">
+    <header class="border-b">
+      <div class="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4">
+        <a href="/" class="flex items-center gap-2 font-semibold tracking-tight">
+          <img src="/favicon.svg" alt="" class="size-7" />
+          fitdata
+        </a>
+        <div class="flex-1"></div>
+        <a href="https://github.com/jsedlacek/fitdata" class="rounded-md px-2.5 py-1.5 text-sm text-ink-2 hover:bg-shade hover:text-ink">GitHub</a>
+        <a href="/auth/login" class="inline-flex h-9 items-center rounded-lg bg-ink px-3.5 text-sm font-medium text-page hover:opacity-90">Sign in</a>
+      </div>
+    </header>
+
+    <main class="legal mx-auto max-w-3xl px-4 py-12">
+      <h1>Privacy policy</h1>
+      <p class="text-sm text-muted">Last updated 25 October 2026</p>
+
+      <p>
+        fitdata (<a href="https://fitdata.jakub.contact">fitdata.jakub.contact</a>) is a personal dashboard for your
+        Fitbit data. It is run by Jakub Sedláček, an individual in the Czech Republic, who is the controller of your
+        personal data. Questions and requests go to
+        <a href="mailto:sedlacek.jakub@gmail.com">sedlacek.jakub@gmail.com</a>.
+      </p>
+
+      <h2>What we collect</h2>
+      <ul>
+        <li>
+          <strong>Your Google account:</strong> your Google account ID and e-mail address, when you sign in with Google.
+          We use them to know who you are and to keep your data apart from everyone else's.
+        </li>
+        <li>
+          <strong>Your health and fitness data</strong>, read from the Google Health API after you choose
+          <em>Connect Fitbit</em> and grant access. fitdata asks only for these read-only scopes:
+          <ul>
+            <li><code>googlehealth.activity_and_fitness.readonly</code>: steps, distance, floors, energy burned, active and active zone minutes, sedentary periods, exercise sessions;</li>
+            <li><code>googlehealth.health_metrics_and_measurements.readonly</code>: heart rate, heart rate variability, resting heart rate, blood oxygen (SpO₂), respiratory rate, skin temperature during sleep, VO₂ max, weight, height, body fat and blood glucose;</li>
+            <li><code>googlehealth.sleep.readonly</code>: sleep sessions and stages;</li>
+            <li><code>googlehealth.profile.readonly</code>: the date your account was created, so we know how far back your history goes.</li>
+          </ul>
+        </li>
+        <li>
+          <strong>Access tokens:</strong> the token Google issues so fitdata can download new data every hour. It is
+          stored encrypted with a dedicated Cloud KMS key; the web server can encrypt it but not read it.
+        </li>
+        <li>
+          <strong>Technical logs:</strong> our hosting provider records requests (time, address, path, IP address and
+          browser) to keep the service secure and working. These logs are kept for 30 days.
+        </li>
+      </ul>
+      <p>We don't collect anything else: no analytics, no tracking pixels, no advertising identifiers.</p>
+
+      <h2>How we use it</h2>
+      <p>
+        Only to provide fitdata to you: downloading your data, turning it into the tables behind your dashboard,
+        showing it to you, and answering the AI assistants you connect yourself. We don't sell your data, show you
+        ads, build profiles of you, use your data to train AI or machine learning models, or let anyone read it. The
+        only exceptions are fixing a problem you ask us to look into, with your consent, keeping the service secure,
+        and complying with the law.
+      </p>
+      <p>
+        fitdata's use and transfer to any other app of information received from Google APIs will adhere to the
+        <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+        including the Limited Use requirements.
+      </p>
+
+      <h2>Legal basis</h2>
+      <p>
+        Health data is a special category of personal data under the GDPR. We process it on the basis of your
+        explicit consent (Articles 6(1)(a) and 9(2)(a) GDPR), which you give when you connect Fitbit and can withdraw
+        at any time by deleting your account or revoking fitdata's access in your
+        <a href="https://myaccount.google.com/connections">Google account</a>. Your sign-in details are processed to
+        provide the service you asked for (Article 6(1)(b)), and logs for our legitimate interest in a secure service
+        (Article 6(1)(f)).
+      </p>
+
+      <h2>Who else sees it</h2>
+      <ul>
+        <li>
+          <strong>Google Cloud</strong> hosts fitdata and stores your data as our processor, in the
+          <code>europe-west1</code> region (Belgium, EU).
+        </li>
+        <li>
+          <strong>AI assistants you connect.</strong> If you add fitdata to Claude, ChatGPT or another MCP client, that
+          assistant can read your data when you ask it something; what it reads is sent to its provider at your
+          request and is covered by that provider's privacy policy. You can disconnect it at any time in the
+          assistant's settings.
+        </li>
+      </ul>
+      <p>Nobody else. Your data is never shared with other fitdata users.</p>
+
+      <h2>Security</h2>
+      <p>
+        All traffic is encrypted (HTTPS) and data is encrypted at rest. Every request reads only the signed-in user's
+        data, the assistants' queries run in a session that can see only your tables, and only the hourly sync job
+        can decrypt access tokens. The code is open source on
+        <a href="https://github.com/jsedlacek/fitdata">GitHub</a>, so you can check how it works.
+      </p>
+
+      <h2>How long we keep it</h2>
+      <p>
+        As long as your account exists. When you choose <em>Delete account</em> in the account menu, fitdata revokes
+        its access at Google and deletes your data and your account record, usually within minutes. Deleted files can
+        remain in Google Cloud's deleted-object retention for up to 7 days before they are gone for good. Logs expire
+        after 30 days.
+      </p>
+
+      <h2>Cookies</h2>
+      <p>
+        fitdata sets only cookies that it needs to work: <code>fd_session</code> keeps you signed in for up to 30 days
+        and <code>fd_oauth</code> protects the sign-in for 10 minutes. Your choice of light or dark theme is kept in
+        your browser's local storage. No consent banner is needed because nothing is used for tracking.
+      </p>
+
+      <h2>Your rights</h2>
+      <p>
+        You can ask for a copy of your data, its correction, deletion or a transfer to another service, object to or
+        restrict its processing, and withdraw your consent, by writing to the address above; we will reply within a
+        month. You can also complain to a supervisory authority, in the Czech Republic the
+        <a href="https://uoou.gov.cz/en">Office for Personal Data Protection</a>.
+      </p>
+
+      <h2>Children</h2>
+      <p>fitdata is not meant for anyone under 16, and we don't knowingly collect their data.</p>
+
+      <h2>Changes</h2>
+      <p>
+        If this policy changes, we will update the date above, and for significant changes let you know by e-mail or
+        on the dashboard before they take effect.
+      </p>
+    </main>
+
+    <footer class="border-t">
+      <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-6 text-[13px] text-muted">
+        <a href="/privacy" class="hover:text-ink-2">Privacy</a>
+        <a href="/terms" class="hover:text-ink-2">Terms</a>
+        <a href="https://github.com/jsedlacek/fitdata" class="hover:text-ink-2">GitHub</a>
+        <a href="mailto:sedlacek.jakub@gmail.com" class="hover:text-ink-2">Contact</a>
+        <span class="sm:ml-auto">Not affiliated with Google or Fitbit. Fitbit is a trademark of Google LLC.</span>
+      </div>
+    </footer>
+  </body>
+</html>

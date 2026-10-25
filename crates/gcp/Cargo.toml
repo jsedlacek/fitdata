@@ -2,6 +2,7 @@
 name = "fitdata-gcp"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 # Google Cloud clients, in their own crate: each client instantiates every
 # RPC of its service (through its dyn stub), and here that code is compiled

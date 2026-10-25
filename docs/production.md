@@ -70,7 +70,7 @@ u/{uid}/status.json                         last sync run, last successful one, 
 | `fitdata-scheduler` | run the job |
 | `fitdata-deployer` | deploy the job, scheduler and web (GitHub Actions), read the project |
 
-The web is public on Cloud Run, but every page and API call requires Google sign-in with an e-mail from `ALLOWED_EMAILS`. The session is an HMAC-signed cookie (key `session-key`, valid for 30 days) with the user ID; every request reads only that user's data.
+The web is public on Cloud Run. The home page (`/` for visitors who aren't signed in), `/privacy`, `/terms`, the icons and the build assets need no sign-in; every other page and API call requires Google sign-in with an e-mail from `ALLOWED_EMAILS`. The session is an HMAC-signed cookie (key `session-key`, valid for 30 days) with the user ID; every request reads only that user's data.
 
 Refresh tokens are encrypted in the user records with the Cloud KMS key `fitdata/refresh-token`, and the user ID is bound to the ciphertext (additional authenticated data), so a token copied to another user cannot be decrypted. The web encrypts the token but cannot read it.
 

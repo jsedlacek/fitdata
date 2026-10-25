@@ -43,11 +43,6 @@ fn slot_for(dt: &DataType, d: NaiveDate) -> Slot {
                 to: from + Months::new(1),
             }
         }
-        Window::All => Slot {
-            key: "all".into(),
-            from: NaiveDate::MIN,
-            to: NaiveDate::MAX,
-        },
     }
 }
 
@@ -59,9 +54,6 @@ fn slots(dt: &DataType, from: NaiveDate, to: NaiveDate) -> Vec<Slot> {
         let s = slot_for(dt, d);
         d = s.to.max(d.succ_opt().unwrap());
         out.push(s);
-        if dt.window == Window::All {
-            break;
-        }
     }
     out
 }
@@ -133,7 +125,7 @@ async fn fetch_slot(
     slot: &Slot,
 ) -> Result<usize> {
     let filter = dt.filter(slot.from, slot.to);
-    let points = client.list_all(dt, filter.as_deref()).await?;
+    let points = client.list_all(dt, Some(&filter)).await?;
     let path = object_path(dt, slot);
     if points.is_empty() {
         store.delete(&path).await?;
@@ -251,9 +243,6 @@ async fn backfill_type(
         tracing::info!("no data");
         return Ok(0);
     };
-    if dt.window == Window::All {
-        return fetch_slot(client, store, dt, &slot_for(dt, NaiveDate::MIN)).await;
-    }
     let newest_date = point_date(&newest).unwrap_or_else(|| chrono::Local::now().date_naive());
     let floor = since.unwrap_or(NaiveDate::MIN);
 
@@ -265,7 +254,7 @@ async fn backfill_type(
         let from = month.max(floor);
         // One cheap request tells whether the month has any data at all.
         let any = client
-            .newest(dt, dt.filter(from, next).as_deref())
+            .newest(dt, Some(&dt.filter(from, next)))
             .await?
             .is_some();
         if any {

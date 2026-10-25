@@ -39,7 +39,7 @@ export function AppShell() {
         <Outlet />
       </main>
       {data && (
-        <footer className="mx-auto max-w-6xl px-4 pb-8 text-[13px] text-muted">
+        <footer className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 pb-8 text-[13px] text-muted">
           <Popover>
             <PopoverTrigger className="inline-flex items-center gap-1.5 rounded-md transition-colors hover:text-ink-2">
               <Bot className="size-3.5" /> Your data in Claude and ChatGPT (MCP)
@@ -48,6 +48,11 @@ export function AppShell() {
               <McpConnect />
             </PopoverContent>
           </Popover>
+          <span className="flex gap-4 sm:ml-auto">
+            <a href="/privacy" className="hover:text-ink-2">Privacy</a>
+            <a href="/terms" className="hover:text-ink-2">Terms</a>
+            <a href="https://github.com/jsedlacek/fitdata" className="hover:text-ink-2">GitHub</a>
+          </span>
         </footer>
       )}
     </div>

@@ -16,8 +16,6 @@ pub enum Kind {
     Session,
     /// Sleep sessions can only be filtered by their end time.
     SleepSession,
-    /// ECG supports only a `start_time >=` filter, so it is fetched in one go.
-    StartOnly,
 }
 
 /// Size of one fetch window; also the granularity of the stored files.
@@ -27,8 +25,6 @@ pub enum Window {
     Day,
     /// Sparse data: one file per calendar month.
     Month,
-    /// Everything in a single file.
-    All,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -62,8 +58,10 @@ use Kind::*;
 use Window::*;
 
 /// Readable data types. Not listed because the API cannot read them with
-/// these scopes: moods, symptoms, ovulation-test, menstrual-period (write-only)
-/// and hydration-log, nutrition-log (no read scope exists).
+/// these scopes: moods, symptoms, ovulation-test, menstrual-period (write-only),
+/// hydration-log, nutrition-log (nutrition scope), irregular-rhythm-notification
+/// (irn scope) and electrocardiogram (ecg scope); we don't ask for the scopes
+/// of data we don't use.
 pub const ALL: &[DataType] = &[
     // Intraday samples and intervals.
     dt("heart-rate", Sample, Day),
@@ -101,8 +99,6 @@ pub const ALL: &[DataType] = &[
     // Sessions.
     reconciled("sleep", SleepSession, Month),
     dt("exercise", Session, Month),
-    dt("irregular-rhythm-notification", Session, Month),
-    dt("electrocardiogram", StartOnly, All),
 ];
 
 pub fn find(id: &str) -> Option<&'static DataType> {
@@ -111,16 +107,14 @@ pub fn find(id: &str) -> Option<&'static DataType> {
 
 impl DataType {
     /// AIP-160 filter selecting points in the civil date range `[from, to)`.
-    /// `None` for `StartOnly` types, which are fetched without a filter.
-    pub fn filter(&self, from: NaiveDate, to: NaiveDate) -> Option<String> {
+    pub fn filter(&self, from: NaiveDate, to: NaiveDate) -> String {
         let f = self.id.replace('-', "_");
         let range = |field: String| format!(r#"{field} >= "{from}" AND {field} < "{to}""#);
         match self.kind {
-            Sample => Some(range(format!("{f}.sample_time.civil_time"))),
-            Interval | Session => Some(range(format!("{f}.interval.civil_start_time"))),
-            Daily => Some(range(format!("{f}.date"))),
-            SleepSession => Some(range(format!("{f}.interval.civil_end_time"))),
-            StartOnly => None,
+            Sample => range(format!("{f}.sample_time.civil_time")),
+            Interval | Session => range(format!("{f}.interval.civil_start_time")),
+            Daily => range(format!("{f}.date")),
+            SleepSession => range(format!("{f}.interval.civil_end_time")),
         }
     }
 
@@ -133,19 +127,14 @@ impl DataType {
     }
 }
 
-/// OAuth scopes needed to read every data type.
+/// OAuth scopes needed to read every data type, and the profile for the day
+/// the account was created (`Client::membership_start`). Google verification
+/// asks for the narrowest scopes, so add one only with a data type that needs it.
 pub const READ_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
     "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
     "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
     "https://www.googleapis.com/auth/googlehealth.profile.readonly",
-    "https://www.googleapis.com/auth/googlehealth.settings.readonly",
-    "https://www.googleapis.com/auth/googlehealth.irn.readonly",
-    "https://www.googleapis.com/auth/googlehealth.ecg.readonly",
-    "https://www.googleapis.com/auth/googlehealth.mindfulness.readonly",
-    "https://www.googleapis.com/auth/googlehealth.logged_symptoms.readonly",
-    "https://www.googleapis.com/auth/googlehealth.reproductive_health.readonly",
-    "https://www.googleapis.com/auth/googlehealth.location.readonly",
 ];
 
 #[cfg(test)]
@@ -158,22 +147,14 @@ mod tests {
         assert_eq!(
             find("heart-rate")
                 .unwrap()
-                .filter(d("2026-10-01"), d("2026-10-02"))
-                .unwrap(),
+                .filter(d("2026-10-01"), d("2026-10-02")),
             r#"heart_rate.sample_time.civil_time >= "2026-10-01" AND heart_rate.sample_time.civil_time < "2026-10-02""#
         );
         assert_eq!(
             find("daily-heart-rate-variability")
                 .unwrap()
-                .filter(d("2026-10-01"), d("2026-11-01"))
-                .unwrap(),
+                .filter(d("2026-10-01"), d("2026-11-01")),
             r#"daily_heart_rate_variability.date >= "2026-10-01" AND daily_heart_rate_variability.date < "2026-11-01""#
-        );
-        assert!(
-            find("electrocardiogram")
-                .unwrap()
-                .filter(d("2026-10-01"), d("2026-10-02"))
-                .is_none()
         );
     }
 

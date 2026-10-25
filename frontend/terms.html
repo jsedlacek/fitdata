@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)" />
+    <title>Terms of service · fitdata</title>
+    <meta name="description" content="The terms of the fitdata service." />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="stylesheet" href="/src/index.css" />
+    <script>
+      // Apply the stored theme before first paint to avoid a flash.
+      try {
+        const t = localStorage.getItem('theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
+  </head>
+  <body class="min-h-dvh">
+    <header class="border-b">
+      <div class="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4">
+        <a href="/" class="flex items-center gap-2 font-semibold tracking-tight">
+          <img src="/favicon.svg" alt="" class="size-7" />
+          fitdata
+        </a>
+        <div class="flex-1"></div>
+        <a href="https://github.com/jsedlacek/fitdata" class="rounded-md px-2.5 py-1.5 text-sm text-ink-2 hover:bg-shade hover:text-ink">GitHub</a>
+        <a href="/auth/login" class="inline-flex h-9 items-center rounded-lg bg-ink px-3.5 text-sm font-medium text-page hover:opacity-90">Sign in</a>
+      </div>
+    </header>
+
+    <main class="legal mx-auto max-w-3xl px-4 py-12">
+      <h1>Terms of service</h1>
+      <p class="text-sm text-muted">Last updated 25 October 2026</p>
+
+      <p>
+        These terms apply to the fitdata service at <a href="https://fitdata.jakub.contact">fitdata.jakub.contact</a>,
+        run by Jakub Sedláček, an individual in the Czech Republic ("we"). By signing in you agree to them. How we
+        handle your data is described in the <a href="/privacy">privacy policy</a>.
+      </p>
+
+      <h2>The service</h2>
+      <p>
+        fitdata downloads your Fitbit data through the Google Health API with your permission, shows it on a
+        dashboard and makes it available to AI assistants you connect through its MCP server. It is free and
+        invite-only, and we may change, limit or stop any part of it.
+      </p>
+
+      <h2>Not medical advice</h2>
+      <p>
+        fitdata is not a medical device and doesn't diagnose, treat or prevent any condition. Its numbers come from
+        your wearable and may be incomplete or wrong. Don't make health decisions based on fitdata or on answers an AI
+        assistant gives about your data; talk to a doctor.
+      </p>
+
+      <h2>Your account</h2>
+      <ul>
+        <li>You sign in with your own Google account and are responsible for keeping it secure.</li>
+        <li>You may connect only a Fitbit account that is yours.</li>
+        <li>You can delete your account at any time from the account menu, which deletes your data.</li>
+      </ul>
+
+      <h2>Fair use</h2>
+      <p>
+        Don't try to access other people's data, get around limits or security measures, overload the service, or use
+        it for anything unlawful. We may suspend or close accounts that do.
+      </p>
+
+      <h2>Other services</h2>
+      <p>
+        fitdata relies on Google (sign-in, the Google Health API and hosting) and, if you connect them, on AI
+        assistants such as Claude or ChatGPT. Their own terms apply to your use of them. fitdata is not affiliated with,
+        endorsed by or sponsored by Google, Fitbit, Anthropic or OpenAI.
+      </p>
+
+      <h2>Open source</h2>
+      <p>
+        The source code is available on <a href="https://github.com/jsedlacek/fitdata">GitHub</a> under the MIT
+        license. These terms cover the hosted service, not the code.
+      </p>
+
+      <h2>No warranty</h2>
+      <p>
+        fitdata is provided "as is", without warranties of any kind. We do our best to keep it running and your data
+        safe, but we don't promise that it will be available, accurate or free of errors, or that data won't be lost.
+        To the extent the law allows, we are not liable for any indirect or consequential damage arising from your use
+        of fitdata. Nothing in these terms limits rights you have as a consumer that can't be waived.
+      </p>
+
+      <h2>Changes and ending</h2>
+      <p>
+        We may update these terms; we will change the date above and tell you about significant changes in advance.
+        If you don't agree, delete your account. We may close the service after giving you notice and a chance to
+        export your data.
+      </p>
+
+      <h2>Law and contact</h2>
+      <p>
+        These terms are governed by Czech law. Questions go to
+        <a href="mailto:sedlacek.jakub@gmail.com">sedlacek.jakub@gmail.com</a>.
+      </p>
+    </main>
+
+    <footer class="border-t">
+      <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-6 text-[13px] text-muted">
+        <a href="/privacy" class="hover:text-ink-2">Privacy</a>
+        <a href="/terms" class="hover:text-ink-2">Terms</a>
+        <a href="https://github.com/jsedlacek/fitdata" class="hover:text-ink-2">GitHub</a>
+        <a href="mailto:sedlacek.jakub@gmail.com" class="hover:text-ink-2">Contact</a>
+        <span class="sm:ml-auto">Not affiliated with Google or Fitbit. Fitbit is a trademark of Google LLC.</span>
+      </div>
+    </footer>
+  </body>
+</html>

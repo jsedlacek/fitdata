@@ -50,3 +50,7 @@ npm run build   # frontend/dist, served by `fitdata serve` (STATIC_DIR)
 
 Locally, `fitdata serve` reads data from `STORAGE` (a directory or `gs://…`) and the OAuth client from Secret Manager (ADC). Without `gcloud auth application-default login`,
 `GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/legacy_credentials/<account>/adc.json` is enough.
+
+## License
+
+[MIT](LICENSE). The hosted service at https://fitdata.jakub.contact has its own [privacy policy](https://fitdata.jakub.contact/privacy) and [terms](https://fitdata.jakub.contact/terms).

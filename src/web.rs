@@ -17,9 +17,9 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, NaiveDate, SecondsFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tower::ServiceBuilder;
+use tower::{Layer, ServiceBuilder, ServiceExt};
 use tower_http::services::{ServeDir, ServeFile};
-use tower_http::set_header::SetResponseHeaderLayer;
+use tower_http::set_header::{SetResponseHeader, SetResponseHeaderLayer};
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -40,6 +40,8 @@ use crate::{authz, mcp};
 const SESSION_COOKIE: &str = "fd_session";
 const OAUTH_COOKIE: &str = "fd_oauth";
 const SESSION_DAYS: i64 = 30;
+/// Where invites and privacy requests go; also on the public pages (`frontend/*.html`).
+const CONTACT_EMAIL: &str = "sedlacek.jakub@gmail.com";
 /// Files from `frontend/public` served without sign-in.
 const PUBLIC_FILES: &[&str] = &[
     "favicon.ico",
@@ -115,6 +117,23 @@ pub async fn serve(cfg: Config) -> Result<()> {
         );
     }
 
+    // The home page, privacy policy and terms are public: Google's OAuth
+    // verification and visitors who aren't signed in need them. Signed-in
+    // users get the dashboard on `/` instead of the home page.
+    for (path, file) in [("/privacy", "privacy.html"), ("/terms", "terms.html")] {
+        public_files = public_files.route_service(path, page(&state.static_dir, file));
+    }
+    let home = page(&state.static_dir, "home.html");
+    let dashboard = page(&state.static_dir, "index.html");
+    let root = get(move |State(cfg): State<Shared>, req: Request| async move {
+        let service = if session_user(&cfg, req.headers()).await.is_some() {
+            dashboard
+        } else {
+            home
+        };
+        service.oneshot(req).await.into_response()
+    });
+
     let protected = Router::new()
         .route("/api/overview", get(overview))
         .route("/api/day/{date}", get(day))
@@ -122,7 +141,6 @@ pub async fn serve(cfg: Config) -> Result<()> {
         .route("/api/account", delete(delete_account))
         .route("/api/{*rest}", get(|| async { StatusCode::NOT_FOUND }))
         .route("/auth/fitbit", get(connect_fitbit))
-        .nest_service("/assets", assets)
         .fallback_service(spa)
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -132,6 +150,9 @@ pub async fn serve(cfg: Config) -> Result<()> {
     let app = Router::new()
         .merge(protected)
         .merge(public_files)
+        .route("/", root)
+        // Build assets hold no user data; the public pages need the stylesheet.
+        .nest_service("/assets", assets)
         .route("/healthz", get(|| async { "ok" }))
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
@@ -145,6 +166,12 @@ pub async fn serve(cfg: Config) -> Result<()> {
     tracing::info!("dashboard listening on 0.0.0.0:{port}");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// A built HTML page that is always revalidated, like the dashboard's index.html.
+fn page(static_dir: &std::path::Path, file: &str) -> SetResponseHeader<ServeFile, HeaderValue> {
+    SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .layer(ServeFile::new(static_dir.join(file)))
 }
 
 /// One server span per request, continuing the trace Cloud Run started
@@ -338,7 +365,14 @@ async fn callback(
             (
                 StatusCode::FORBIDDEN,
                 Html(format!(
-                    "<p>Sign-in failed: {}</p><p><a href=\"/auth/login\">Try again</a></p>",
+                    r#"<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign-in failed · fitdata</title>
+<style>body{{font:15px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto 0;padding:0 16px}}</style>
+<p>Sign-in failed: {}</p>
+<p>fitdata is invite-only for now. To ask for an invite, write to
+<a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>.</p>
+<p><a href="/auth/login">Try again</a> · <a href="/">Home</a></p></html>"#,
                     escape_html(&e.to_string())
                 )),
             )
@@ -444,18 +478,11 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     Ok(resp)
 }
 
-/// Signs out and says so; going straight to the login would sign the
-/// browser right back in.
+/// Signs out to the home page, which doesn't sign the browser back in.
 async fn logout(State(cfg): State<Shared>) -> Response {
     (
         [(header::SET_COOKIE, set_cookie(&cfg, SESSION_COOKIE, "", 0))],
-        Html(
-            r#"<!doctype html><html lang="en"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Signed out · fitdata</title>
-<style>body{font:15px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0 16px}</style>
-<p>Signed out. <a href="/auth/login">Sign in again</a></p></html>"#,
-        ),
+        Redirect::to("/"),
     )
         .into_response()
 }
