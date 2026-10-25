@@ -76,23 +76,40 @@ pub trait ColumnType {
     fn data_type() -> DataType;
 }
 
-macro_rules! column_types {
-    ($($t:ty => $dt:expr),* $(,)?) => {
-        $(impl ColumnType for $t {
-            fn data_type() -> DataType {
-                $dt
-            }
-        })*
-    };
+impl ColumnType for f64 {
+    fn data_type() -> DataType {
+        DataType::Float64
+    }
 }
 
-column_types! {
-    f64 => DataType::Float64,
-    i64 => DataType::Int64,
-    bool => DataType::Boolean,
-    String => DataType::Utf8,
-    NaiveDate => DataType::Date32,
-    NaiveDateTime => DataType::Timestamp(TimeUnit::Microsecond, None),
+impl ColumnType for i64 {
+    fn data_type() -> DataType {
+        DataType::Int64
+    }
+}
+
+impl ColumnType for bool {
+    fn data_type() -> DataType {
+        DataType::Boolean
+    }
+}
+
+impl ColumnType for String {
+    fn data_type() -> DataType {
+        DataType::Utf8
+    }
+}
+
+impl ColumnType for NaiveDate {
+    fn data_type() -> DataType {
+        DataType::Date32
+    }
+}
+
+impl ColumnType for NaiveDateTime {
+    fn data_type() -> DataType {
+        DataType::Timestamp(TimeUnit::Microsecond, None)
+    }
 }
 
 impl<T: ColumnType> ColumnType for Option<T> {
