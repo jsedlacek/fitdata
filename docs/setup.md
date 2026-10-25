@@ -43,7 +43,7 @@ Then delete the file.
 
 ## 4. Users
 
-Users sign in to the dashboard with Google (the e-mail must be in `ALLOWED_EMAILS`) and connect their Fitbit with the **Connect Fitbit** button. Locally, a refresh token can also be stored from the terminal:
+Users sign in to the dashboard with Google (the e-mail must be in `ALLOWED_EMAILS`); the same consent grants the Health scopes, so the first sign-in also connects Fitbit. Locally, a refresh token can also be stored from the terminal:
 
 ```bash
 cp .env.example .env     # GCP_PROJECT=fitdata-jsedlacek

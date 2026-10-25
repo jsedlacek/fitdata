@@ -24,7 +24,6 @@ pub enum Claims {
     Pending {
         state: String,
         verifier: String,
-        purpose: Purpose,
         /// Local path to return to after a login.
         next: String,
     },
@@ -71,16 +70,6 @@ pub enum Claims {
         uid: String,
         email: String,
     },
-}
-
-/// What a Google sign-in is for.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Purpose {
-    /// Who is signing in to the dashboard.
-    Login,
-    /// Consent to read Health data, yielding a new refresh token.
-    Health,
 }
 
 /// How an MCP client authenticates at the token endpoint (RFC 7591).

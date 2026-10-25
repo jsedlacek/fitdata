@@ -34,7 +34,7 @@ The OAuth Web client must list `https://fitdata.jakub.contact/auth/callback` amo
 
 ## Users
 
-Any account in `ALLOWED_EMAILS` (invites, `deploy/config.sh`) can sign in. A user is a Google account, keyed by its `sub`. The first sign-in creates the record `users/{uid}.json`, and the dashboard then offers **Connect Fitbit**. After consent, the web encrypts the refresh token with the KMS key, stores it in the record and starts the job for this user, which downloads the whole history. Data is never shared between users.
+Any account in `ALLOWED_EMAILS` (invites, `deploy/config.sh`) can sign in. A user is a Google account, keyed by its `sub`. Sign-in asks for the Health scopes too (offline access), so a new user signs in and connects Fitbit on one Google consent screen. The first sign-in creates the record `users/{uid}.json`; when Google returns a refresh token with Health scopes (on the first consent, or a forced one), the web encrypts it with the KMS key, stores it in the record and starts the job for this user, which downloads the whole history. A returning user goes straight through without a consent screen and keeps the stored token. If the user unticked the Health scopes, the dashboard offers **Connect Fitbit**, which forces the consent screen (as does **Restore access to data**). An uninvited account's grant is revoked right away. Data is never shared between users.
 
 **Deleting an account** (account menu on the dashboard) marks the record as deleted and starts the job. The job revokes the token at Google and deletes `u/{uid}/` and the record. The web itself must not delete data.
 

@@ -94,13 +94,15 @@ pub struct AuthRequest {
     pub verifier: String,
 }
 
-/// Authorization-code + PKCE request. `offline` asks for a refresh token
-/// (forcing the consent screen so Google issues a new one).
+/// Authorization-code + PKCE request for offline access. Google issues a
+/// refresh token only on the user's first consent, unless `renew` forces the
+/// consent screen, which always yields a new one. Without `renew` a returning
+/// user who granted every scope goes straight through.
 pub fn auth_request(
     creds: &ClientCredentials,
     redirect_uri: &str,
     scopes: &[&str],
-    offline: bool,
+    renew: bool,
 ) -> Result<AuthRequest> {
     let verifier = random_b64(48);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
@@ -114,10 +116,10 @@ pub fn auth_request(
             .append_pair("scope", &scopes.join(" "))
             .append_pair("code_challenge", &challenge)
             .append_pair("code_challenge_method", "S256")
-            .append_pair("state", &state);
-        if offline {
-            q.append_pair("access_type", "offline")
-                .append_pair("prompt", "consent");
+            .append_pair("state", &state)
+            .append_pair("access_type", "offline");
+        if renew {
+            q.append_pair("prompt", "consent");
         }
     }
     Ok(AuthRequest {
@@ -331,5 +333,29 @@ impl TokenSource {
 
     pub async fn invalidate(&self) {
         *self.cached.lock().await = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params(renew: bool) -> std::collections::HashMap<String, String> {
+        let creds = ClientCredentials {
+            client_id: "id".into(),
+            client_secret: "secret".into(),
+        };
+        let req = auth_request(&creds, "https://x/cb", &["openid", "email"], renew).unwrap();
+        req.url.query_pairs().into_owned().collect()
+    }
+
+    #[test]
+    fn sign_in_asks_for_consent_only_when_renewing() {
+        let p = params(false);
+        assert_eq!(p["access_type"], "offline");
+        assert!(!p.contains_key("prompt"));
+        let p = params(true);
+        assert_eq!(p["access_type"], "offline");
+        assert_eq!(p["prompt"], "consent");
     }
 }

@@ -23,14 +23,14 @@ use tower_http::set_header::{SetResponseHeader, SetResponseHeaderLayer};
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::claims::{self, Claims, Purpose};
+use crate::claims::{self, Claims};
 use crate::cloudrun::SyncJob;
 use crate::datatypes::READ_SCOPES;
 use crate::engine;
 use crate::health::StageType;
 use crate::kms::Kms;
 use crate::model::{self, DailyMetrics, Exercise, NightRow, Time};
-use crate::oauth::{ClientCredentials, auth_request, exchange_code};
+use crate::oauth::{self, ClientCredentials, auth_request, exchange_code};
 use crate::status;
 use crate::store::Store;
 use crate::users::{self, User};
@@ -294,23 +294,23 @@ async fn require_session(State(cfg): State<Shared>, mut req: Request, next: Next
     }
 }
 
-/// Starts a Google OAuth flow. After a login the browser returns to `next`.
-fn start_oauth(
-    cfg: &Config,
-    purpose: Purpose,
-    scopes: &[&str],
-    offline: bool,
-    next: &str,
-) -> Response {
+/// Starts the Google sign-in, which also asks for the Health scopes, so a new
+/// user signs in and connects Fitbit in one consent. `renew` forces the
+/// consent screen for a new refresh token (Connect Fitbit, Restore access).
+/// After the callback the browser returns to `next`.
+fn start_oauth(cfg: &Config, renew: bool, next: &str) -> Response {
     let redirect_uri = format!("{}/auth/callback", cfg.public_url);
-    let req = match auth_request(&cfg.creds, &redirect_uri, scopes, offline) {
+    let scopes: Vec<&str> = ["openid", "email"]
+        .into_iter()
+        .chain(READ_SCOPES.iter().copied())
+        .collect();
+    let req = match auth_request(&cfg.creds, &redirect_uri, &scopes, renew) {
         Ok(r) => r,
         Err(e) => return internal(e),
     };
     let pending = Claims::Pending {
         state: req.state,
         verifier: req.verifier,
-        purpose,
         next: next.to_string(),
     };
     let pending = claims::sign(&cfg.session_key, pending, now() + 600);
@@ -339,11 +339,11 @@ fn local_path(next: Option<&str>) -> &str {
 
 async fn login(State(cfg): State<Shared>, Query(p): Query<LoginParams>) -> Response {
     let next = local_path(p.next.as_deref());
-    start_oauth(&cfg, Purpose::Login, &["openid", "email"], false, next)
+    start_oauth(&cfg, false, next)
 }
 
 async fn connect_fitbit(State(cfg): State<Shared>) -> Response {
-    start_oauth(&cfg, Purpose::Health, READ_SCOPES, true, "/")
+    start_oauth(&cfg, true, "/")
 }
 
 #[derive(Deserialize)]
@@ -398,7 +398,6 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     let Some(Claims::Pending {
         state,
         verifier,
-        purpose,
         next,
     }) = cookie(headers, OAUTH_COOKIE).and_then(|t| claims::verify(&cfg.session_key, t))
     else {
@@ -418,32 +417,19 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     .await?;
     let clear_oauth = set_cookie(cfg, OAUTH_COOKIE, "", 0);
 
-    if purpose == Purpose::Health {
-        let user = session_user(cfg, headers).await.context("sign in first")?;
-        let token = tokens.into_stored()?;
-        users::save_token(&cfg.store, &cfg.kms, &user.uid, &user.email, &token).await?;
-        tracing::info!(uid = %user.uid, "stored a new Health API refresh token");
-        // Fetch the data now rather than at the next full hour; for a new
-        // user that is their whole history.
-        if let Err(e) = cfg.sync_job.run(Some(&user.uid)).await {
-            tracing::warn!("starting the sync failed: {e:#}");
-        }
-        return Ok((
-            [(header::SET_COOKIE, clear_oauth)],
-            Redirect::to("/?fitbit=connected"),
-        )
-            .into_response());
-    }
-
     // The ID token comes straight from Google's token endpoint over TLS, so
     // its claims can be trusted without verifying the signature.
-    let id_token = tokens.id_token.context("no ID token")?;
+    let id_token = tokens.id_token.as_deref().context("no ID token")?;
     let id: IdToken = serde_json::from_slice(
         &URL_SAFE_NO_PAD.decode(id_token.split('.').nth(1).context("bad ID token")?)?,
     )
     .context("bad ID token")?;
     let email = id.email.to_lowercase();
     if !id.email_verified || !cfg.allowed_emails.contains(&email) {
+        // They may have granted the Health scopes already; take that back.
+        if let Err(e) = oauth::revoke(&cfg.http, &tokens.access_token).await {
+            tracing::warn!("revoking an uninvited sign-in failed: {e:#}");
+        }
         bail!("{email} is not allowed");
     }
     users::check_uid(&id.sub)?;
@@ -460,6 +446,25 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
             tracing::info!(uid = %id.sub, "new user");
         }
     }
+
+    // A refresh token comes with the first consent (and every forced one).
+    // Without any Health scope (unticked on the consent screen) it's useless,
+    // and the dashboard offers Connect Fitbit instead.
+    let health = tokens
+        .scope
+        .as_deref()
+        .is_some_and(|s| s.contains("googlehealth."));
+    let connected = tokens.refresh_token.is_some() && health;
+    if connected {
+        let token = tokens.into_stored()?;
+        users::save_token(&cfg.store, &cfg.kms, &id.sub, &email, &token).await?;
+        tracing::info!(uid = %id.sub, "stored a new Health API refresh token");
+        // Fetch the data now rather than at the next full hour; for a new
+        // user that is their whole history.
+        if let Err(e) = cfg.sync_job.run(Some(&id.sub)).await {
+            tracing::warn!("starting the sync failed: {e:#}");
+        }
+    }
     let session = claims::sign(
         &cfg.session_key,
         Claims::Session {
@@ -468,7 +473,12 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
         },
         now() + SESSION_DAYS * 86_400,
     );
-    let mut resp = Redirect::to(local_path(Some(&next))).into_response();
+    let next = match local_path(Some(&next)) {
+        // The dashboard confirms the connection (ReconnectBanner).
+        "/" if connected => "/?fitbit=connected",
+        n => n,
+    };
+    let mut resp = Redirect::to(next).into_response();
     let h = resp.headers_mut();
     h.append(header::SET_COOKIE, clear_oauth.parse()?);
     h.append(
