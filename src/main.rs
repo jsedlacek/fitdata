@@ -273,7 +273,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .with_context(|| format!("no user {user}"))?;
             let to = to.unwrap_or_else(|| job::today(&u));
             let raw = store.scoped(&tables::user_prefix(user));
-            return job::load(&store, &raw, user, *from, to).await;
+            return job::load(&store, &raw, &u, *from, to).await;
         }
         Cmd::ImportUser {
             user,

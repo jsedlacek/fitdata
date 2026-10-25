@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
+use chrono_tz::Tz;
 use datafusion::prelude::SessionContext;
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::sync::Mutex;
@@ -25,7 +26,7 @@ use crate::tables::{MONTHLY, Manifest, file_name, manifest_path, months, user_pr
 /// endpoints at once, and a sync takes minutes anyway.
 const MANIFEST_TTL: Duration = Duration::from_secs(5);
 /// Query state of the dashboard's own queries (minutes of a day at most).
-const SESSION_MEMORY: usize = 128 << 20;
+pub const SESSION_MEMORY: usize = 128 << 20;
 /// Above this, the users used longest ago are dropped from the cache.
 const CACHE_BYTES: u64 = 256 << 20;
 
@@ -58,6 +59,8 @@ struct UserCache {
 #[derive(Clone)]
 pub struct Snapshot {
     files: BTreeMap<&'static str, Vec<PathBuf>>,
+    /// The user's time zone (`Manifest::time_zone`).
+    pub tz: Tz,
 }
 
 impl Snapshot {
@@ -65,16 +68,17 @@ impl Snapshot {
     pub fn from_files<const N: usize>(files: [(&'static str, Vec<PathBuf>); N]) -> Self {
         Self {
             files: files.into_iter().collect(),
+            tz: chrono_tz::Europe::Prague,
         }
     }
 
     /// A session that knows these tables and nothing else, with at most
-    /// `memory` bytes for query state.
+    /// `memory` bytes for query state. Times are in the user's time zone.
     pub async fn session(&self, memory: usize) -> Result<SessionContext> {
         let ctx = engine::session(memory)?;
         for table in engine::tables() {
             let files = self.files.get(table).map(Vec::as_slice).unwrap_or_default();
-            engine::register(&ctx, table, files).await?;
+            engine::register_local(&ctx, table, files, self.tz.name()).await?;
         }
         Ok(ctx)
     }
@@ -178,9 +182,10 @@ impl Warehouse {
                 files.entry(t).or_default().push(dir.join(name));
             }
         }
+        let tz = cache.manifest.tz();
         drop(cache);
         self.evict(uid).await;
-        Ok(Snapshot { files })
+        Ok(Snapshot { files, tz })
     }
 
     /// Drops the least recently used users' files while the cache is too big.
@@ -257,8 +262,8 @@ fn dir_size(dir: &Path) -> Result<u64> {
 mod tests {
     use super::*;
     use crate::model::HeartRateRow;
+    use crate::model::prague;
     use crate::tables;
-    use chrono::NaiveDateTime;
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
@@ -277,6 +282,7 @@ mod tests {
             .into_iter()
             .map(|n| (n.to_string(), 1))
             .collect(),
+            ..Default::default()
         };
         assert_eq!(
             needed(&manifest, Need::Range(d("2026-09-30"), d("2026-10-01"))),
@@ -291,15 +297,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn queries_see_local_time_with_offsets() {
+        use crate::health::StageType;
+        use crate::model::{NightRow, SleepStage, Time};
+        let data = tempfile::tempdir().unwrap();
+        let store = Store::open(data.path().to_str().unwrap()).await.unwrap();
+        let at = |s: &str| Time::parse_from_rfc3339(s).unwrap();
+        // The hour repeated when clocks go back, twice.
+        let hr: Vec<HeartRateRow> = ["2026-10-25T02:30:00+02:00", "2026-10-25T02:30:00+01:00"]
+            .into_iter()
+            .map(|t| HeartRateRow {
+                date: at(t).date_naive(),
+                ts: at(t),
+                bpm: 60.0,
+            })
+            .collect();
+        let day = hr[0].date;
+        tables::replace_range(&store, "x", &hr, day, day)
+            .await
+            .unwrap();
+        let night = NightRow {
+            date: day,
+            start: at("2026-10-25T00:00:00+02:00"),
+            end: at("2026-10-25T07:00:00+01:00"),
+            minutes_asleep: Some(480),
+            minutes_awake: None,
+            deep_minutes: None,
+            light_minutes: None,
+            rem_minutes: None,
+            awake_minutes: None,
+            restless_minutes: Some(0),
+            stages: vec![SleepStage {
+                start: at("2026-10-25T02:50:00+02:00"),
+                end: at("2026-10-25T02:10:00+01:00"),
+                stage: StageType::Deep,
+            }],
+            restless: vec![],
+        };
+        tables::replace_range(&store, "x", std::slice::from_ref(&night), day, day)
+            .await
+            .unwrap();
+        let data = data.path().join("u/x/data");
+        let ctx = Snapshot::from_files([
+            ("heart_rate", vec![data.join("heart_rate/2026-10.parquet")]),
+            ("nights", vec![data.join("nights.parquet")]),
+        ])
+        .session(64 << 20)
+        .await
+        .unwrap();
+
+        let r = engine::rows(
+            &ctx,
+            "SELECT date_trunc('hour', ts) AS h, extract(hour FROM ts) AS n, count(*) AS c
+             FROM heart_rate GROUP BY h, n ORDER BY h",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            r,
+            [
+                serde_json::json!({"h": "2026-10-25T02:00:00+02:00", "n": 2, "c": 1}),
+                serde_json::json!({"h": "2026-10-25T02:00:00+01:00", "n": 2, "c": 1}),
+            ]
+        );
+        let r = engine::rows(
+            &ctx,
+            "SELECT count(*) AS c FROM heart_rate WHERE ts = '2026-10-25 02:30:00+01:00'",
+        )
+        .await
+        .unwrap();
+        assert_eq!(r[0]["c"], 1);
+
+        let nights: Vec<NightRow> = engine::query_as(&ctx, "SELECT * FROM nights")
+            .await
+            .unwrap();
+        assert_eq!(nights[0].stages, night.stages);
+        assert_eq!(nights[0].end.to_rfc3339(), "2026-10-25T07:00:00+01:00");
+    }
+
+    #[tokio::test]
     async fn follows_the_manifest() {
         let data = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open(data.path().to_str().unwrap()).await.unwrap());
         let wh = Warehouse::new(store.clone(), cache.path().to_path_buf());
         let hr = |ts: &str, bpm| {
-            let ts = NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M").unwrap();
+            let ts = prague(ts);
             HeartRateRow {
-                date: ts.date(),
+                date: ts.date_naive(),
                 ts,
                 bpm,
             }
@@ -328,7 +413,9 @@ mod tests {
         )
         .await
         .unwrap();
-        tables::write_manifest(&store, "x").await.unwrap();
+        tables::write_manifest(&store, "x", chrono_tz::Europe::Prague)
+            .await
+            .unwrap();
         // The manifest is trusted for a few seconds.
         assert_eq!(count(oct).await, 0);
         wh.users.lock().await["x"].lock().await.checked = None;
@@ -347,7 +434,9 @@ mod tests {
         )
         .await
         .unwrap();
-        tables::write_manifest(&store, "x").await.unwrap();
+        tables::write_manifest(&store, "x", chrono_tz::Europe::Prague)
+            .await
+            .unwrap();
         wh.users.lock().await["x"].lock().await.checked = None;
         assert_eq!(count(oct).await, 2);
     }

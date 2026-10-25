@@ -86,21 +86,22 @@ async fn execute(snapshot: Snapshot, sql: &str) -> Result<QueryResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::prague;
     use crate::model::{DailyMetrics, HeartRateRow};
     use crate::store::Store;
     use crate::tables;
-    use chrono::{Duration as Days, NaiveDate, NaiveDateTime};
+    use chrono::{Duration as Days, NaiveDate};
 
     /// A user's files: heart rate every minute over three days, one day of
     /// daily metrics.
     async fn snapshot(dir: &std::path::Path) -> Snapshot {
         let store = Store::open(dir.to_str().unwrap()).await.unwrap();
-        let start = NaiveDateTime::parse_from_str("2026-10-01 00:00", "%Y-%m-%d %H:%M").unwrap();
+        let start = prague("2026-10-01 00:00");
         let hr: Vec<HeartRateRow> = (0..3 * 1440)
             .map(|i| {
                 let ts = start + Days::minutes(i);
                 HeartRateRow {
-                    date: ts.date(),
+                    date: ts.date_naive(),
                     ts,
                     bpm: 60.0 + (i % 20) as f64,
                 }

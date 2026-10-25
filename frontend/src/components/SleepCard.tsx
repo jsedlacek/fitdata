@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { BedDouble, Moon, Sunrise, Timer } from 'lucide-react';
 import type { Night, Stage } from '@/lib/api';
-import { chrome, wall } from '@/lib/chart';
+import { chrome, minutesBetween } from '@/lib/chart';
 import { clock, duration, num } from '@/lib/format';
 import { useResolvedTheme } from '@/lib/theme';
 import { EChart } from './EChart';
@@ -18,7 +18,7 @@ export const STAGES: { key: Stage; label: string; color: string }[] = [
 const RESTLESS = { label: 'Neklidný', color: '--s5' };
 const ROW: Record<Stage | 'RESTLESS', number> = { DEEP: 0, LIGHT: 1, REM: 2, RESTLESS: 3, AWAKE: 4 };
 
-export function SleepCard({ night }: { night: Night | null }) {
+export function SleepCard({ night, timeZone }: { night: Night | null; timeZone: string }) {
   const theme = useResolvedTheme();
   const option = useMemo(() => {
     if (!night) return null;
@@ -36,10 +36,10 @@ export function SleepCard({ night }: { night: Night | null }) {
         trigger: 'item',
         formatter: (p: { value: [string, string, number, Stage | 'RESTLESS'] }) => {
           const [s, e, , st] = p.value;
-          return `<b>${label[st]}</b><br>${clock(s)}–${clock(e)} · ${Math.round((+new Date(e) - +new Date(s)) / 60000)} min`;
+          return `<b>${label[st]}</b><br>${clock(s)}–${clock(e)} · ${Math.round(minutesBetween(s, e))} min`;
         },
       },
-      xAxis: { ...t.timeAxis, min: wall(night.start), max: wall(night.end) },
+      xAxis: { ...t.timeAxis(timeZone), min: night.start, max: night.end },
       yAxis: {
         type: 'category', data: rows.map((k) => label[k]), axisLabel: t.axisLabel,
         axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: true, lineStyle: { color: t.c.grid } },
@@ -47,8 +47,8 @@ export function SleepCard({ night }: { night: Night | null }) {
       series: [{
         type: 'custom',
         data: [
-          ...night.stages.map((s) => [wall(s.start), wall(s.end), ROW[s.stage], s.stage]),
-          ...(night.restless ?? []).map((s) => [wall(s.start), wall(s.end), ROW.RESTLESS, 'RESTLESS']),
+          ...night.stages.map((s) => [s.start, s.end, ROW[s.stage], s.stage]),
+          ...(night.restless ?? []).map((s) => [s.start, s.end, ROW.RESTLESS, 'RESTLESS']),
         ],
         encode: { x: [0, 1], y: 2 },
         renderItem: (_: unknown, api: { value: (i: number) => number | string; coord: (v: unknown[]) => number[]; size: (v: number[]) => number[] }) => {
@@ -64,7 +64,7 @@ export function SleepCard({ night }: { night: Night | null }) {
       }],
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [night, theme]);
+  }, [night, timeZone, theme]);
 
   if (!night) {
     return (
@@ -78,7 +78,7 @@ export function SleepCard({ night }: { night: Night | null }) {
   }
 
   const asleep = night.minutes_asleep ?? 0;
-  const inBed = (+new Date(night.end) - +new Date(night.start)) / 60000;
+  const inBed = minutesBetween(night.start, night.end);
   const total = STAGES.reduce((a, s) => a + (night.stage_minutes[s.key] ?? 0), 0) || 1;
 
   return (

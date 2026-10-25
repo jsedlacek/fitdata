@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 
@@ -125,16 +125,6 @@ impl Points {
 
 // ------------------------------------------------------------- time
 
-/// A UTC offset such as `"7200s"`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Offset(pub Duration);
-
-impl<'de> Deserialize<'de> for Offset {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        seconds(d).map(Offset)
-    }
-}
-
 /// A protobuf `Duration` in JSON: decimal seconds with an `s` suffix.
 fn seconds<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
     let s = String::deserialize(d)?;
@@ -150,42 +140,22 @@ fn opt_seconds<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::E
     seconds(d).map(Some)
 }
 
-/// The local wall-clock time of an instant, given the UTC offset there.
-fn local(t: DateTime<Utc>, off: Offset) -> NaiveDateTime {
-    t.naive_utc() + off.0
-}
-
+/// When a sample was taken. Its `utcOffset` is ignored: local time comes
+/// from the user's time zone (`model.rs`), because the API stamps a whole
+/// night of HRV with the offset at its end, wrong by an hour on the nights
+/// clocks change.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SampleTime {
-    physical_time: DateTime<Utc>,
-    utc_offset: Offset,
-}
-
-impl SampleTime {
-    pub fn local(&self) -> NaiveDateTime {
-        local(self.physical_time, self.utc_offset)
-    }
+    pub physical_time: DateTime<Utc>,
 }
 
 /// A time range; also the shape of sleep stages and short awakenings.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Interval {
-    start_time: DateTime<Utc>,
-    start_utc_offset: Offset,
-    end_time: DateTime<Utc>,
-    end_utc_offset: Offset,
-}
-
-impl Interval {
-    pub fn local_start(&self) -> NaiveDateTime {
-        local(self.start_time, self.start_utc_offset)
-    }
-
-    pub fn local_end(&self) -> NaiveDateTime {
-        local(self.end_time, self.end_utc_offset)
-    }
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
 }
 
 /// `{"year": 2026, "month": 10, "day": 24}`
@@ -424,14 +394,17 @@ mod tests {
     }
 
     #[test]
-    fn parses_a_sample_in_local_time() {
+    fn parses_a_sample() {
         let p = parse(
             r#"{"heartRate": {"beatsPerMinute": "61", "sampleTime": {"physicalTime": "2026-10-23T17:55:56Z",
                 "utcOffset": "7200s", "civilTime": {}}}, "dataSource": {"device": {}}, "name": "x"}"#,
         );
         let hr = p.heart_rate.unwrap();
         assert_eq!(hr.beats_per_minute, Some(61.0));
-        assert_eq!(hr.sample_time.local().to_string(), "2026-10-23 19:55:56");
+        assert_eq!(
+            hr.sample_time.physical_time.to_rfc3339(),
+            "2026-10-23T17:55:56+00:00"
+        );
     }
 
     #[test]
@@ -480,7 +453,10 @@ mod tests {
              "dataPointName": "users/1"}"#,
         );
         let s = p.sleep.unwrap();
-        assert_eq!(s.interval.local_end().to_string(), "2026-10-24 07:22:00");
+        assert_eq!(
+            s.interval.end_time.to_rfc3339(),
+            "2026-10-24T05:22:00+00:00"
+        );
         assert_eq!(s.stages[0].stage, StageType::Awake);
         assert_eq!(s.stages[1].stage, StageType::Unknown);
         assert_eq!(s.summary.minutes_asleep, Some(468.0));

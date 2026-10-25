@@ -4,6 +4,12 @@
 //! A table's columns are the fields of its row struct (`model.rs`,
 //! `#[derive(Columns)]`).
 //!
+//! Times are instants, stored in UTC. Queries see them in the user's time
+//! zone (`register_local`): `extract`, `date_trunc` and `CAST(ts AS DATE)`
+//! work on local time and results carry the UTC offset
+//! (`2026-10-25T02:30:00+01:00`), so the hour repeated when clocks go back
+//! stays two distinct hours.
+//!
 //! A session has no way to files or the network of its own: there is no
 //! SQL function that reads a path, and DDL, DML and `SET` are refused
 //! (`sql_options`). What a query can read is what was registered.
@@ -12,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context, Result};
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{DateTime, FixedOffset, NaiveDate};
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::arrow::json::ArrayWriter;
@@ -56,12 +62,41 @@ pub fn tables() -> impl Iterator<Item = &'static str> {
     TABLES.iter().map(|(t, _)| *t)
 }
 
+/// The schema of `table` as stored: times in UTC.
 pub fn schema(table: &str) -> SchemaRef {
     TABLES
         .iter()
         .find(|(t, _)| *t == table)
         .map(|(_, s)| s.clone())
         .unwrap_or_else(|| Arc::new(Schema::empty()))
+}
+
+/// The schema of `table` with its times (nested ones too) in time zone `tz`.
+pub fn local_schema(table: &str, tz: &str) -> SchemaRef {
+    fn local(t: &DataType, tz: &str) -> DataType {
+        match t {
+            DataType::Timestamp(unit, Some(_)) => DataType::Timestamp(*unit, Some(tz.into())),
+            DataType::List(item) => DataType::List(Arc::new(
+                item.as_ref()
+                    .clone()
+                    .with_data_type(local(item.data_type(), tz)),
+            )),
+            DataType::Struct(fields) => DataType::Struct(
+                fields
+                    .iter()
+                    .map(|f| f.as_ref().clone().with_data_type(local(f.data_type(), tz)))
+                    .collect(),
+            ),
+            t => t.clone(),
+        }
+    }
+    let stored = schema(table);
+    let fields: Vec<Field> = stored
+        .fields()
+        .iter()
+        .map(|f| f.as_ref().clone().with_data_type(local(f.data_type(), tz)))
+        .collect();
+    Arc::new(Schema::new(fields))
 }
 
 /// A struct whose fields are columns: a table's row, or a struct nested in
@@ -106,11 +141,14 @@ impl ColumnType for NaiveDate {
     }
 }
 
-impl ColumnType for NaiveDateTime {
+/// An instant; written in UTC whatever its offset.
+impl ColumnType for DateTime<FixedOffset> {
     fn data_type() -> DataType {
-        DataType::Timestamp(TimeUnit::Microsecond, None)
+        DataType::Timestamp(TimeUnit::Microsecond, Some(UTC.into()))
     }
 }
+
+const UTC: &str = "UTC";
 
 impl<T: ColumnType> ColumnType for Option<T> {
     fn data_type() -> DataType {
@@ -192,8 +230,20 @@ pub fn session(memory: usize) -> Result<SessionContext> {
 
 /// Registers `table` over Parquet `files`, read with the table's schema
 /// (columns a file lacks come back NULL); without files it is empty.
+/// Times are in UTC.
+#[cfg(test)]
 pub async fn register(ctx: &SessionContext, table: &str, files: &[PathBuf]) -> Result<()> {
     register_as(ctx, table, table, files).await
+}
+
+/// `register` with the times in time zone `tz` (see the module docs).
+pub async fn register_local(
+    ctx: &SessionContext,
+    table: &str,
+    files: &[PathBuf],
+    tz: &str,
+) -> Result<()> {
+    register_schema(ctx, table, local_schema(table, tz), files).await
 }
 
 /// `register` under another name.
@@ -203,7 +253,15 @@ pub async fn register_as(
     table: &str,
     files: &[PathBuf],
 ) -> Result<()> {
-    let schema = schema(table);
+    register_schema(ctx, name, schema(table), files).await
+}
+
+async fn register_schema(
+    ctx: &SessionContext,
+    name: &str,
+    schema: SchemaRef,
+    files: &[PathBuf],
+) -> Result<()> {
     if files.is_empty() {
         ctx.register_table(name, Arc::new(MemTable::try_new(schema, vec![vec![]])?))?;
         return Ok(());
@@ -234,7 +292,7 @@ pub async fn run(ctx: &SessionContext, sql: &str) -> Result<Vec<RecordBatch>> {
 
 /// Record batches as JSON objects keyed by column name; NULL columns are
 /// left out. Dates and times come as the model types read them
-/// (`2026-10-22`, `2026-10-22T07:00:00`).
+/// (`2026-10-22`, `2026-10-22T07:00:00+02:00`).
 pub fn to_json(batches: &[RecordBatch]) -> Result<Vec<Value>> {
     let mut w = ArrayWriter::new(Vec::new());
     for b in batches {
@@ -283,7 +341,7 @@ mod tests {
         );
         assert_eq!(
             nights.field_with_name("start").unwrap().data_type(),
-            &DataType::Timestamp(TimeUnit::Microsecond, None)
+            &DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
         );
         assert!(matches!(
             nights.field_with_name("stages").unwrap().data_type(),
@@ -291,7 +349,7 @@ mod tests {
         ));
         assert_eq!(
             sql_type(nights.field_with_name("stages").unwrap().data_type()),
-            "ARRAY<STRUCT<start TIMESTAMP, end TIMESTAMP, stage VARCHAR>>"
+            "ARRAY<STRUCT<start TIMESTAMP WITH TIME ZONE, end TIMESTAMP WITH TIME ZONE, stage VARCHAR>>"
         );
         for t in tables() {
             assert!(!schema(t).fields().is_empty(), "{t}");
@@ -304,10 +362,10 @@ mod tests {
         let ts = hr.field_with_name("ts").unwrap();
         assert_eq!(
             ts.data_type(),
-            &DataType::Timestamp(TimeUnit::Microsecond, None)
+            &DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
         );
         assert!(ts.is_nullable());
-        assert_eq!(description(ts), Some("Local wall-clock time"));
+        assert_eq!(description(ts), Some("When the reading was taken"));
         assert_eq!(description(hr.field_with_name("bpm").unwrap()), None);
         let names: Vec<_> = hr.fields().iter().map(|f| f.name().as_str()).collect();
         assert_eq!(names, ["date", "ts", "bpm"]);

@@ -26,7 +26,7 @@ export function duration(minutes: number | null | undefined): string {
   return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
 }
 
-/** "2026-10-23T06:58:00" -> "06:58" */
+/** "2026-10-23T06:58:00+02:00" -> "06:58", the local wall-clock time */
 export const clock = (s: string) => s.slice(11, 16);
 
 /** Local date from "YYYY-MM-DD" (noon avoids DST edge cases). */
@@ -56,8 +56,8 @@ export function relativeDay(d: string, today = isoDate(new Date())): string | nu
 }
 
 /** "před 3 h", "před 2 dny" for a local "YYYY-MM-DDTHH:MM:SS". */
-export function ago(local: string): string {
-  const mins = Math.round((Date.now() - new Date(local).getTime()) / 60_000);
+export function ago(at: string): string {
+  const mins = Math.round((Date.now() - Date.parse(at)) / 60_000);
   if (mins < 1) return 'právě teď';
   if (mins < 60) return `před ${mins} min`;
   const h = Math.round(mins / 60);

@@ -38,7 +38,8 @@ export function EChart({ option, className, label }: { option: Option; className
   }, []);
 
   useEffect(() => {
-    // Time axes carry wall-clock times as UTC instants, see `wall`.
+    // Ticks on whole UTC hours, which are whole hours on the user's clock
+    // whatever the browser's time zone; labels follow the user's (`timeAxis`).
     chart.current?.setOption({ useUTC: true, ...option }, { notMerge: true });
   }, [option]);
 

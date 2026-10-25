@@ -59,6 +59,7 @@ u/{uid}/status.json                         poslední běh syncu, poslední úsp
 - **Tabulky:** `fitdata load` nahradí v souborech dny z rozsahu a zbytek nechá, takže opakovaný běh nic nezdvojí. Sloupce jsou pole row structů v `model.rs`; nový sloupec stačí přidat tam, ve starších souborech se čte jako NULL.
 - **Čtení:** web drží soubory uživatelů v cache instance (`/tmp`, tedy RAM, nejvýš 256 MB) a podle `manifest.json` stahuje jen změněné a jen měsíce, které požadavek potřebuje. Dotazy běží v DataFusion nad tabulkami zaregistrovanými jen pro daného uživatele ([src/warehouse.rs](../src/warehouse.rs), [src/engine.rs](../src/engine.rs)).
 - **Noc** (`nights`) patří ke dni probuzení a spojuje všechny spánky, které skončily před 14:00.
+- **Čas:** časové sloupce jsou okamžiky, v Parquetu uložené v UTC. Místní datum (`date`) i místní čas se počítají v časové zóně uživatele (`users/{uid}.json`, zapsaná i v `manifest.json`), ne podle `utcOffset` z API: ten u HRV platí pro celou noc podle jejího konce, takže v noc změny času je o hodinu vedle. Dotazy vidí časy v zóně uživatele, i s posunem (`2026-10-25T02:30:00+01:00`); hodina, která se při přechodu na zimní čas opakuje, tak zůstane dvěma hodinami a nic se nesloučí. Změna typu sloupce vyžaduje znovu načíst všechny dny (`fitdata load` od prvního dne s daty), jinak by se staré soubory četly špatně.
 
 ## Bezpečnost
 

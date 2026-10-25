@@ -52,8 +52,7 @@ const LOCK_TTL: Duration = Duration::minutes(45);
 
 /// Today in the user's time zone.
 pub fn today(user: &User) -> NaiveDate {
-    let tz: chrono_tz::Tz = user.time_zone.parse().unwrap_or(chrono_tz::Europe::Prague);
-    Utc::now().with_timezone(&tz).date_naive()
+    Utc::now().with_timezone(&user.tz()).date_naive()
 }
 
 /// Which share of the users this task syncs (Cloud Run job tasks).
@@ -318,9 +317,9 @@ async fn sync_user(ctx: &Ctx<'_>, user: &User, days: u64, before: &Status) -> Re
         let n = sync::backfill(&client, &raw, &types, since, MAX_EMPTY_MONTHS).await?;
         tracing::info!("backfilled {n} data points");
         let start = since.unwrap_or(from).min(from);
-        load(ctx.store, &raw, &user.uid, start, today).await?;
+        load(ctx.store, &raw, user, start, today).await?;
     } else {
-        load(ctx.store, &raw, &user.uid, from, today).await?;
+        load(ctx.store, &raw, user, from, today).await?;
     }
     Ok(Synced {
         skipped: fetched.skipped,
@@ -331,14 +330,16 @@ async fn sync_user(ctx: &Ctx<'_>, user: &User, days: u64, before: &Status) -> Re
 }
 
 /// Rebuilds the user's tables for local dates `[from, to]` from their raw
-/// data, a month at a time (a month of heart rate is ~800k points).
+/// data, a month at a time (a month of heart rate is ~800k points), with
+/// local times in their time zone.
 pub async fn load(
     store: &Store,
     raw: &Store,
-    uid: &str,
+    user: &User,
     from: NaiveDate,
     to: NaiveDate,
 ) -> Result<()> {
+    let (uid, tz) = (&user.uid, user.tz());
     if from > to {
         bail!("--from must not be after --to");
     }
@@ -352,12 +353,12 @@ pub async fn load(
         // One extra day on each side: nights start the evening before, and
         // intervals near midnight may be stored in the neighbouring day's file.
         let points = sync::read_raw(raw, start - Days::new(1), end + Days::new(2)).await?;
-        let ds = model::Dataset::from_points(points);
+        let ds = model::Dataset::from_points(points, tz);
         let t = model::table_rows(&ds, start, end);
         tables::write_tables(store, uid, &t, start, end).await?;
         start = end + Days::new(1);
     }
-    tables::write_manifest(store, uid).await?;
+    tables::write_manifest(store, uid, tz).await?;
     tracing::info!("loaded {from}..{to}");
     Ok(())
 }

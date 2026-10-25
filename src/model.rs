@@ -1,16 +1,21 @@
 //! Normalizes parsed API data points (`health.rs`) into typed series, per-day
 //! metrics and the rows of the Parquet tables (`tables.rs`).
 //!
-//! All timestamps are converted to the user's local wall-clock time using the
-//! UTC offset stored with each point, so days split at local midnight.
+//! Times are instants in the user's time zone (`Time`): days split at local
+//! midnight, and the hour repeated when clocks go back stays two hours.
 
 use std::collections::BTreeMap;
 
-use chrono::{Duration, NaiveDate, NaiveDateTime};
+use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
+use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{ColumnType, Columns};
 use crate::health::{Points, StageType};
+
+/// An instant with the user's UTC offset at that moment; serialized as
+/// `2026-10-25T02:30:00+01:00`, stored in UTC (`engine.rs`).
+pub type Time = DateTime<chrono::FixedOffset>;
 
 /// Stored by its serde name (`DEEP`, `REM`, ...).
 impl ColumnType for StageType {
@@ -21,21 +26,21 @@ impl ColumnType for StageType {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Columns)]
 pub struct SleepStage {
-    pub start: NaiveDateTime,
-    pub end: NaiveDateTime,
+    pub start: Time,
+    pub end: Time,
     pub stage: StageType,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Columns)]
 pub struct Span {
-    pub start: NaiveDateTime,
-    pub end: NaiveDateTime,
+    pub start: Time,
+    pub end: Time,
 }
 
 #[derive(Debug, Clone)]
 pub struct Sleep {
-    pub start: NaiveDateTime,
-    pub end: NaiveDateTime,
+    pub start: Time,
+    pub end: Time,
     pub minutes_asleep: Option<i64>,
     pub minutes_awake: Option<i64>,
     pub stage_minutes: BTreeMap<StageType, i64>,
@@ -64,8 +69,8 @@ pub trait Row: Serialize + Columns {
 pub struct Exercise {
     /// Local calendar date (partition key)
     pub date: NaiveDate,
-    pub start: NaiveDateTime,
-    pub end: NaiveDateTime,
+    pub start: Time,
+    pub end: Time,
     pub kind: String,
     pub name: String,
     pub active_minutes: Option<f64>,
@@ -104,8 +109,8 @@ pub struct DailyMetrics {
     pub sleep_deep_minutes: Option<f64>,
     pub sleep_light_minutes: Option<f64>,
     pub sleep_rem_minutes: Option<f64>,
-    pub sleep_start: Option<NaiveDateTime>,
-    pub sleep_end: Option<NaiveDateTime>,
+    pub sleep_start: Option<Time>,
+    pub sleep_end: Option<Time>,
     pub exercise_minutes: Option<f64>,
 }
 
@@ -117,8 +122,8 @@ impl Row for DailyMetrics {
 pub struct HeartRateRow {
     /// Local calendar date (partition key)
     pub date: NaiveDate,
-    /// Local wall-clock time
-    pub ts: NaiveDateTime,
+    /// When the reading was taken
+    pub ts: Time,
     pub bpm: f64,
 }
 
@@ -130,8 +135,8 @@ impl Row for HeartRateRow {
 pub struct Spo2Row {
     /// Local calendar date (partition key)
     pub date: NaiveDate,
-    /// Local wall-clock time
-    pub ts: NaiveDateTime,
+    /// When the reading was taken
+    pub ts: Time,
     pub pct: f64,
 }
 
@@ -143,8 +148,8 @@ impl Row for Spo2Row {
 pub struct HrvRow {
     /// Local calendar date (partition key)
     pub date: NaiveDate,
-    /// Local wall-clock time
-    pub ts: NaiveDateTime,
+    /// When the reading was taken
+    pub ts: Time,
     /// RMSSD over a 5 minute window
     pub rmssd_ms: f64,
 }
@@ -158,8 +163,8 @@ impl Row for HrvRow {
 pub struct ActivityRow {
     /// Local calendar date (partition key)
     pub date: NaiveDate,
-    /// Start of the minute, local time
-    pub ts: NaiveDateTime,
+    /// Start of the minute
+    pub ts: Time,
     pub steps: Option<f64>,
     pub active_kcal: Option<f64>,
     /// Active zone minutes
@@ -175,8 +180,8 @@ impl Row for ActivityRow {
 pub struct NightRow {
     /// Wake-up date
     pub date: NaiveDate,
-    pub start: NaiveDateTime,
-    pub end: NaiveDateTime,
+    pub start: Time,
+    pub end: Time,
     pub minutes_asleep: Option<i64>,
     pub minutes_awake: Option<i64>,
     pub deep_minutes: Option<i64>,
@@ -196,15 +201,15 @@ impl Row for NightRow {
 
 #[derive(Default)]
 pub struct Dataset {
-    /// (local time, bpm), sorted.
-    pub heart_rate: Vec<(NaiveDateTime, f64)>,
-    /// Per-minute intervals: (local start, value), sorted.
-    pub steps: Vec<(NaiveDateTime, f64)>,
-    pub active_kcal: Vec<(NaiveDateTime, f64)>,
-    pub azm: Vec<(NaiveDateTime, f64)>,
-    pub spo2: Vec<(NaiveDateTime, f64)>,
-    /// (local time, RMSSD ms)
-    pub hrv: Vec<(NaiveDateTime, f64)>,
+    /// (time, bpm), sorted.
+    pub heart_rate: Vec<(Time, f64)>,
+    /// Per-minute intervals: (start, value), sorted.
+    pub steps: Vec<(Time, f64)>,
+    pub active_kcal: Vec<(Time, f64)>,
+    pub azm: Vec<(Time, f64)>,
+    pub spo2: Vec<(Time, f64)>,
+    /// (time, RMSSD ms)
+    pub hrv: Vec<(Time, f64)>,
     pub sleep: Vec<Sleep>,
     pub exercise: Vec<Exercise>,
     pub daily: BTreeMap<NaiveDate, DailyMetrics>,
@@ -214,21 +219,54 @@ pub struct Dataset {
 const MAX_NIGHT_GAP: Duration = Duration::hours(3);
 
 /// Sorted values with a time; points without a value are left out, and of
-/// several points at the same time the first one is kept.
+/// several points at the same instant the first one is kept.
 fn series<T>(
     points: &[T],
-    point: impl Fn(&T) -> (NaiveDateTime, Option<f64>),
-) -> Vec<(NaiveDateTime, f64)> {
+    tz: Tz,
+    point: impl Fn(&T) -> (DateTime<Utc>, Option<f64>),
+) -> Vec<(Time, f64)> {
     let mut s: Vec<_> = points
         .iter()
         .filter_map(|p| match point(p) {
-            (t, Some(v)) => Some((t, v)),
+            (t, Some(v)) => Some((local(t, tz), v)),
             (_, None) => None,
         })
         .collect();
     s.sort_by_key(|(t, _)| *t);
     s.dedup_by_key(|(t, _)| *t);
     s
+}
+
+/// The instant `t` in time zone `tz`.
+pub fn local(t: DateTime<Utc>, tz: Tz) -> Time {
+    t.with_timezone(&tz).fixed_offset()
+}
+
+/// Midnight starting local date `d` in `tz` (the first one, should a zone
+/// ever repeat it).
+pub fn midnight(d: NaiveDate, tz: Tz) -> Time {
+    d.and_time(NaiveTime::MIN)
+        .and_local_timezone(tz)
+        .earliest()
+        // Midnight skipped by a DST change: the day starts an hour later.
+        .or_else(|| {
+            (d.and_time(NaiveTime::MIN) + Duration::hours(1))
+                .and_local_timezone(tz)
+                .earliest()
+        })
+        .expect("a day has a start")
+        .fixed_offset()
+}
+
+/// `YYYY-MM-DD HH:MM` in Prague, the first of an hour repeated (tests).
+#[cfg(test)]
+pub fn prague(s: &str) -> Time {
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M")
+        .unwrap()
+        .and_local_timezone(chrono_tz::Europe::Prague)
+        .earliest()
+        .unwrap()
+        .fixed_offset()
 }
 
 /// Whole minutes; summaries report them as integers anyway.
@@ -238,25 +276,26 @@ fn minutes(v: Option<f64>) -> Option<i64> {
 
 impl Dataset {
     /// Normalizes parsed points (typically a few days of them, see
-    /// `sync::read_raw`) into typed series and per-day metrics.
-    pub fn from_points(p: Points) -> Self {
+    /// `sync::read_raw`) into typed series and per-day metrics, with local
+    /// times and dates in time zone `tz`.
+    pub fn from_points(p: Points, tz: Tz) -> Self {
         let mut ds = Dataset {
-            heart_rate: series(&p.heart_rate, |x| {
-                (x.sample_time.local(), x.beats_per_minute)
+            heart_rate: series(&p.heart_rate, tz, |x| {
+                (x.sample_time.physical_time, x.beats_per_minute)
             }),
-            steps: series(&p.steps, |x| (x.interval.local_start(), x.count)),
-            active_kcal: series(&p.active_energy_burned, |x| {
-                (x.interval.local_start(), x.kcal)
+            steps: series(&p.steps, tz, |x| (x.interval.start_time, x.count)),
+            active_kcal: series(&p.active_energy_burned, tz, |x| {
+                (x.interval.start_time, x.kcal)
             }),
-            azm: series(&p.active_zone_minutes, |x| {
-                (x.interval.local_start(), x.active_zone_minutes)
+            azm: series(&p.active_zone_minutes, tz, |x| {
+                (x.interval.start_time, x.active_zone_minutes)
             }),
-            spo2: series(&p.oxygen_saturation, |x| {
-                (x.sample_time.local(), x.percentage)
+            spo2: series(&p.oxygen_saturation, tz, |x| {
+                (x.sample_time.physical_time, x.percentage)
             }),
-            hrv: series(&p.heart_rate_variability, |x| {
+            hrv: series(&p.heart_rate_variability, tz, |x| {
                 (
-                    x.sample_time.local(),
+                    x.sample_time.physical_time,
                     x.root_mean_square_of_successive_differences_milliseconds,
                 )
             }),
@@ -265,12 +304,12 @@ impl Dataset {
 
         for s in &p.sleep {
             let span = |i: &crate::health::Interval| Span {
-                start: i.local_start(),
-                end: i.local_end(),
+                start: local(i.start_time, tz),
+                end: local(i.end_time, tz),
             };
             ds.sleep.push(Sleep {
-                start: s.interval.local_start(),
-                end: s.interval.local_end(),
+                start: local(s.interval.start_time, tz),
+                end: local(s.interval.end_time, tz),
                 minutes_asleep: minutes(s.summary.minutes_asleep),
                 minutes_awake: minutes(s.summary.minutes_awake),
                 stage_minutes: s
@@ -298,10 +337,13 @@ impl Dataset {
         ds.sleep.dedup_by_key(|s| s.start);
 
         for e in &p.exercise {
-            let (start, end) = (e.interval.local_start(), e.interval.local_end());
+            let (start, end) = (
+                local(e.interval.start_time, tz),
+                local(e.interval.end_time, tz),
+            );
             let m = &e.metrics_summary;
             ds.exercise.push(Exercise {
-                date: start.date(),
+                date: start.date_naive(),
                 start,
                 end,
                 kind: e.exercise_type.clone().unwrap_or_else(|| "UNKNOWN".into()),
@@ -353,10 +395,10 @@ impl Dataset {
         }
 
         // Aggregates of intraday data.
-        let sum_by_day = |s: &[(NaiveDateTime, f64)]| {
+        let sum_by_day = |s: &[(Time, f64)]| {
             let mut m: BTreeMap<NaiveDate, f64> = BTreeMap::new();
             for (t, v) in s {
-                *m.entry(t.date()).or_default() += v;
+                *m.entry(t.date_naive()).or_default() += v;
             }
             m
         };
@@ -371,7 +413,9 @@ impl Dataset {
         }
         let mut hr: BTreeMap<NaiveDate, (f64, f64, f64, usize)> = BTreeMap::new();
         for (t, v) in &self.heart_rate {
-            let e = hr.entry(t.date()).or_insert((f64::MAX, f64::MIN, 0.0, 0));
+            let e = hr
+                .entry(t.date_naive())
+                .or_insert((f64::MAX, f64::MIN, 0.0, 0));
             e.0 = e.0.min(*v);
             e.1 = e.1.max(*v);
             e.2 += v;
@@ -389,7 +433,7 @@ impl Dataset {
             .daily
             .keys()
             .copied()
-            .chain(self.sleep.iter().map(|s| s.end.date()))
+            .chain(self.sleep.iter().map(|s| s.end.date_naive()))
             .collect();
         for d in nights {
             let Some(n) = self.night_before(d) else {
@@ -420,12 +464,12 @@ impl Dataset {
     /// waking up for an hour); a later session after a longer gap is a nap and
     /// doesn't count. Gaps between merged sessions count as awake, as in Google Health.
     pub fn night_before(&self, d: NaiveDate) -> Option<Sleep> {
-        let cutoff = d.and_hms_opt(14, 0, 0)?;
+        let cutoff = NaiveTime::from_hms_opt(14, 0, 0)?;
         let mut parts: Vec<&Sleep> = Vec::new();
         for s in self
             .sleep
             .iter()
-            .filter(|s| s.end.date() == d && s.end < cutoff)
+            .filter(|s| s.end.date_naive() == d && s.end.time() < cutoff)
         {
             let end = parts.iter().map(|p| p.end).max();
             if end.is_some_and(|e| s.start - e > MAX_NIGHT_GAP) {
@@ -486,15 +530,15 @@ pub struct Tables {
 }
 
 pub fn table_rows(ds: &Dataset, from: NaiveDate, to: NaiveDate) -> Tables {
-    let in_range = |t: &NaiveDateTime| (from..=to).contains(&t.date());
-    let samples = |s: &[(NaiveDateTime, f64)]| {
+    let in_range = |t: &Time| (from..=to).contains(&t.date_naive());
+    let samples = |s: &[(Time, f64)]| {
         s.iter()
             .filter(|(t, _)| in_range(t))
-            .map(|&(t, v)| (t.date(), t, v))
+            .map(|&(t, v)| (t.date_naive(), t, v))
             .collect::<Vec<_>>()
     };
 
-    let mut minutes: BTreeMap<NaiveDateTime, [Option<f64>; 3]> = BTreeMap::new();
+    let mut minutes: BTreeMap<Time, [Option<f64>; 3]> = BTreeMap::new();
     for (i, series) in [&ds.steps, &ds.active_kcal, &ds.azm]
         .into_iter()
         .enumerate()
@@ -535,7 +579,7 @@ pub fn table_rows(ds: &Dataset, from: NaiveDate, to: NaiveDate) -> Tables {
         activity: minutes
             .into_iter()
             .map(|(ts, [steps, active_kcal, azm])| ActivityRow {
-                date: ts.date(),
+                date: ts.date_naive(),
                 ts,
                 steps,
                 active_kcal,
@@ -566,9 +610,7 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
 
-    fn t(s: &str) -> NaiveDateTime {
-        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap()
-    }
+    use prague as t;
 
     #[test]
     fn merges_split_night_and_skips_naps() {
@@ -594,7 +636,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let n = ds.night_before(t("2026-10-22 00:00").date()).unwrap();
+        let n = ds.night_before(t("2026-10-22 00:00").date_naive()).unwrap();
         assert_eq!(
             (n.start, n.end),
             (t("2026-10-21 23:14"), t("2026-10-22 08:57"))
@@ -657,7 +699,7 @@ mod tests {
 
     #[test]
     fn rows_match_the_table_schemas() {
-        let d = t("2026-10-22 00:00").date();
+        let d = t("2026-10-22 00:00").date_naive();
         let ts = t("2026-10-22 07:00");
         check(HeartRateRow {
             date: d,
@@ -716,11 +758,128 @@ mod tests {
         });
     }
 
+    /// Points as the API returns them, in UTC: `offset` is the `utcOffset`
+    /// it stamps them with.
+    fn points(lines: &[String]) -> Points {
+        let mut p = Points::default();
+        for l in lines {
+            assert!(p.add(serde_json::from_str(l).unwrap()), "{l}");
+        }
+        p
+    }
+
+    fn sample(kind: &str, field: &str, utc: &str, offset: &str, v: f64) -> String {
+        json!({ kind: { "sampleTime": { "physicalTime": utc, "utcOffset": offset }, field: v } })
+            .to_string()
+    }
+
+    fn steps(start: &str, end: &str, n: f64) -> String {
+        json!({ "steps": { "interval": { "startTime": start, "startUtcOffset": "0s",
+            "endTime": end, "endUtcOffset": "0s" }, "count": n } })
+        .to_string()
+    }
+
+    #[test]
+    fn keeps_both_hours_when_clocks_go_back() {
+        // Prague, 2026-10-25: 03:00 CEST becomes 02:00 CET at 01:00 UTC.
+        let p = points(&[
+            sample(
+                "heartRate",
+                "beatsPerMinute",
+                "2026-10-25T00:30:00Z",
+                "7200s",
+                50.0,
+            ),
+            sample(
+                "heartRate",
+                "beatsPerMinute",
+                "2026-10-25T01:30:00Z",
+                "3600s",
+                55.0,
+            ),
+            // The API stamps the whole night of HRV with the offset at its end.
+            sample(
+                "heartRateVariability",
+                "rootMeanSquareOfSuccessiveDifferencesMilliseconds",
+                "2026-10-24T22:20:00Z",
+                "3600s",
+                40.0,
+            ),
+            sample(
+                "heartRateVariability",
+                "rootMeanSquareOfSuccessiveDifferencesMilliseconds",
+                "2026-10-25T00:30:00Z",
+                "3600s",
+                30.0,
+            ),
+            sample(
+                "heartRateVariability",
+                "rootMeanSquareOfSuccessiveDifferencesMilliseconds",
+                "2026-10-25T01:30:00Z",
+                "3600s",
+                20.0,
+            ),
+            steps("2026-10-25T00:30:00Z", "2026-10-25T00:31:00Z", 10.0),
+            steps("2026-10-25T01:30:00Z", "2026-10-25T01:31:00Z", 20.0),
+        ]);
+        let ds = Dataset::from_points(p, chrono_tz::Europe::Prague);
+        let times = |s: &[(Time, f64)]| s.iter().map(|(t, _)| t.to_rfc3339()).collect::<Vec<_>>();
+        assert_eq!(
+            times(&ds.heart_rate),
+            ["2026-10-25T02:30:00+02:00", "2026-10-25T02:30:00+01:00"]
+        );
+        assert_eq!(
+            times(&ds.hrv),
+            [
+                "2026-10-25T00:20:00+02:00",
+                "2026-10-25T02:30:00+02:00",
+                "2026-10-25T02:30:00+01:00"
+            ]
+        );
+        let day = &ds.daily[&prague("2026-10-25 00:00").date_naive()];
+        assert_eq!(day.steps, Some(30.0));
+        assert_eq!(day.hr_avg, Some(52.5));
+
+        let t = table_rows(&ds, day.date, day.date);
+        assert_eq!(t.activity.len(), 2);
+        assert_eq!(t.heart_rate.len(), 2);
+    }
+
+    #[test]
+    fn a_night_over_the_clock_change_is_as_long_as_it_was() {
+        let at = |s: &str| Time::parse_from_rfc3339(s).unwrap();
+        let ds = Dataset {
+            sleep: vec![Sleep {
+                start: at("2026-10-25T00:00:00+02:00"),
+                end: at("2026-10-25T07:00:00+01:00"),
+                minutes_asleep: Some(480),
+                minutes_awake: None,
+                stage_minutes: BTreeMap::new(),
+                stages: Vec::new(),
+                restless: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let n = ds
+            .night_before(prague("2026-10-25 00:00").date_naive())
+            .unwrap();
+        assert_eq!((n.end - n.start).num_hours(), 8);
+    }
+
+    #[test]
+    fn days_start_at_local_midnight() {
+        let tz = chrono_tz::Europe::Prague;
+        let d = prague("2026-10-25 00:00").date_naive();
+        assert_eq!(midnight(d, tz).to_rfc3339(), "2026-10-25T00:00:00+02:00");
+        let next = midnight(d.succ_opt().unwrap(), tz);
+        assert_eq!((next - midnight(d, tz)).num_hours(), 25);
+    }
+
     #[test]
     fn rows_serialize_as_the_tables_read_them() {
         let ts = t("2026-10-22 07:00");
         let row = NightRow {
-            date: ts.date(),
+            date: ts.date_naive(),
             start: ts,
             end: ts + Duration::hours(1),
             minutes_asleep: Some(60),
@@ -739,7 +898,7 @@ mod tests {
         };
         let v = serde_json::to_value(&row).unwrap();
         assert_eq!(v["date"], "2026-10-22");
-        assert_eq!(v["end"], "2026-10-22T08:00:00");
+        assert_eq!(v["end"], "2026-10-22T08:00:00+02:00");
         assert_eq!(v["stages"][0]["stage"], "REM");
         assert_eq!(v["minutes_asleep"], json!(60));
     }

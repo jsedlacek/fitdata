@@ -14,7 +14,7 @@ use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Json, Redirect, Response};
 use axum::routing::{delete, get, post};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{Duration, NaiveDate, SecondsFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tower::ServiceBuilder;
@@ -29,12 +29,12 @@ use crate::datatypes::READ_SCOPES;
 use crate::engine;
 use crate::health::StageType;
 use crate::kms::Kms;
-use crate::model::{DailyMetrics, Exercise, NightRow};
+use crate::model::{self, DailyMetrics, Exercise, NightRow, Time};
 use crate::oauth::{ClientCredentials, auth_request, exchange_code};
 use crate::status;
 use crate::store::Store;
 use crate::users::{self, User};
-use crate::warehouse::{Need, Warehouse};
+use crate::warehouse::{Need, SESSION_MEMORY, Warehouse};
 use crate::{authz, mcp};
 
 const SESSION_COOKIE: &str = "fd_session";
@@ -488,23 +488,19 @@ struct Overview {
     user: Me,
 }
 
-/// The user's last sync run (or the last successful one), in local time.
+/// The user's last sync run (or the last successful one).
 pub(crate) async fn last_run(store: &Store, uid: &str, ok_only: bool) -> Result<Option<LastRun>> {
     let s = status::get(store, uid).await?;
-    let local = |t: chrono::DateTime<chrono::Utc>| {
-        t.with_timezone(&chrono::Local)
-            .format("%Y-%m-%dT%H:%M:%S")
-            .to_string()
-    };
+    let rfc3339 = |t: chrono::DateTime<chrono::Utc>| t.to_rfc3339_opts(SecondsFormat::Secs, true);
     Ok(if ok_only {
         s.last_ok.map(|t| LastRun {
-            run_at: local(t),
+            run_at: rfc3339(t),
             ok: true,
             auth_error: false,
         })
     } else {
         s.last_run.map(|r| LastRun {
-            run_at: local(r.at),
+            run_at: rfc3339(r.at),
             ok: r.ok,
             auth_error: r.auth_error,
         })
@@ -612,15 +608,15 @@ async fn day(
 
 /// Heart rate in one minute: `[time, min, mean, max]` in JSON.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(into = "(NaiveDateTime, f64, f64, f64)")]
+#[serde(into = "(Time, f64, f64, f64)")]
 pub(crate) struct HrMinute {
-    pub t: NaiveDateTime,
+    pub t: Time,
     pub lo: f64,
     pub avg: f64,
     pub hi: f64,
 }
 
-impl From<HrMinute> for (NaiveDateTime, f64, f64, f64) {
+impl From<HrMinute> for (Time, f64, f64, f64) {
     fn from(m: HrMinute) -> Self {
         (m.t, m.lo, m.avg, m.hi)
     }
@@ -628,13 +624,13 @@ impl From<HrMinute> for (NaiveDateTime, f64, f64, f64) {
 
 /// A timed value: `[time, value]` in JSON.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(into = "(NaiveDateTime, f64)")]
+#[serde(into = "(Time, f64)")]
 pub(crate) struct Reading {
-    pub t: NaiveDateTime,
+    pub t: Time,
     pub v: f64,
 }
 
-impl From<Reading> for (NaiveDateTime, f64) {
+impl From<Reading> for (Time, f64) {
     fn from(r: Reading) -> Self {
         (r.t, r.v)
     }
@@ -653,8 +649,12 @@ pub(crate) struct NightDetail {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DayDetail {
     pub date: NaiveDate,
+    /// The user's time zone (IANA name), which the times' offsets follow.
+    pub time_zone: String,
     /// The time axis: from midnight, or from the start of the night if earlier.
-    pub range: [NaiveDateTime; 2],
+    pub range: [Time; 2],
+    /// The midnight `date` starts at.
+    pub midnight: Time,
     pub metrics: Option<DailyMetrics>,
     pub heart_rate: Vec<HrMinute>,
     /// Steps per 15 minutes.
@@ -669,9 +669,12 @@ pub(crate) struct DayDetail {
 /// before (if there was one) so the sleep that ended that morning is shown.
 pub(crate) async fn day_detail(wh: &Warehouse, uid: &str, date: NaiveDate) -> Result<DayDetail> {
     let prev = date - Duration::days(1);
-    let c = &wh.session(uid, Need::Range(prev, date)).await?;
-    let midnight = date.and_time(NaiveTime::MIN);
-    let end = midnight + Duration::days(1);
+    let snapshot = wh.snapshot(uid, Need::Range(prev, date)).await?;
+    let c = &snapshot.session(SESSION_MEMORY).await?;
+    let tz = snapshot.tz;
+    let midnight = model::midnight(date, tz);
+    // Not midnight + 24 h: the day clocks change is 23 or 25 hours long.
+    let end = model::midnight(date + Duration::days(1), tz);
 
     let night = engine::query_as::<NightRow>(
         c,
@@ -694,7 +697,7 @@ pub(crate) async fn day_detail(wh: &Warehouse, uid: &str, date: NaiveDate) -> Re
         .map_or((midnight, midnight + Duration::hours(8)), |n| {
             (n.start, n.end)
         });
-    let fmt = |d: NaiveDateTime| d.format("%Y-%m-%d %H:%M:%S").to_string();
+    let fmt = |t: Time| t.to_rfc3339();
     let (s, e, nf, nt) = (fmt(start), fmt(end), fmt(nf), fmt(nt));
     let days = format!("date BETWEEN DATE '{prev}' AND DATE '{date}'");
 
@@ -702,7 +705,7 @@ pub(crate) async fn day_detail(wh: &Warehouse, uid: &str, date: NaiveDate) -> Re
         c,
         &format!(
             "SELECT date_trunc('minute', ts) AS t, MIN(bpm) AS lo, ROUND(AVG(bpm), 1) AS avg, MAX(bpm) AS hi
-             FROM heart_rate WHERE {days} AND ts >= TIMESTAMP '{s}' AND ts < TIMESTAMP '{e}'
+             FROM heart_rate WHERE {days} AND ts >= '{s}' AND ts < '{e}'
              GROUP BY t ORDER BY t"
         ),
     )
@@ -719,7 +722,7 @@ pub(crate) async fn day_detail(wh: &Warehouse, uid: &str, date: NaiveDate) -> Re
         c,
         &format!(
             "SELECT ts AS t, pct AS v FROM spo2
-             WHERE {days} AND ts >= TIMESTAMP '{nf}' AND ts < TIMESTAMP '{nt}' ORDER BY ts"
+             WHERE {days} AND ts >= '{nf}' AND ts < '{nt}' ORDER BY ts"
         ),
     )
     .await?;
@@ -727,7 +730,7 @@ pub(crate) async fn day_detail(wh: &Warehouse, uid: &str, date: NaiveDate) -> Re
         c,
         &format!(
             "SELECT ts AS t, rmssd_ms AS v FROM hrv
-             WHERE {days} AND ts >= TIMESTAMP '{nf}' AND ts < TIMESTAMP '{nt}' ORDER BY ts"
+             WHERE {days} AND ts >= '{nf}' AND ts < '{nt}' ORDER BY ts"
         ),
     )
     .await?;
@@ -735,13 +738,16 @@ pub(crate) async fn day_detail(wh: &Warehouse, uid: &str, date: NaiveDate) -> Re
         c,
         &format!(
             r#"SELECT * FROM exercises
-             WHERE {days} AND "start" >= TIMESTAMP '{s}' AND "start" < TIMESTAMP '{e}' ORDER BY "start""#
+             WHERE {days} AND "start" >= '{s}' AND "start" < '{e}' ORDER BY "start""#
         ),
-    ).await?;
+    )
+    .await?;
 
     Ok(DayDetail {
         date,
+        time_zone: tz.name().to_string(),
         range: [start, end],
+        midnight,
         metrics,
         heart_rate,
         steps,

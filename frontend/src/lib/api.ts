@@ -62,9 +62,18 @@ export type Exercise = {
   azm: number | null;
 };
 
+/**
+ * Times are instants with the UTC offset of the user's time zone,
+ * e.g. `2026-10-25T02:30:00+01:00`: the first 16 characters are the local
+ * wall-clock time, `Date.parse` gives the instant.
+ */
 export type DayDetail = {
   date: string;
+  /** IANA time zone the times' offsets follow. */
+  timeZone: string;
   range: [string, string];
+  /** The midnight `date` starts at. */
+  midnight: string;
   metrics: Daily | null;
   /** [minute, min, mean, max] */
   heartRate: [string, number, number, number][];

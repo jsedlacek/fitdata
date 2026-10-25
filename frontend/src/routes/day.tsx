@@ -127,7 +127,7 @@ export function DayPage({ date: wanted }: { date?: string }) {
           <DayTimeline day={day.data} />
           <div className="grid gap-5 lg:grid-cols-5">
             <div className="lg:col-span-3">
-              <SleepCard night={day.data.sleep} />
+              <SleepCard night={day.data.sleep} timeZone={day.data.timeZone} />
             </div>
             <div className="space-y-5 lg:col-span-2">
               <HeartSummary m={metrics} />

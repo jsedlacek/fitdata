@@ -13,7 +13,7 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
-use chrono::{Duration, NaiveDate, NaiveDateTime, Timelike};
+use chrono::{Duration, NaiveDate, Timelike};
 use schemars::generate::SchemaSettings;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::de::{self, Deserializer};
@@ -23,7 +23,7 @@ use tracing::Instrument;
 
 use crate::authz::{bearer_user, unauthorized};
 use crate::engine;
-use crate::model::{DailyMetrics, Exercise, NightRow};
+use crate::model::{DailyMetrics, Exercise, NightRow, Time};
 use crate::query;
 use crate::warehouse::Need;
 use crate::web::{Config, HrMinute, Shared, SignedIn, day_detail, last_run};
@@ -35,7 +35,9 @@ const MAX_DAYS: i64 = 400;
 const QUERY_DEFAULT_DAYS: i64 = 90;
 
 const INSTRUCTIONS: &str = "Personal health data from the user's Fitbit, synced every hour. \
-Dates and times are local (Europe/Prague). A night belongs to the date the user woke up. \
+Dates and times are local (Europe/Prague); times carry their UTC offset \
+(2026-10-25T02:30:00+01:00), so the hour repeated when clocks go back is told apart. \
+A night belongs to the date the user woke up. \
 Start with get_daily_metrics for trends and get_day for one day in detail; for anything else read \
 get_schema and use query.";
 
@@ -510,21 +512,26 @@ fn schema() -> Value {
         })
         .collect();
     json!({
-        "notes": "DataFusion SQL (close to PostgreSQL). Every table has `date` (local date); TIMESTAMP columns are local \
-                  wall-clock time (Europe/Prague). `daily` has one row per day; heart_rate has a \
-                  reading every few seconds, so aggregate it.",
+        "notes": "DataFusion SQL (close to PostgreSQL). Every table has `date` (local date). \
+                  TIMESTAMP WITH TIME ZONE columns are instants shown in local time \
+                  (Europe/Prague) with their UTC offset; extract, date_trunc, date_bin and \
+                  CAST(... AS DATE) work in local time, and so do literals without an offset \
+                  (ts >= '2026-10-25 06:00'); give the offset to pick one of the hour repeated \
+                  when clocks go back ('2026-10-25 02:30:00+01:00'). \
+                  `daily` has one row per day; heart_rate has a reading every few seconds, \
+                  so aggregate it.",
         "tables": tables,
     })
 }
 
 /// Minute rows merged into 15-minute buckets: `(start, min, mean, max)`.
-fn hr_buckets(minutes: &[HrMinute]) -> Vec<(NaiveDateTime, f64, f64, f64)> {
-    let mut out: Vec<(NaiveDateTime, f64, f64, f64, f64)> = Vec::new();
+fn hr_buckets(minutes: &[HrMinute]) -> Vec<(Time, f64, f64, f64)> {
+    let mut out: Vec<(Time, f64, f64, f64, f64)> = Vec::new();
     for m in minutes {
-        let start =
-            m.t.date()
-                .and_hms_opt(m.t.hour(), m.t.minute() / 15 * 15, 0)
-                .expect("a valid time");
+        let into = Duration::minutes(m.t.minute() as i64 % 15)
+            + Duration::seconds(m.t.second() as i64)
+            + Duration::nanoseconds(m.t.nanosecond() as i64);
+        let start = m.t - into;
         match out.last_mut() {
             Some(b) if b.0 == start => {
                 b.1 = b.1.min(m.lo);
@@ -544,8 +551,8 @@ fn hr_buckets(minutes: &[HrMinute]) -> Vec<(NaiveDateTime, f64, f64, f64)> {
 mod tests {
     use super::*;
 
-    fn t(s: &str) -> NaiveDateTime {
-        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").unwrap()
+    fn t(s: &str) -> Time {
+        Time::parse_from_rfc3339(s).unwrap()
     }
 
     #[test]
@@ -557,15 +564,20 @@ mod tests {
             hi,
         };
         let minutes = [
-            m("2026-10-23T07:00:00", 60.0, 62.0, 65.0),
-            m("2026-10-23T07:14:00", 58.0, 64.0, 70.0),
-            m("2026-10-23T07:15:00", 80.0, 90.0, 100.0),
+            m("2026-10-23T07:00:00+02:00", 60.0, 62.0, 65.0),
+            m("2026-10-23T07:14:00+02:00", 58.0, 64.0, 70.0),
+            m("2026-10-23T07:15:00+02:00", 80.0, 90.0, 100.0),
+            // The same wall-clock quarter twice when clocks go back.
+            m("2026-10-25T02:00:00+02:00", 50.0, 52.0, 54.0),
+            m("2026-10-25T02:01:00+01:00", 60.0, 62.0, 64.0),
         ];
         assert_eq!(
             json!(hr_buckets(&minutes)),
             json!([
-                ["2026-10-23T07:00:00", 58.0, 63.0, 70.0],
-                ["2026-10-23T07:15:00", 80.0, 90.0, 100.0],
+                ["2026-10-23T07:00:00+02:00", 58.0, 63.0, 70.0],
+                ["2026-10-23T07:15:00+02:00", 80.0, 90.0, 100.0],
+                ["2026-10-25T02:00:00+02:00", 50.0, 52.0, 54.0],
+                ["2026-10-25T02:00:00+01:00", 60.0, 62.0, 64.0],
             ])
         );
     }

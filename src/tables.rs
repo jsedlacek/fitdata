@@ -206,17 +206,40 @@ pub async fn write_tables(
 
 /// Every data file of a user with its generation, so readers can tell what
 /// changed with one read.
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Manifest {
     /// File name (see `file_name`) -> generation.
     pub files: BTreeMap<String, i64>,
+    /// The time zone the local dates in the files follow, and the one
+    /// queries show times in (IANA name).
+    #[serde(default = "default_tz")]
+    pub time_zone: String,
+}
+
+fn default_tz() -> String {
+    crate::users::DEFAULT_TIME_ZONE.to_string()
+}
+
+impl Default for Manifest {
+    fn default() -> Self {
+        Self {
+            files: BTreeMap::new(),
+            time_zone: default_tz(),
+        }
+    }
+}
+
+impl Manifest {
+    pub fn tz(&self) -> chrono_tz::Tz {
+        self.time_zone.parse().unwrap_or(chrono_tz::Europe::Prague)
+    }
 }
 
 pub fn manifest_path(uid: &str) -> String {
     format!("{}/manifest.json", data_prefix(uid))
 }
 
-pub async fn write_manifest(store: &Store, uid: &str) -> Result<()> {
+pub async fn write_manifest(store: &Store, uid: &str, tz: chrono_tz::Tz) -> Result<()> {
     let prefix = format!("{}/", data_prefix(uid));
     let files = store
         .list(&prefix)
@@ -227,7 +250,10 @@ pub async fn write_manifest(store: &Store, uid: &str) -> Result<()> {
             name.ends_with(".parquet").then_some((name, generation))
         })
         .collect();
-    let manifest = Manifest { files };
+    let manifest = Manifest {
+        files,
+        time_zone: tz.name().to_string(),
+    };
     store
         .put(&manifest_path(uid), serde_json::to_vec_pretty(&manifest)?)
         .await
@@ -237,17 +263,16 @@ pub async fn write_manifest(store: &Store, uid: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::health::StageType;
-    use crate::model::{DailyMetrics, HeartRateRow, NightRow, SleepStage};
-    use chrono::NaiveDateTime;
+    use crate::model::{DailyMetrics, HeartRateRow, NightRow, SleepStage, prague};
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
     }
 
     fn hr(ts: &str, bpm: f64) -> HeartRateRow {
-        let ts = NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M").unwrap();
+        let ts = prague(ts);
         HeartRateRow {
-            date: ts.date(),
+            date: ts.date_naive(),
             ts,
             bpm,
         }
@@ -297,7 +322,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             read(&store, "heart_rate/2026-09.parquet").await,
-            [("2026-09-30T10:00:00".into(), 60.0)]
+            [("2026-09-30T08:00:00Z".into(), 60.0)]
         );
         assert_eq!(read(&store, "heart_rate/2026-10.parquet").await.len(), 3);
 
@@ -309,8 +334,8 @@ mod tests {
         assert_eq!(
             read(&store, "heart_rate/2026-10.parquet").await,
             [
-                ("2026-10-02T11:00:00".into(), 72.0),
-                ("2026-10-03T10:00:00".into(), 63.0)
+                ("2026-10-02T09:00:00Z".into(), 72.0),
+                ("2026-10-03T08:00:00Z".into(), 63.0)
             ]
         );
         assert_eq!(read(&store, "heart_rate/2026-09.parquet").await.len(), 1);
@@ -326,7 +351,9 @@ mod tests {
                 .exists()
         );
 
-        write_manifest(&store, "x").await.unwrap();
+        write_manifest(&store, "x", chrono_tz::Europe::Prague)
+            .await
+            .unwrap();
         let m: Manifest =
             serde_json::from_slice(&store.get(&manifest_path("x")).await.unwrap().unwrap())
                 .unwrap();
@@ -380,7 +407,7 @@ mod tests {
     async fn nested_columns_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::open(tmp.path().to_str().unwrap()).await.unwrap();
-        let t = |s: &str| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap();
+        let t = prague;
         let night = NightRow {
             date: d("2026-10-02"),
             start: t("2026-10-01 23:00"),

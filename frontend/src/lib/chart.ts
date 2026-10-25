@@ -31,13 +31,14 @@ export function chrome() {
       textStyle: { color: c.ink, fontSize: 12 },
       extraCssText: 'border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.12);',
     },
-    timeAxis: {
+    /** Time axis labelled with the wall clock of time zone `tz`. */
+    timeAxis: (tz: string) => ({
       type: 'time' as const,
-      axisLabel: { ...axisLabel, hideOverlap: true, formatter: '{HH}:{mm}' },
+      axisLabel: { ...axisLabel, hideOverlap: true, formatter: hhmm(tz) },
       axisLine: { lineStyle: { color: c.axis } },
       axisTick: { show: false },
       splitLine: { show: false },
-    },
+    }),
     valueAxis: {
       type: 'value' as const,
       axisLabel,
@@ -50,14 +51,17 @@ export function chrome() {
 }
 
 /**
- * The API's local wall-clock time as an ECharts instant. Charts plot and label
- * it in UTC (`useUTC` in EChart), so the axis follows the wall clock and a DST
- * change neither opens nor swallows an hour.
+ * `HH:mm` of an instant on the wall clock of `tz`. Times from the API are
+ * instants with their offset, so the hour repeated when clocks go back is
+ * on the axis twice (02:00, 02:00), not one hour drawn over the other.
  */
-export const wall = (s: string) => `${s}Z`;
+function hhmm(tz: string) {
+  const f = new Intl.DateTimeFormat('cs-CZ', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: tz });
+  return (v: number) => f.format(v);
+}
 
-/** Minutes between two wall-clock times. */
-export const wallMinutes = (a: string, b: string) => (Date.parse(wall(b)) - Date.parse(wall(a))) / 60_000;
+/** Minutes between two times from the API. */
+export const minutesBetween = (a: string, b: string) => (Date.parse(b) - Date.parse(a)) / 60_000;
 
 /** HTML for a tooltip row: colored marker + label + value. */
 export const row = (color: string, label: string, value: string) =>

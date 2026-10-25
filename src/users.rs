@@ -42,6 +42,13 @@ impl User {
     }
 }
 
+impl User {
+    /// `time_zone`, or the default if it isn't a known zone.
+    pub fn tz(&self) -> chrono_tz::Tz {
+        self.time_zone.parse().unwrap_or(chrono_tz::Europe::Prague)
+    }
+}
+
 fn default_tz() -> String {
     DEFAULT_TIME_ZONE.to_string()
 }
