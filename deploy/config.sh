@@ -11,8 +11,6 @@ SCHEDULE=${SCHEDULE:-"0 * * * *"}
 # Custom domain of the dashboard; must be verified for the gcloud account
 # (gcloud domains list-user-verified). Empty means the Cloud Run URL.
 DOMAIN=${DOMAIN:-fitdata.jakub.contact}
-# Google accounts allowed to sign in (comma separated): the invitations.
-ALLOWED_EMAILS=${ALLOWED_EMAILS:-sedlacek.jakub@gmail.com}
 # Where Cloud Monitoring sends an e-mail when a sync run fails.
 ALERT_EMAIL=${ALERT_EMAIL:-sedlacek.jakub@gmail.com}
 

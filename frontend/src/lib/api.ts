@@ -32,7 +32,7 @@ export type SyncRun = { run_at: string; ok: boolean; auth_error: boolean };
 export type SyncState = { running: boolean };
 
 /** The signed-in user; `connected` once Fitbit data may be read. */
-export type Me = { email: string; connected: boolean };
+export type Me = { connected: boolean };
 
 export type Overview = { days: Daily[]; lastSync: SyncRun | null; user: Me };
 

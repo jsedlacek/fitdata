@@ -13,7 +13,6 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Json, Redirect, Response};
 use axum::routing::{delete, get, post};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, NaiveDate, SecondsFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -30,17 +29,17 @@ use crate::engine;
 use crate::health::StageType;
 use crate::kms::Kms;
 use crate::model::{self, DailyMetrics, Exercise, NightRow, Time};
-use crate::oauth::{self, ClientCredentials, auth_request, exchange_code};
+use crate::oauth::{ClientCredentials, auth_request, exchange_code};
 use crate::status;
 use crate::store::Store;
 use crate::users::{self, User};
 use crate::warehouse::{Need, SESSION_MEMORY, Warehouse};
-use crate::{authz, mcp};
+use crate::{api, authz, mcp};
 
 const SESSION_COOKIE: &str = "fd_session";
 const OAUTH_COOKIE: &str = "fd_oauth";
 const SESSION_DAYS: i64 = 30;
-/// Where invites and privacy requests go; also on the public pages (`frontend/*.html`).
+/// Where questions and privacy requests go; also on the public pages (`frontend/*.html`).
 const CONTACT_EMAIL: &str = "fitdata@jakub.contact";
 /// Files from `frontend/public` served without sign-in.
 const PUBLIC_FILES: &[&str] = &[
@@ -58,8 +57,6 @@ pub struct Config {
     /// The built frontend (`frontend/dist`), served as a single-page app.
     pub static_dir: PathBuf,
     pub public_url: String,
-    /// Who may sign in (the invitations).
-    pub allowed_emails: Vec<String>,
     pub session_key: Vec<u8>,
     /// Local development: no sign-in, every request is this user.
     pub dev_user: Option<String>,
@@ -78,9 +75,6 @@ pub struct Config {
 pub(crate) type Shared = Arc<Config>;
 
 pub async fn serve(cfg: Config) -> Result<()> {
-    if cfg.dev_user.is_none() && cfg.allowed_emails.is_empty() {
-        bail!("set ALLOWED_EMAILS (or DEV_USER for local development)");
-    }
     let port = cfg.port;
     let state = Arc::new(cfg);
 
@@ -232,50 +226,37 @@ fn set_cookie(cfg: &Config, name: &str, value: &str, max_age: i64) -> String {
 /// A signed-in user.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SignedIn {
+    /// The Google Health user ID.
     pub uid: String,
-    pub email: String,
 }
 
-/// The user behind signed claims, if their e-mail is still allowed. Tokens
-/// issued before there were several users carry no ID; they are looked up
-/// by e-mail in the registry.
-pub(crate) async fn resolve(cfg: &Config, uid: &str, email: &str) -> Option<SignedIn> {
-    if !cfg.allowed_emails.iter().any(|e| e == email) {
-        return None;
+/// The user behind signed claims, if their account still exists: a deleted
+/// account's sessions and MCP tokens stop working.
+pub(crate) async fn resolve(cfg: &Config, uid: &str) -> Option<SignedIn> {
+    match users::get(&cfg.store, uid).await {
+        Ok(Some(u)) if !u.deleted => Some(SignedIn { uid: u.uid }),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!("reading user {uid}: {e:#}");
+            None
+        }
     }
-    if !uid.is_empty() {
-        return Some(SignedIn {
-            uid: uid.to_string(),
-            email: email.to_string(),
-        });
-    }
-    let all = users::list(&cfg.store).await.ok()?;
-    all.into_iter()
-        .find(|u| u.email == email && !u.deleted)
-        .map(|u| SignedIn {
-            uid: u.uid,
-            email: u.email,
-        })
 }
 
-/// The `(uid, email)` of a session cookie signed with `key`.
-fn session_claims(key: &[u8], headers: &HeaderMap) -> Option<(String, String)> {
+/// The user ID of a session cookie signed with `key`.
+fn session_uid(key: &[u8], headers: &HeaderMap) -> Option<String> {
     match claims::verify(key, cookie(headers, SESSION_COOKIE)?)? {
-        Claims::Session { uid, email } => Some((uid, email)),
+        Claims::Session { uid } => Some(uid),
         _ => None,
     }
 }
 
-/// The signed-in user, if still allowed.
+/// The signed-in user, if their account still exists.
 pub(crate) async fn session_user(cfg: &Config, headers: &HeaderMap) -> Option<SignedIn> {
     if let Some(uid) = &cfg.dev_user {
-        return Some(SignedIn {
-            uid: uid.clone(),
-            email: "dev@localhost".into(),
-        });
+        return Some(SignedIn { uid: uid.clone() });
     }
-    let (uid, email) = session_claims(&cfg.session_key, headers)?;
-    resolve(cfg, &uid, &email).await
+    resolve(cfg, &session_uid(&cfg.session_key, headers)?).await
 }
 
 fn now() -> i64 {
@@ -294,17 +275,14 @@ async fn require_session(State(cfg): State<Shared>, mut req: Request, next: Next
     }
 }
 
-/// Starts the Google sign-in, which also asks for the Health scopes, so a new
-/// user signs in and connects Fitbit in one consent. `renew` forces the
+/// Starts the Google sign-in. It asks only for the Health scopes: the user is
+/// who the Health API says (`users/me/identity`), so there is no `openid` or
+/// `email` and a single consent screen also connects Fitbit. `renew` forces the
 /// consent screen for a new refresh token (Connect Fitbit, Restore access).
 /// After the callback the browser returns to `next`.
 fn start_oauth(cfg: &Config, renew: bool, next: &str) -> Response {
     let redirect_uri = format!("{}/auth/callback", cfg.public_url);
-    let scopes: Vec<&str> = ["openid", "email"]
-        .into_iter()
-        .chain(READ_SCOPES.iter().copied())
-        .collect();
-    let req = match auth_request(&cfg.creds, &redirect_uri, &scopes, renew) {
+    let req = match auth_request(&cfg.creds, &redirect_uri, READ_SCOPES, renew) {
         Ok(r) => r,
         Err(e) => return internal(e),
     };
@@ -367,11 +345,10 @@ async fn callback(
                 Html(format!(
                     r#"<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign-in failed · fitdata</title>
+<title>Sign-in failed · Fitdata</title>
 <style>body{{font:15px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto 0;padding:0 16px}}</style>
 <p>Sign-in failed: {}</p>
-<p>fitdata is invite-only for now. To ask for an invite, write to
-<a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>.</p>
+<p>Questions? Write to <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>.</p>
 <p><a href="/auth/login">Try again</a> · <a href="/">Home</a></p></html>"#,
                     escape_html(&e.to_string())
                 )),
@@ -379,16 +356,6 @@ async fn callback(
                 .into_response()
         }
     }
-}
-
-/// The claims of a Google ID token that sign-in uses (scopes `openid email`).
-#[derive(Deserialize)]
-struct IdToken {
-    /// The Google account ID: the user's ID here.
-    sub: String,
-    email: String,
-    #[serde(default)]
-    email_verified: bool,
 }
 
 async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -> Result<Response> {
@@ -417,60 +384,47 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     .await?;
     let clear_oauth = set_cookie(cfg, OAUTH_COOKIE, "", 0);
 
-    // The ID token comes straight from Google's token endpoint over TLS, so
-    // its claims can be trusted without verifying the signature.
-    let id_token = tokens.id_token.as_deref().context("no ID token")?;
-    let id: IdToken = serde_json::from_slice(
-        &URL_SAFE_NO_PAD.decode(id_token.split('.').nth(1).context("bad ID token")?)?,
-    )
-    .context("bad ID token")?;
-    let email = id.email.to_lowercase();
-    if !id.email_verified || !cfg.allowed_emails.contains(&email) {
-        // They may have granted the Health scopes already; take that back.
-        if let Err(e) = oauth::revoke(&cfg.http, &tokens.access_token).await {
-            tracing::warn!("revoking an uninvited sign-in failed: {e:#}");
+    // Who signed in. This needs at least one Health scope; without any
+    // (all unticked on the consent screen) there is nothing to show anyway.
+    let uid = match api::health_user_id(&cfg.http, &tokens.access_token).await {
+        Ok(uid) => uid,
+        Err(e) => {
+            tracing::info!("no Health identity: {e:#}");
+            bail!(
+                "Fitdata needs access to at least some of your Health data. Sign in again and tick the boxes on Google's screen"
+            );
         }
-        bail!("{email} is not allowed");
-    }
-    users::check_uid(&id.sub)?;
-    match users::get(&cfg.store, &id.sub).await? {
-        Some(u) if u.email == email && !u.deleted => {}
+    };
+    users::check_uid(&uid)?;
+    match users::get(&cfg.store, &uid).await? {
+        Some(u) if !u.deleted => {}
         Some(mut u) => {
-            // A changed address, or signing in again while a deletion waits.
-            u.email = email.clone();
+            // Signing in again while a deletion waits.
             u.deleted = false;
             users::put(&cfg.store, &u).await?;
         }
         None => {
-            users::put(&cfg.store, &User::new(&id.sub, &email)).await?;
-            tracing::info!(uid = %id.sub, "new user");
+            users::put(&cfg.store, &User::new(&uid)).await?;
+            tracing::info!(%uid, "new user");
         }
     }
 
-    // A refresh token comes with the first consent (and every forced one).
-    // Without any Health scope (unticked on the consent screen) it's useless,
-    // and the dashboard offers Connect Fitbit instead.
-    let health = tokens
-        .scope
-        .as_deref()
-        .is_some_and(|s| s.contains("googlehealth."));
-    let connected = tokens.refresh_token.is_some() && health;
+    // A refresh token comes with the first consent (and every forced one);
+    // a returning user goes straight through and keeps the stored one.
+    let connected = tokens.refresh_token.is_some();
     if connected {
         let token = tokens.into_stored()?;
-        users::save_token(&cfg.store, &cfg.kms, &id.sub, &email, &token).await?;
-        tracing::info!(uid = %id.sub, "stored a new Health API refresh token");
+        users::save_token(&cfg.store, &cfg.kms, &uid, &token).await?;
+        tracing::info!(%uid, "stored a new Health API refresh token");
         // Fetch the data now rather than at the next full hour; for a new
         // user that is their whole history.
-        if let Err(e) = cfg.sync_job.run(Some(&id.sub)).await {
+        if let Err(e) = cfg.sync_job.run(Some(&uid)).await {
             tracing::warn!("starting the sync failed: {e:#}");
         }
     }
     let session = claims::sign(
         &cfg.session_key,
-        Claims::Session {
-            uid: id.sub,
-            email: email.clone(),
-        },
+        Claims::Session { uid },
         now() + SESSION_DAYS * 86_400,
     );
     let next = match local_path(Some(&next)) {
@@ -547,7 +501,6 @@ pub(crate) async fn last_run(store: &Store, uid: &str, ok_only: bool) -> Result<
 /// Who is signed in, for the page.
 #[derive(Serialize)]
 struct Me {
-    email: String,
     /// Fitbit is connected (a refresh token is stored).
     connected: bool,
 }
@@ -563,7 +516,6 @@ async fn overview(State(cfg): State<Shared>, Extension(user): Extension<SignedIn
             days,
             last_sync,
             user: Me {
-                email: user.email,
                 connected: record.is_some_and(|r| r.token.is_some()),
             },
         })
@@ -815,17 +767,12 @@ mod tests {
             let mut h = HeaderMap::new();
             let c = format!("{SESSION_COOKIE}={}", claims::sign(key, c, exp));
             h.insert(header::COOKIE, c.parse().unwrap());
-            session_claims(key, &h)
+            session_uid(key, &h)
         };
-        let session = Claims::Session {
-            uid: "1".into(),
-            email: "a@b.c".into(),
-        };
-        assert_eq!(check(session), Some(("1".into(), "a@b.c".into())));
+        assert_eq!(check(Claims::Session { uid: "1".into() }), Some("1".into()));
         // OAuth tokens are signed with the same key.
         let access = Claims::Access {
             uid: "1".into(),
-            email: "a@b.c".into(),
             aud: "x".into(),
         };
         assert!(check(access).is_none());

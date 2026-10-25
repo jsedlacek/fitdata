@@ -14,11 +14,8 @@ use sha2::Sha256;
 pub enum Claims {
     /// The dashboard sign-in cookie.
     Session {
-        /// Google account ID; empty in tokens issued before there were
-        /// several users (then looked up by `email`).
-        #[serde(default)]
+        /// The user's Google Health user ID.
         uid: String,
-        email: String,
     },
     /// A Google sign-in in progress (cookie between redirect and callback).
     Pending {
@@ -40,9 +37,7 @@ pub enum Claims {
         state: Option<String>,
         challenge: String,
         /// As in `Session`.
-        #[serde(default)]
         uid: String,
-        email: String,
     },
     /// An authorization code. Stateless, so it can be redeemed more than once
     /// until it expires (OAuth 2.1 asks for single use); PKCE still binds it
@@ -52,23 +47,17 @@ pub enum Claims {
         redirect_uri: String,
         challenge: String,
         /// As in `Session`.
-        #[serde(default)]
         uid: String,
-        email: String,
     },
     Access {
         /// As in `Session`.
-        #[serde(default)]
         uid: String,
-        email: String,
         aud: String,
     },
     Refresh {
         client_id: String,
         /// As in `Session`.
-        #[serde(default)]
         uid: String,
-        email: String,
     },
 }
 
@@ -104,16 +93,6 @@ struct Signed {
     exp: i64,
 }
 
-/// Session cookies issued before sessions had a `kind`: exactly these two
-/// fields, so no other token can pass for one. They expire by 2026-11-24
-/// (30 days), after which this can go.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacySession {
-    email: String,
-    exp: i64,
-}
-
 pub fn sign(key: &[u8], claims: Claims, exp: i64) -> String {
     let json = serde_json::to_string(&Signed { claims, exp }).expect("claims serialize");
     let body = URL_SAFE_NO_PAD.encode(json);
@@ -128,20 +107,8 @@ pub fn verify(key: &[u8], token: &str) -> Option<Claims> {
     m.update(body.as_bytes());
     m.verify_slice(&sig).ok()?;
     let json = URL_SAFE_NO_PAD.decode(body).ok()?;
-    let (claims, exp) = match serde_json::from_slice::<Signed>(&json) {
-        Ok(s) => (s.claims, s.exp),
-        Err(_) => {
-            let s: LegacySession = serde_json::from_slice(&json).ok()?;
-            (
-                Claims::Session {
-                    uid: String::new(),
-                    email: s.email,
-                },
-                s.exp,
-            )
-        }
-    };
-    (exp > chrono::Utc::now().timestamp()).then_some(claims)
+    let s: Signed = serde_json::from_slice(&json).ok()?;
+    (s.exp > chrono::Utc::now().timestamp()).then_some(s.claims)
 }
 
 fn mac(key: &[u8], body: &str) -> Vec<u8> {
@@ -168,31 +135,21 @@ mod tests {
     #[test]
     fn round_trips_and_rejects_tampering() {
         let key = b"k";
-        let session = Claims::Session {
-            uid: "1".into(),
-            email: "a@b.c".into(),
-        };
+        let session = Claims::Session { uid: "1".into() };
         let t = sign(key, session.clone(), in_a_minute());
         assert_eq!(verify(key, &t), Some(session));
         assert!(verify(b"other", &t).is_none());
         let (body, sig) = t.split_once('.').unwrap();
         let forged = URL_SAFE_NO_PAD
-            .encode(json!({"kind": "session", "email": "x@y.z", "exp": in_a_minute()}).to_string());
+            .encode(json!({"kind": "session", "uid": "2", "exp": in_a_minute()}).to_string());
         assert!(verify(key, &format!("{forged}.{sig}")).is_none());
         assert!(verify(key, body).is_none());
-        let expired = sign(
-            key,
-            Claims::Session {
-                uid: "1".into(),
-                email: "a@b.c".into(),
-            },
-            1,
-        );
+        let expired = sign(key, Claims::Session { uid: "1".into() }, 1);
         assert!(verify(key, &expired).is_none());
     }
 
     #[test]
-    fn accepts_tokens_issued_before_typed_claims() {
+    fn accepts_client_ids_issued_by_older_versions() {
         let key = b"k";
         let exp = in_a_minute();
         // Client IDs live for years in Claude's and ChatGPT's connector settings.
@@ -209,22 +166,20 @@ mod tests {
                 auth: ClientAuth::None,
             })
         );
-        let refresh = sign_raw(
-            key,
-            &json!({"kind": "refresh", "client_id": "c", "email": "a@b.c", "exp": exp}),
-        );
-        assert!(matches!(
-            verify(key, &refresh),
-            Some(Claims::Refresh { .. })
-        ));
-        let session = sign_raw(key, &json!({"email": "a@b.c", "exp": exp}));
-        assert_eq!(
-            verify(key, &session),
-            Some(Claims::Session {
-                uid: String::new(),
-                email: "a@b.c".into()
-            })
-        );
+    }
+
+    #[test]
+    fn rejects_tokens_without_a_user_id() {
+        // Issued while users signed in with their e-mail; they sign in again.
+        let key = b"k";
+        let exp = in_a_minute();
+        for v in [
+            json!({"email": "a@b.c", "exp": exp}),
+            json!({"kind": "session", "email": "a@b.c", "exp": exp}),
+            json!({"kind": "refresh", "client_id": "c", "email": "a@b.c", "exp": exp}),
+        ] {
+            assert!(verify(key, &sign_raw(key, &v)).is_none(), "{v}");
+        }
     }
 
     #[test]

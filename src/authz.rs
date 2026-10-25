@@ -94,23 +94,20 @@ fn verify_client(cfg: &Config, client_id: &str) -> Option<Client> {
 /// The user behind a bearer access token, if it is still valid.
 pub async fn bearer_user(cfg: &Config, headers: &HeaderMap) -> Option<SignedIn> {
     if let Some(uid) = &cfg.dev_user {
-        return Some(SignedIn {
-            uid: uid.clone(),
-            email: "dev@localhost".into(),
-        });
+        return Some(SignedIn { uid: uid.clone() });
     }
     let token = headers
         .get(header::AUTHORIZATION)?
         .to_str()
         .ok()?
         .strip_prefix("Bearer ")?;
-    let Claims::Access { uid, email, aud } = verify(cfg, token.trim())? else {
+    let Claims::Access { uid, aud } = verify(cfg, token.trim())? else {
         return None;
     };
     if aud != resource(cfg) {
         return None;
     }
-    resolve(cfg, &uid, &email).await
+    resolve(cfg, &uid).await
 }
 
 /// 401 that tells an MCP client where to find the authorization server.
@@ -133,7 +130,7 @@ async fn resource_metadata(State(cfg): State<Shared>) -> Json<Value> {
         "authorization_servers": [cfg.public_url],
         "scopes_supported": [SCOPE],
         "bearer_methods_supported": ["header"],
-        "resource_name": "fitdata",
+        "resource_name": "Fitdata",
     }))
 }
 
@@ -362,7 +359,6 @@ async fn authorize(
             state: req.state,
             challenge: req.challenge,
             uid: user.uid.clone(),
-            email: user.email.clone(),
         },
         now() + 600,
     );
@@ -375,21 +371,16 @@ async fn authorize(
     } else {
         req.client_name.clone()
     };
-    consent_page(&name, &host, &user.email, &consent)
+    consent_page(&name, &host, &consent)
 }
 
-fn consent_page(name: &str, host: &str, email: &str, consent: &str) -> Response {
-    let (name, host, email, consent) = (
-        escape_html(name),
-        escape_html(host),
-        escape_html(email),
-        escape_html(consent),
-    );
+fn consent_page(name: &str, host: &str, consent: &str) -> Response {
+    let (name, host, consent) = (escape_html(name), escape_html(host), escape_html(consent));
     let html = format!(
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Access to your data · fitdata</title>
+<title>Access to your data · Fitdata</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root {{ color-scheme: light dark; --bg: #f6f7f9; --card: #fff; --fg: #111827; --muted: #6b7280; --accent: #2563eb; --border: #e5e7eb; }}
@@ -407,8 +398,8 @@ fn consent_page(name: &str, host: &str, email: &str, consent: &str) -> Response 
 </style></head>
 <body><main>
   <h1>{name} wants to read your Fitbit data</h1>
-  <p>The app gets read-only access to the data on your fitdata dashboard: daily metrics, sleep, heart rate and activities.</p>
-  <p class="muted">Redirects to <code>{host}</code> · account {email}</p>
+  <p>The app gets read-only access to the data on your Fitdata dashboard: daily metrics, sleep, heart rate and activities.</p>
+  <p class="muted">Redirects to <code>{host}</code></p>
   <p class="muted">If you did not expect this connection, choose Deny.</p>
   <form method="post" action="/oauth/authorize">
     <input type="hidden" name="consent" value="{consent}">
@@ -448,7 +439,6 @@ async fn approve(
         state,
         challenge,
         uid,
-        email,
     }) = verify(&cfg, &d.consent)
     else {
         return bad_request("the request expired, start again from the app");
@@ -464,7 +454,7 @@ async fn approve(
         ))
         .into_response();
     }
-    tracing::info!(%uid, "MCP client authorized by {email}");
+    tracing::info!(%uid, "MCP client authorized");
     let code = sign(
         &cfg,
         Claims::Code {
@@ -472,7 +462,6 @@ async fn approve(
             redirect_uri: redirect_uri.clone(),
             challenge,
             uid,
-            email,
         },
         now() + CODE_SECS,
     );
@@ -553,7 +542,6 @@ fn issue_tokens(cfg: &Config, client_id: &str, user: &SignedIn) -> Response {
         cfg,
         Claims::Access {
             uid: user.uid.clone(),
-            email: user.email.clone(),
             aud: resource(cfg),
         },
         t + ACCESS_SECS,
@@ -563,7 +551,6 @@ fn issue_tokens(cfg: &Config, client_id: &str, user: &SignedIn) -> Response {
         Claims::Refresh {
             client_id: client_id.to_string(),
             uid: user.uid.clone(),
-            email: user.email.clone(),
         },
         t + REFRESH_SECS,
     );
@@ -596,19 +583,17 @@ async fn token(
                 redirect_uri,
                 challenge,
                 uid,
-                email,
             }) => (for_client == client_id
                 && t.redirect_uri.as_ref().is_none_or(|u| *u == redirect_uri)
                 && pkce_ok(t.code_verifier.as_deref().unwrap_or_default(), &challenge))
-            .then_some((uid, email)),
+            .then_some(uid),
             _ => None,
         },
         "refresh_token" => match t.refresh_token.as_deref().and_then(|r| verify(&cfg, r)) {
             Some(Claims::Refresh {
                 client_id: for_client,
                 uid,
-                email,
-            }) => (for_client == client_id).then_some((uid, email)),
+            }) => (for_client == client_id).then_some(uid),
             _ => None,
         },
         _ => {
@@ -620,11 +605,10 @@ async fn token(
         }
     };
     let user = match grant {
-        Some((uid, email)) => resolve(&cfg, &uid, &email).await,
+        Some(uid) => resolve(&cfg, &uid).await,
         None => None,
     };
     match user {
-        // Tokens issued before there were several users get the user ID now.
         Some(user) => issue_tokens(&cfg, &client_id, &user),
         None => oauth_error(
             StatusCode::BAD_REQUEST,

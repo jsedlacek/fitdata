@@ -71,9 +71,6 @@ enum Cmd {
         /// Base URL the browser uses; Google redirects to {url}/auth/callback.
         #[arg(long, env = "PUBLIC_URL", default_value = "http://localhost:8080")]
         public_url: String,
-        /// Google accounts allowed to sign in (comma separated).
-        #[arg(long, env = "ALLOWED_EMAILS", value_delimiter = ',')]
-        allowed_emails: Vec<String>,
         /// Key for signing session cookies: `sm://<secret>` or a file path.
         #[arg(long, env = "SESSION_KEY", default_value = "sm://session-key")]
         session_key: String,
@@ -112,8 +109,6 @@ enum Cmd {
     ImportUser {
         #[arg(long)]
         user: String,
-        #[arg(long)]
-        email: String,
         /// `StoredToken` JSON: `sm://<secret>` or a file path.
         #[arg(long)]
         refresh_token: String,
@@ -122,8 +117,6 @@ enum Cmd {
     Login {
         #[arg(long)]
         user: String,
-        #[arg(long)]
-        email: String,
         #[arg(long, default_value_t = 8080)]
         port: u16,
     },
@@ -227,7 +220,6 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Serve {
             port,
             public_url,
-            allowed_emails,
             session_key,
             static_dir,
             dev_user,
@@ -246,10 +238,6 @@ async fn run(cli: Cli) -> Result<()> {
                 port: *port,
                 static_dir: static_dir.clone(),
                 public_url: public_url.trim_end_matches('/').to_string(),
-                allowed_emails: allowed_emails
-                    .iter()
-                    .map(|e| e.trim().to_lowercase())
-                    .collect(),
                 session_key,
                 dev_user: dev_user.clone(),
                 creds: creds.clone(),
@@ -277,7 +265,6 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Cmd::ImportUser {
             user,
-            email,
             refresh_token,
         } => {
             users::check_uid(user)?;
@@ -288,14 +275,14 @@ async fn run(cli: Cli) -> Result<()> {
                     .await?
                     .with_context(|| format!("no refresh token in {source}"))?,
             )?;
-            users::save_token(&store, &kms, user, email, &token).await?;
-            println!("Stored the refresh token of {user} ({email})");
+            users::save_token(&store, &kms, user, &token).await?;
+            println!("Stored the refresh token of {user}");
             return Ok(());
         }
-        Cmd::Login { user, email, port } => {
+        Cmd::Login { user, port } => {
             users::check_uid(user)?;
             let token = oauth::login(&http, &creds, *port).await?;
-            users::save_token(&store, &kms, user, email, &token).await?;
+            users::save_token(&store, &kms, user, &token).await?;
             println!("Stored the refresh token of {user}");
             return Ok(());
         }

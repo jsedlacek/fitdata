@@ -65,7 +65,7 @@ fn help_page(url: &str) -> Response {
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MCP server · fitdata</title>
+<title>MCP server · Fitdata</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root {{ color-scheme: light dark; --bg: #f6f7f9; --card: #fff; --fg: #111827; --muted: #6b7280; --accent: #2563eb; --border: #e5e7eb; --code: #f3f4f6; }}
@@ -82,7 +82,7 @@ fn help_page(url: &str) -> Response {
   a {{ color: var(--accent); }}
 </style></head>
 <body><main>
-  <h1>fitdata MCP server</h1>
+  <h1>Fitdata MCP server</h1>
   <p>This address is for Claude and ChatGPT, not for a browser. Once connected, you can ask them about your Fitbit data in a chat. Access is read-only and limited to the data of the account you sign in with.</p>
   <code class="url">{url}</code>
   <h2>Claude</h2>
@@ -235,7 +235,7 @@ async fn dispatch(cfg: &Config, user: &SignedIn, msg: Value) -> Option<Reply> {
                 "protocolVersion": version,
                 "capabilities": { "tools": { "listChanged": false } },
                 "serverInfo": {
-                    "name": "fitdata", "title": "Fitbit data",
+                    "name": "fitdata", "title": "Fitdata",
                     "version": env!("CARGO_PKG_VERSION"),
                 },
                 "instructions": INSTRUCTIONS,

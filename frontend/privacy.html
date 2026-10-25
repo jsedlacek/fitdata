@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)" />
-    <title>Privacy policy · fitdata</title>
-    <meta name="description" content="How fitdata collects, uses, stores and deletes your data." />
+    <title>Privacy policy · Fitdata</title>
+    <meta name="description" content="How Fitdata collects, uses, stores and deletes your data." />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -24,7 +24,7 @@
       <div class="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4">
         <a href="/" class="flex items-center gap-2 font-semibold tracking-tight">
           <img src="/favicon.svg" alt="" class="size-7" />
-          fitdata
+          Fitdata
         </a>
         <div class="flex-1"></div>
         <a href="https://github.com/jsedlacek/fitdata" class="rounded-md px-2.5 py-1.5 text-sm text-ink-2 hover:bg-shade hover:text-ink">GitHub</a>
@@ -37,7 +37,7 @@
       <p class="text-sm text-muted">Last updated 25 October 2026</p>
 
       <p>
-        fitdata (<a href="https://fitdata.jakub.contact">fitdata.jakub.contact</a>) is a personal dashboard for your
+        Fitdata (<a href="https://fitdata.jakub.contact">fitdata.jakub.contact</a>) is a personal dashboard for your
         Fitbit data. It is run by Jakub Sedláček, an individual in the Czech Republic, who is the controller of your
         personal data. Questions and requests go to
         <a href="mailto:fitdata@jakub.contact">fitdata@jakub.contact</a>.
@@ -46,12 +46,13 @@
       <h2>What we collect</h2>
       <ul>
         <li>
-          <strong>Your Google account:</strong> your Google account ID and e-mail address, when you sign in with Google.
-          We use them to know who you are and to keep your data apart from everyone else's.
+          <strong>Your Google Health user ID</strong>, a number the Google Health API identifies you by. We use it to
+          know who you are and to keep your data apart from everyone else's. Fitdata doesn't ask Google for your name,
+          e-mail address or other account details.
         </li>
         <li>
           <strong>Your health and fitness data</strong>, read from the Google Health API after you choose
-          when you sign in and grant access on Google's consent screen (or later with <em>Connect Fitbit</em>). fitdata asks only for these read-only scopes:
+          when you sign in and grant access on Google's consent screen (or later with <em>Connect Fitbit</em>). Fitdata asks only for these read-only scopes:
           <ul>
             <li><code>googlehealth.activity_and_fitness.readonly</code>: steps, distance, floors, energy burned, active and active zone minutes, sedentary periods, exercise sessions;</li>
             <li><code>googlehealth.health_metrics_and_measurements.readonly</code>: heart rate, heart rate variability, resting heart rate, blood oxygen (SpO₂), respiratory rate, skin temperature during sleep, VO₂ max, weight, height, body fat and blood glucose;</li>
@@ -60,7 +61,7 @@
           </ul>
         </li>
         <li>
-          <strong>Access tokens:</strong> the token Google issues so fitdata can download new data every hour. It is
+          <strong>Access tokens:</strong> the token Google issues so Fitdata can download new data every hour. It is
           stored encrypted with a dedicated Cloud KMS key; the web server can encrypt it but not read it.
         </li>
         <li>
@@ -72,14 +73,14 @@
 
       <h2>How we use it</h2>
       <p>
-        Only to provide fitdata to you: downloading your data, turning it into the tables behind your dashboard,
+        Only to provide Fitdata to you: downloading your data, turning it into the tables behind your dashboard,
         showing it to you, and answering the AI assistants you connect yourself. We don't sell your data, show you
         ads, build profiles of you, use your data to train AI or machine learning models, or let anyone read it. The
         only exceptions are fixing a problem you ask us to look into, with your consent, keeping the service secure,
         and complying with the law.
       </p>
       <p>
-        fitdata's use and transfer to any other app of information received from Google APIs will adhere to the
+        Fitdata's use and transfer to any other app of information received from Google APIs will adhere to the
         <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
         including the Limited Use requirements.
       </p>
@@ -88,8 +89,8 @@
       <p>
         Health data is a special category of personal data under the GDPR. We process it on the basis of your
         explicit consent (Articles 6(1)(a) and 9(2)(a) GDPR), which you give on Google's consent screen and can withdraw
-        at any time by deleting your account or revoking fitdata's access in your
-        <a href="https://myaccount.google.com/connections">Google account</a>. Your sign-in details are processed to
+        at any time by deleting your account or revoking Fitdata's access in your
+        <a href="https://myaccount.google.com/connections">Google account</a>. Your user ID is processed to
         provide the service you asked for (Article 6(1)(b)), and logs for our legitimate interest in a secure service
         (Article 6(1)(f)).
       </p>
@@ -97,17 +98,17 @@
       <h2>Who else sees it</h2>
       <ul>
         <li>
-          <strong>Google Cloud</strong> hosts fitdata and stores your data as our processor, in the
+          <strong>Google Cloud</strong> hosts Fitdata and stores your data as our processor, in the
           <code>europe-west1</code> region (Belgium, EU).
         </li>
         <li>
-          <strong>AI assistants you connect.</strong> If you add fitdata to Claude, ChatGPT or another MCP client, that
+          <strong>AI assistants you connect.</strong> If you add Fitdata to Claude, ChatGPT or another MCP client, that
           assistant can read your data when you ask it something; what it reads is sent to its provider at your
           request and is covered by that provider's privacy policy. You can disconnect it at any time in the
           assistant's settings.
         </li>
       </ul>
-      <p>Nobody else. Your data is never shared with other fitdata users.</p>
+      <p>Nobody else. Your data is never shared with other Fitdata users.</p>
 
       <h2>Security</h2>
       <p>
@@ -119,7 +120,7 @@
 
       <h2>How long we keep it</h2>
       <p>
-        As long as your account exists. When you choose <em>Delete account</em> in the account menu, fitdata revokes
+        As long as your account exists. When you choose <em>Delete account</em> in the account menu, Fitdata revokes
         its access at Google and deletes your data and your account record, usually within minutes. Deleted files can
         remain in Google Cloud's deleted-object retention for up to 7 days before they are gone for good. Logs expire
         after 30 days.
@@ -127,7 +128,7 @@
 
       <h2>Cookies</h2>
       <p>
-        fitdata sets only cookies that it needs to work: <code>fd_session</code> keeps you signed in for up to 30 days
+        Fitdata sets only cookies that it needs to work: <code>fd_session</code> keeps you signed in for up to 30 days
         and <code>fd_oauth</code> protects the sign-in for 10 minutes. Your choice of light or dark theme is kept in
         your browser's local storage. No consent banner is needed because nothing is used for tracking.
       </p>
@@ -141,12 +142,12 @@
       </p>
 
       <h2>Children</h2>
-      <p>fitdata is not meant for anyone under 16, and we don't knowingly collect their data.</p>
+      <p>Fitdata is not meant for anyone under 16, and we don't knowingly collect their data.</p>
 
       <h2>Changes</h2>
       <p>
-        If this policy changes, we will update the date above, and for significant changes let you know by e-mail or
-        on the dashboard before they take effect.
+        If this policy changes, we will update the date above, and for significant changes let you know on the
+        dashboard before they take effect.
       </p>
     </main>
 

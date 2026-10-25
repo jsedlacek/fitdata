@@ -7,7 +7,7 @@ Cloud Scheduler (every hour)
         ├─ Google Health API ─> GCS u/{uid}/raw/{type}/{day|month}.jsonl
         └─ normalization (DataFusion) ─> GCS u/{uid}/data/{table}[/{YYYY-MM}].parquet + manifest.json
 Cloud Run service fitdata-web          `fitdata serve`   https://fitdata.jakub.contact
-  └─ Google sign-in (ALLOWED_EMAILS) ─> the user's Parquet in the instance cache ─> DataFusion
+  └─ Google sign-in (Health scopes) ─> the user's Parquet in the instance cache ─> DataFusion
 ```
 
 One image, one binary; the job and the web differ only in their arguments. Everything runs in one region, `europe-west1` (Belgium). Frankfurt (`europe-west3`) would be closer, but it has no Cloud Run domain mapping.
@@ -34,14 +34,14 @@ The OAuth Web client must list `https://fitdata.jakub.contact/auth/callback` amo
 
 ## Users
 
-Any account in `ALLOWED_EMAILS` (invites, `deploy/config.sh`) can sign in. A user is a Google account, keyed by its `sub`. Sign-in asks for the Health scopes too (offline access), so a new user signs in and connects Fitbit on one Google consent screen. The first sign-in creates the record `users/{uid}.json`; when Google returns a refresh token with Health scopes (on the first consent, or a forced one), the web encrypts it with the KMS key, stores it in the record and starts the job for this user, which downloads the whole history. A returning user goes straight through without a consent screen and keeps the stored token. If the user unticked the Health scopes, the dashboard offers **Connect Fitbit**, which forces the consent screen (as does **Restore access to data**). An uninvited account's grant is revoked right away. Data is never shared between users.
+Anyone can sign up. Sign-in asks only for the Health scopes (offline access), no `openid` or `email`: a user is keyed by the Google Health user ID (`healthUserId` from `users/me/identity`), so Fitdata never learns names or e-mail addresses, and a new user signs in and connects Fitbit on one Google consent screen. The first sign-in creates the record `users/{uid}.json`; when Google returns a refresh token (on the first consent, or a forced one), the web encrypts it with the KMS key, stores it in the record and starts the job for this user, which downloads the whole history. A returning user goes straight through without a consent screen and keeps the stored token. Without any Health scope ticked there is no identity, and the sign-in asks to try again; **Connect Fitbit** and **Restore access to data** force the consent screen. While the app is unverified, Google allows at most 100 users. Data is never shared between users.
 
 **Deleting an account** (account menu on the dashboard) marks the record as deleted and starts the job. The job revokes the token at Google and deletes `u/{uid}/` and the record. The web itself must not delete data.
 
 To add an existing user with a token (e.g. when migrating):
 
 ```bash
-cargo run -- import-user --user <sub> --email <e-mail> --refresh-token <sm://secret | file>
+cargo run -- import-user --user <health-user-id> --refresh-token <sm://secret | file>
 ```
 
 ## Data
@@ -70,7 +70,7 @@ u/{uid}/status.json                         last sync run, last successful one, 
 | `fitdata-scheduler` | run the job |
 | `fitdata-deployer` | deploy the job, scheduler and web (GitHub Actions), read the project |
 
-The web is public on Cloud Run. The home page (`/` for visitors who aren't signed in), `/privacy`, `/terms`, the icons and the build assets need no sign-in; every other page and API call requires Google sign-in with an e-mail from `ALLOWED_EMAILS`. The session is an HMAC-signed cookie (key `session-key`, valid for 30 days) with the user ID; every request reads only that user's data.
+The web is public on Cloud Run. The home page (`/` for visitors who aren't signed in), `/privacy`, `/terms`, the icons and the build assets need no sign-in; every other page and API call requires Google sign-in. The session is an HMAC-signed cookie (key `session-key`, valid for 30 days) with the user ID; every request checks the user's record still exists (a deleted account's sessions and MCP tokens stop working) and reads only that user's data.
 
 Refresh tokens are encrypted in the user records with the Cloud KMS key `fitdata/refresh-token`, and the user ID is bound to the ciphertext (additional authenticated data), so a token copied to another user cannot be decrypted. The web encrypts the token but cannot read it.
 
@@ -91,7 +91,7 @@ Connecting:
 
 The dashboard has the instructions in the account menu (**Connect Claude / ChatGPT**) and in the footer. A browser on `/mcp` (GET with `Accept: text/html`) gets a page with the instructions; MCP clients still get 405 on GET, because we do not offer an SSE stream.
 
-A client registers itself (dynamic registration), sends the user to Google sign-in (the same `ALLOWED_EMAILS`) and to a consent page. Tokens carry the user ID; tokens issued before multi-user support lack it and the user is looked up by e-mail. The authorization server is in [src/authz.rs](../src/authz.rs) and stores nothing: client IDs, codes and tokens are signed with the `session-key` key. An access token is valid for an hour, a refresh token for 30 days from its last refresh. To revoke access for all clients and all signed-in browsers at once: a new version of `session-key` and a new deployment of the web.
+A client registers itself (dynamic registration), sends the user to Google sign-in and to a consent page. Tokens carry the user ID. The authorization server is in [src/authz.rs](../src/authz.rs) and stores nothing: client IDs, codes and tokens are signed with the `session-key` key. An access token is valid for an hour, a refresh token for 30 days from its last refresh. To revoke access for all clients and all signed-in browsers at once: a new version of `session-key` and a new deployment of the web.
 
 When a refresh token stops working (access revoked), the dashboard shows the user and a click on **Restore access to data** is enough. For the job it is not an error (the user's run ends with the state `auth_error`), and the alert does not report it.
 

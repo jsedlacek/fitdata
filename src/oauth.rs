@@ -77,8 +77,6 @@ pub struct TokenResponse {
     pub expires_in: u64,
     pub refresh_token: Option<String>,
     pub scope: Option<String>,
-    /// Present when the `openid` scope was requested.
-    pub id_token: Option<String>,
 }
 
 pub fn random_b64(bytes: usize) -> String {
@@ -345,7 +343,7 @@ mod tests {
             client_id: "id".into(),
             client_secret: "secret".into(),
         };
-        let req = auth_request(&creds, "https://x/cb", &["openid", "email"], renew).unwrap();
+        let req = auth_request(&creds, "https://x/cb", READ_SCOPES, renew).unwrap();
         req.url.query_pairs().into_owned().collect()
     }
 

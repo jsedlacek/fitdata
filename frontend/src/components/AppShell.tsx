@@ -2,7 +2,7 @@ import { Link, Outlet } from '@tanstack/react-router';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, ArrowLeft, Bot, CheckCircle2, Laptop, LogOut, Moon, RefreshCw, Sun, Trash2, TriangleAlert, UserRound } from 'lucide-react';
-import { deleteAccount, overviewQuery, startSync, syncQuery, type Me, type SyncRun } from '@/lib/api';
+import { deleteAccount, overviewQuery, startSync, syncQuery, type SyncRun } from '@/lib/api';
 import { ago } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Button } from './ui/button';
@@ -22,7 +22,7 @@ export function AppShell() {
             <span className="grid size-7 place-items-center rounded-lg bg-s1 text-white">
               <Activity className="size-4" strokeWidth={2.5} />
             </span>
-            <span className="hidden sm:inline">fitdata</span>
+            <span className="hidden sm:inline">Fitdata</span>
           </Link>
           <nav className="flex items-center gap-1 text-sm">
             <NavLink to="/">Day</NavLink>
@@ -31,7 +31,7 @@ export function AppShell() {
           <div className="flex-1" />
           {data?.user.connected !== false && <SyncStatus run={data?.lastSync ?? null} />}
           <ThemeToggle />
-          {data && <AccountMenu user={data.user} />}
+          {data && <AccountMenu />}
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-5">
@@ -129,7 +129,7 @@ function SyncStatus({ run }: { run: SyncRun | null }) {
   );
 }
 
-function AccountMenu({ user }: { user: Me }) {
+function AccountMenu() {
   const [confirming, setConfirming] = useState(false);
   const [mcp, setMcp] = useState(false);
   const remove = useMutation({ mutationFn: deleteAccount });
@@ -140,7 +140,7 @@ function AccountMenu({ user }: { user: Me }) {
   return (
     <Popover onOpenChange={(open) => !open && close()}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink" aria-label="Account" title={user.email}>
+        <Button variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink" aria-label="Account">
           <UserRound />
         </Button>
       </PopoverTrigger>
@@ -154,10 +154,7 @@ function AccountMenu({ user }: { user: Me }) {
           </>
         ) : (
           <>
-            <p className="truncate font-medium" title={user.email}>
-              {user.email}
-            </p>
-            <div className="mt-3 flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
               <Button variant="ghost" size="sm" className="justify-start" onClick={() => setMcp(true)}>
                 <Bot /> Connect Claude / ChatGPT
               </Button>

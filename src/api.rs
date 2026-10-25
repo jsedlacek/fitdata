@@ -211,6 +211,27 @@ impl HealthClient {
     }
 }
 
+/// The Google Health user ID (`healthUserId`) of the account an access token
+/// belongs to: who is signing in. Any Health scope can read it.
+pub async fn health_user_id(http: &reqwest::Client, access_token: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Identity {
+        health_user_id: String,
+    }
+    let resp = http
+        .get(format!("{BASE}/users/me/identity"))
+        .bearer_auth(access_token)
+        .send()
+        .await?;
+    let status = resp.status().as_u16();
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(ApiError { status, body }.into());
+    }
+    Ok(resp.json::<Identity>().await?.health_user_id)
+}
+
 fn backoff(attempt: u32) -> Duration {
     Duration::from_millis(500 * 2u64.pow(attempt.min(6)))
 }

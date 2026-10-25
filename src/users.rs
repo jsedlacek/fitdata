@@ -1,5 +1,5 @@
 //! The user registry: one object per user, `users/{uid}.json`, keyed by the
-//! Google account ID (`sub`). It holds the profile and the encrypted Health
+//! Google Health user ID (`healthUserId`, the API's `users/me/identity`). It holds the profile and the encrypted Health
 //! API refresh token (`kms.rs`); the user's data lives under `u/{uid}/`.
 
 use anyhow::{Context, Result, bail};
@@ -15,7 +15,6 @@ pub const DEFAULT_TIME_ZONE: &str = "Europe/Prague";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub uid: String,
-    pub email: String,
     pub created: DateTime<Utc>,
     /// IANA name; local dates ("today") of the sync follow it.
     #[serde(default = "default_tz")]
@@ -30,10 +29,9 @@ pub struct User {
 }
 
 impl User {
-    pub fn new(uid: &str, email: &str) -> Self {
+    pub fn new(uid: &str) -> Self {
         Self {
             uid: uid.to_string(),
-            email: email.to_string(),
             created: Utc::now(),
             time_zone: default_tz(),
             token: None,
@@ -60,7 +58,7 @@ pub struct EncryptedToken {
     pub obtained_at: DateTime<Utc>,
 }
 
-/// Google account IDs are decimal digits; anything else could escape the
+/// Health user IDs are decimal digits; anything else could escape the
 /// user's prefix in paths.
 pub fn check_uid(uid: &str) -> Result<()> {
     if uid.is_empty() || uid.len() > 64 || !uid.bytes().all(|b| b.is_ascii_digit()) {
@@ -91,16 +89,8 @@ pub async fn put(store: &Store, user: &User) -> Result<()> {
 }
 
 /// Encrypts `token` into the user's record, creating the record if needed.
-pub async fn save_token(
-    store: &Store,
-    kms: &Kms,
-    uid: &str,
-    email: &str,
-    token: &StoredToken,
-) -> Result<()> {
-    let mut user = get(store, uid)
-        .await?
-        .unwrap_or_else(|| User::new(uid, email));
+pub async fn save_token(store: &Store, kms: &Kms, uid: &str, token: &StoredToken) -> Result<()> {
+    let mut user = get(store, uid).await?.unwrap_or_else(|| User::new(uid));
     user.token = Some(EncryptedToken {
         ciphertext: kms.encrypt(&token.to_json()?, uid).await?,
         obtained_at: token.obtained_at,
@@ -133,7 +123,7 @@ mod tests {
 
     #[test]
     fn user_ids_are_digits() {
-        assert!(check_uid("102707141805967147144").is_ok());
+        assert!(check_uid("1234567890123456789").is_ok());
         for bad in ["", "../x", "1/2", "a", "1 2"] {
             assert!(check_uid(bad).is_err(), "{bad}");
         }
@@ -143,20 +133,12 @@ mod tests {
     async fn stores_and_lists_users() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::open(tmp.path().to_str().unwrap()).await.unwrap();
-        let u = User {
-            uid: "1".into(),
-            email: "a@b.c".into(),
-            created: Utc::now(),
-            time_zone: default_tz(),
-            token: None,
-            deleted: false,
-        };
-        put(&store, &u).await.unwrap();
+        put(&store, &User::new("1")).await.unwrap();
         let all = list(&store).await.unwrap();
         assert_eq!(all.len(), 1);
-        assert_eq!(all[0].email, "a@b.c");
+        assert_eq!(all[0].uid, "1");
         assert!(get(&store, "2").await.unwrap().is_none());
-        // Records from before a field existed still read.
+        // Records from before a field existed (or with one dropped since) still read.
         store
             .put(
                 "users/3.json",

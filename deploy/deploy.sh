@@ -54,11 +54,11 @@ else
 fi
 
 echo "== Service $SERVICE_NAME"
-# Public endpoint; the app itself requires Google sign-in (ALLOWED_EMAILS).
+# Public endpoint; the app itself requires Google sign-in.
 gcloud run deploy "$SERVICE_NAME" --project "$PROJECT" --region "$REGION" \
   --image "$IMAGE" --args serve \
   --service-account "$WEB_SA" \
-  --set-env-vars "^;^${ENV//,/;};PUBLIC_URL=$PUBLIC_URL;ALLOWED_EMAILS=$ALLOWED_EMAILS;SYNC_JOB=$JOB_NAME" \
+  --set-env-vars "^;^${ENV//,/;};PUBLIC_URL=$PUBLIC_URL;SYNC_JOB=$JOB_NAME" \
   --allow-unauthenticated --cpu 1 --memory 1Gi --min-instances 0 --max-instances 2
 
 if [[ -n $DOMAIN ]]; then

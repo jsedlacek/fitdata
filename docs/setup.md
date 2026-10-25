@@ -18,7 +18,7 @@ gcloud services enable health.googleapis.com --project <PROJECT_ID>
 
 Console → **Google Auth Platform**:
 
-1. **Branding**: app name (e.g. "fitdata"), support e-mail = your Gmail, logo, and the public pages the web serves without sign-in: home page `https://fitdata.jakub.contact/`, privacy policy `/privacy`, terms `/terms` (`frontend/home.html`, `privacy.html`, `terms.html`). Authorized domain `jakub.contact`.
+1. **Branding**: app name "Fitdata", support e-mail = your Gmail, logo, and the public pages the web serves without sign-in: home page `https://fitdata.jakub.contact/`, privacy policy `/privacy`, terms `/terms` (`frontend/home.html`, `privacy.html`, `terms.html`). Authorized domain `jakub.contact`.
 2. **Audience**: User type **External**. Add your Gmail to *Test users*.
 3. **Data Access** → *Add or remove scopes*: add the four `googlehealth.*.readonly` scopes listed in `src/datatypes.rs` (`READ_SCOPES`), and no others: Google verification asks for the narrowest scopes.
 4. **Audience** → **Publish app** (status *In production*).
@@ -43,16 +43,16 @@ Then delete the file.
 
 ## 4. Users
 
-Users sign in to the dashboard with Google (the e-mail must be in `ALLOWED_EMAILS`); the same consent grants the Health scopes, so the first sign-in also connects Fitbit. Locally, a refresh token can also be stored from the terminal:
+Users sign in to the dashboard with Google; the consent grants the Health scopes, so the first sign-in also connects Fitbit. A user is identified by their Google Health user ID (`cargo run -- whoami --user <id>` shows it as `healthUserId`). Locally, a refresh token can also be stored from the terminal:
 
 ```bash
 cp .env.example .env     # GCP_PROJECT=fitdata-jsedlacek
-cargo run -- login --user <google-sub> --email <e-mail>
+cargo run -- login --user <health-user-id>
 ```
 
 1. Open the printed URL in a browser and allow access.
 2. Google redirects to `http://localhost:8080/callback?...`. If the page does not load, copy the whole address from the address bar and paste it into the terminal.
-3. The refresh token is encrypted (`KMS_KEY`, locally `plain` by default = unencrypted) and stored in `users/<sub>.json`.
+3. The refresh token is encrypted (`KMS_KEY`, locally `plain` by default = unencrypted) and stored in `users/<uid>.json`.
 
 ## Where the secrets are
 
@@ -60,6 +60,6 @@ cargo run -- login --user <google-sub> --email <e-mail>
 |---|---|---|
 | OAuth client (ID + secret) | Secret Manager `oauth-client` | `fitdata` locally (through ADC), in production the job and the web |
 | Session key | Secret Manager `session-key` | web |
-| Users' refresh tokens | `users/<sub>.json` in the bucket, encrypted with the Cloud KMS key `fitdata/refresh-token` | only the job may decrypt them |
+| Users' refresh tokens | `users/<uid>.json` in the bucket, encrypted with the Cloud KMS key `fitdata/refresh-token` | only the job may decrypt them |
 
 Nothing unencrypted is stored in files. For tests, a file path can be given instead of `sm://...` (`OAUTH_CLIENT`, `SESSION_KEY`).
