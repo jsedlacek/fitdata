@@ -42,6 +42,21 @@ fn is_precondition_failed(e: &google_cloud_storage::Error) -> bool {
             .is_some_and(|s| s.code == Code::FailedPrecondition)
 }
 
+/// A write refused because the object changed too often: GCS allows about
+/// one mutation of an object per second. The error code comes back as
+/// UNKNOWN, hence the message check.
+pub fn is_rate_limited(e: &anyhow::Error) -> bool {
+    e.chain()
+        .filter_map(|c| c.downcast_ref::<google_cloud_storage::Error>())
+        .any(|e| {
+            e.http_status_code() == Some(429)
+                || e.status().is_some_and(|s| {
+                    s.code == Code::ResourceExhausted || s.message.contains("rate limit")
+                })
+                || e.to_string().contains("exceeded the rate limit")
+        })
+}
+
 /// A local file's stand-in for a GCS generation: its modification time.
 fn local_generation(p: &std::path::Path) -> Result<i64> {
     let modified = std::fs::metadata(p)?.modified()?;

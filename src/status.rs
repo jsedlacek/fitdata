@@ -7,7 +7,7 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::store::Store;
+use crate::store::{self, Store};
 use crate::tables::user_prefix;
 
 /// A run that has not finished after this long died without saying so.
@@ -76,8 +76,22 @@ pub async fn get(store: &Store, uid: &str) -> Result<Status> {
     })
 }
 
+/// Writes the status, waiting and trying again while GCS refuses it for
+/// changing too often: a lost "finished" would fail (and retry) a whole run.
 async fn put(store: &Store, uid: &str, s: &Status) -> Result<()> {
-    store.put(&path(uid), serde_json::to_vec_pretty(s)?).await
+    let body = serde_json::to_vec_pretty(s)?;
+    let mut wait = std::time::Duration::from_secs(1);
+    for _ in 0..4 {
+        match store.put(&path(uid), body.clone()).await {
+            Err(e) if store::is_rate_limited(&e) => {
+                tracing::warn!("status.json written too often, trying again in {wait:?}");
+                tokio::time::sleep(wait).await;
+                wait *= 2;
+            }
+            r => return r,
+        }
+    }
+    store.put(&path(uid), body).await
 }
 
 pub async fn started(store: &Store, uid: &str, at: DateTime<Utc>) -> Result<()> {

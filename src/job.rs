@@ -49,6 +49,8 @@ const FULL_EVERY: Duration = Duration::hours(20);
 const SHORT_DAYS: u64 = 1;
 /// A lock older than this belongs to a run that died.
 const LOCK_TTL: Duration = Duration::minutes(45);
+/// The least time between two progress writes of a first sync.
+const PROGRESS_EVERY: std::time::Duration = std::time::Duration::from_millis(1100);
 
 /// Today in the user's time zone.
 pub fn today(user: &User) -> NaiveDate {
@@ -297,9 +299,18 @@ async fn sync_user(ctx: &Ctx<'_>, user: &User, days: u64, before: &Status) -> Re
     let today = today(user);
     let first = before.last_ok.is_none();
     let full = full_run(before, Utc::now());
-    // The first run takes minutes; the dashboard shows how far it got.
+    // The first run takes minutes; the dashboard shows how far it got. GCS
+    // takes about one write of an object per second, so writes are spaced.
+    let last_report = std::cell::Cell::new(None::<tokio::time::Instant>);
     let report = async |p: Progress| {
-        if first && let Err(e) = status::progress(ctx.store, &user.uid, p).await {
+        if !first {
+            return;
+        }
+        if let Some(t) = last_report.get() {
+            tokio::time::sleep_until(t + PROGRESS_EVERY).await;
+        }
+        last_report.set(Some(tokio::time::Instant::now()));
+        if let Err(e) = status::progress(ctx.store, &user.uid, p).await {
             tracing::warn!("writing the progress failed: {e:#}");
         }
     };
@@ -361,6 +372,11 @@ async fn sync_user(ctx: &Ctx<'_>, user: &User, days: u64, before: &Status) -> Re
             let mut done = 0;
             while rx.recv().await.is_some() {
                 done += 1;
+                // Types finished while the last write was waiting: only the
+                // latest count is written.
+                while rx.try_recv().is_ok() {
+                    done += 1;
+                }
                 report(Progress::History { done, total }).await;
             }
         };
