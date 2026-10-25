@@ -4,6 +4,7 @@
 //! grants them).
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use google_cloud_auth::credentials::{AccessTokenCredentials, Builder};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -42,11 +43,11 @@ impl SyncJob {
             .context("unexpected Cloud Run API response")
     }
 
-    /// Whether the latest execution (manual or scheduled) has not finished yet.
-    /// A new execution shows up here as soon as `run` returns.
-    pub async fn running(&self) -> Result<bool> {
+    /// When the latest execution (manual or scheduled) was created, if it has
+    /// not finished yet. A new execution shows up here as soon as `run` returns.
+    pub async fn running_since(&self) -> Result<Option<DateTime<Utc>>> {
         let job: Job = self.call(self.http.get(&self.url)).await?;
-        Ok(job.running())
+        Ok(job.running_since())
     }
 
     /// Starts an execution, of one user only if `user` is given (which
@@ -75,14 +76,17 @@ struct Job {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ExecutionReference {
+    create_time: Option<DateTime<Utc>>,
     completion_time: Option<String>,
 }
 
 impl Job {
-    fn running(&self) -> bool {
-        self.latest_created_execution
-            .as_ref()
-            .is_some_and(|e| e.completion_time.is_none())
+    fn running_since(&self) -> Option<DateTime<Utc>> {
+        let e = self.latest_created_execution.as_ref()?;
+        // Without a create time, as old as can be: it still counts as running.
+        e.completion_time
+            .is_none()
+            .then(|| e.create_time.unwrap_or(DateTime::<Utc>::MIN_UTC))
     }
 }
 
@@ -101,16 +105,24 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn running(v: Value) -> bool {
-        serde_json::from_value::<Job>(v).unwrap().running()
+    fn running_since(v: Value) -> Option<DateTime<Utc>> {
+        serde_json::from_value::<Job>(v).unwrap().running_since()
     }
 
     #[test]
     fn running_until_the_latest_execution_completes() {
-        assert!(!running(json!({})));
-        assert!(running(json!({"latestCreatedExecution": {
-            "name": "x", "completionStatus": "EXECUTION_PENDING"}})));
-        assert!(!running(json!({"latestCreatedExecution": {
-            "name": "x", "completionTime": "2026-10-24T09:01:46Z"}})));
+        assert_eq!(running_since(json!({})), None);
+        assert_eq!(
+            running_since(json!({"latestCreatedExecution": {
+                "name": "x", "createTime": "2026-10-24T09:00:02Z",
+                "completionStatus": "EXECUTION_PENDING"}})),
+            Some("2026-10-24T09:00:02Z".parse().unwrap())
+        );
+        assert_eq!(
+            running_since(json!({"latestCreatedExecution": {
+                "name": "x", "createTime": "2026-10-24T09:00:02Z",
+                "completionTime": "2026-10-24T09:01:46Z"}})),
+            None
+        );
     }
 }

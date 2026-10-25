@@ -562,16 +562,15 @@ async fn overview(State(cfg): State<Shared>, Extension(user): Extension<SignedIn
     }
 }
 
-/// `{"running": bool}`: whether a sync of the user (or a scheduled one) is in progress.
-/// Whether a sync is running, and how far a first sync has got.
+/// `{"running": bool, "progress": …}`: whether a sync of the user is in
+/// progress, and how far a first sync has got.
 async fn sync_status(State(cfg): State<Shared>, Extension(user): Extension<SignedIn>) -> Response {
     let result = async {
         let s = status::get(&cfg.store, &user.uid).await?;
         if s.running(chrono::Utc::now()) {
             return Ok(json!({ "running": true, "progress": s.progress }));
         }
-        // A run that was just started has not written its status yet.
-        Ok::<_, anyhow::Error>(json!({ "running": cfg.sync_job.running().await? }))
+        Ok::<_, anyhow::Error>(json!({ "running": job_running(&cfg, &s).await? }))
     };
     match result.await {
         Ok(state) => Json(state).into_response(),
@@ -580,13 +579,17 @@ async fn sync_status(State(cfg): State<Shared>, Extension(user): Extension<Signe
 }
 
 async fn running(cfg: &Config, uid: &str) -> Result<bool> {
-    if status::get(&cfg.store, uid)
-        .await?
-        .running(chrono::Utc::now())
-    {
-        return Ok(true);
-    }
-    cfg.sync_job.running().await
+    let s = status::get(&cfg.store, uid).await?;
+    Ok(s.running(chrono::Utc::now()) || job_running(cfg, &s).await?)
+}
+
+/// Whether a running job execution has yet to sync the user: one that was
+/// just started has not written their status yet. Once their run in it has
+/// finished, the execution may go on with others (or shut down) for a while,
+/// but the user is done.
+async fn job_running(cfg: &Config, s: &status::Status) -> Result<bool> {
+    let since = cfg.sync_job.running_since().await?;
+    Ok(since.is_some_and(|t| s.last_run.as_ref().is_none_or(|r| r.at < t)))
 }
 
 /// Starts a sync of the user unless one is already running. The session

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { Activity, BedDouble, Flame, Footprints, HeartPulse, RefreshCw, Waves, Wind, Zap } from 'lucide-react';
@@ -66,10 +66,18 @@ export function DayPage({ date: wanted }: { date?: string }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [prev, next, navigate]);
 
+  // When the first sync ends, its card stays until the data has reloaded, rather than "No data yet" in between.
+  const syncing = !!sync.data?.running;
+  const wasSyncing = useRef(false);
+  const endedAt = useRef(0);
+  if (wasSyncing.current && !syncing) endedAt.current = Date.now();
+  wasSyncing.current = syncing;
+  const reloading = overview.dataUpdatedAt < endedAt.current;
+
   if (overview.isError) return <ErrorCard onRetry={() => overview.refetch()} />;
   if (overview.isPending) return <DaySkeleton />;
-  if (!date && overview.data.user.connected && sync.data?.running) {
-    return <FirstSync progress={sync.data.progress} />;
+  if (!date && overview.data.user.connected && (syncing || reloading)) {
+    return <FirstSync progress={syncing ? sync.data?.progress : { step: 'tables' }} />;
   }
   if (!date) {
     return (
