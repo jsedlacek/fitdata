@@ -1,14 +1,12 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bot, CheckCircle2, Laptop, LogOut, Moon, RefreshCw, Settings, Sun, TriangleAlert, UserRound } from 'lucide-react';
+import { Bot, CheckCircle2, LogOut, RefreshCw, Settings, TriangleAlert, UserRound } from 'lucide-react';
 import { overviewQuery, saveSettings, startSync, syncQuery, type Me, type Overview, type SyncRun } from '@/lib/api';
 import { detectSettings, setPrefs } from '@/lib/prefs';
 import { ago } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Button } from './ui/button';
-import { useThemeChoice, type ThemeChoice } from '@/lib/theme';
-import { Segmented } from './ui/segmented';
 import { ReconnectBanner } from './ReconnectBanner';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { McpConnect } from './McpConnect';
@@ -33,9 +31,6 @@ export function AppShell() {
           <div className="flex-1" />
           {data && <AskAi />}
           {data?.user.connected !== false && <SyncStatus run={data?.lastSync ?? null} />}
-          <div className="hidden sm:block">
-            <ThemeToggle />
-          </div>
           {data && <AccountMenu />}
         </div>
       </header>
@@ -45,14 +40,6 @@ export function AppShell() {
       </main>
       {data && (
         <footer className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 pb-8 text-[13px] text-muted">
-          <Popover>
-            <PopoverTrigger className="inline-flex items-center gap-1.5 rounded-md transition-colors hover:text-ink-2">
-              <Bot className="size-3.5" /> Your data in Claude and ChatGPT (MCP)
-            </PopoverTrigger>
-            <PopoverContent align="start" side="top" className="w-80">
-              <McpConnect />
-            </PopoverContent>
-          </Popover>
           <span className="flex gap-4 sm:ml-auto">
             <a href="/privacy" className="hover:text-ink-2">Privacy</a>
             <a href="/terms" className="hover:text-ink-2">Terms</a>
@@ -105,10 +92,12 @@ function AskAi() {
   return (
     <Popover onOpenChange={open}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="relative px-2 text-ink-2 hover:text-ink lg:px-2.5" aria-label="Ask Claude or ChatGPT about your data">
-          <Bot />
-          <span className="hidden lg:inline">Ask Claude or ChatGPT</span>
-          {!seen && <span className="absolute right-1 top-1 size-2 rounded-full bg-s1 ring-2 ring-page" />}
+        <Button variant="ghost" size="sm" className="px-2 text-ink-2 hover:text-ink md:px-2.5" aria-label="Ask Claude or ChatGPT about your data">
+          <span className="relative">
+            <Bot />
+            {!seen && <span className="absolute -right-1 -top-1 size-2 rounded-full bg-s1 ring-2 ring-page" />}
+          </span>
+          <span className="hidden md:inline">Ask Claude or ChatGPT</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80">
@@ -190,69 +179,28 @@ function SyncStatus({ run }: { run: SyncRun | null }) {
 
 function AccountMenu() {
   const [open, setOpen] = useState(false);
-  const [mcp, setMcp] = useState(false);
   return (
-    <Popover
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o);
-        if (!o) setMcp(false);
-      }}
-    >
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink" aria-label="Account">
           <UserRound />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className={cn('text-sm', mcp ? 'w-80' : 'w-64')}>
-        {mcp ? (
-          <>
-            <Button variant="ghost" size="sm" className="-ml-2 mb-2 text-ink-2" onClick={() => setMcp(false)}>
-              <ArrowLeft /> Back
-            </Button>
-            <McpConnect />
-          </>
-        ) : (
-          <>
-            {/* On phones the header has no room for the theme switch. */}
-            <div className="mb-2 flex items-center justify-between border-b pb-3 sm:hidden">
-              <span className="text-ink-2">Theme</span>
-              <ThemeToggle />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Button asChild variant="ghost" size="sm" className="justify-start">
-                <Link to="/settings" onClick={() => setOpen(false)}>
-                  <Settings /> Settings
-                </Link>
-              </Button>
-              <Button variant="ghost" size="sm" className="justify-start" onClick={() => setMcp(true)}>
-                <Bot /> Connect Claude / ChatGPT
-              </Button>
-              <Button asChild variant="ghost" size="sm" className="justify-start">
-                <a href="/auth/logout">
-                  <LogOut /> Sign out
-                </a>
-              </Button>
-            </div>
-          </>
-        )}
+      <PopoverContent align="end" className="w-56 text-sm">
+        <div className="flex flex-col gap-1">
+          <Button asChild variant="ghost" size="sm" className="justify-start">
+            <Link to="/settings" onClick={() => setOpen(false)}>
+              <Settings /> Settings
+            </Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm" className="justify-start">
+            <a href="/auth/logout">
+              <LogOut /> Sign out
+            </a>
+          </Button>
+        </div>
       </PopoverContent>
     </Popover>
   );
 }
 
-export function ThemeToggle() {
-  const [choice, setChoice] = useThemeChoice();
-  return (
-    <Segmented<ThemeChoice>
-      label="Theme"
-      value={choice}
-      onChange={setChoice}
-      options={[
-        { value: 'light', label: <Sun />, title: 'Light' },
-        { value: 'system', label: <Laptop />, title: 'System' },
-        { value: 'dark', label: <Moon />, title: 'Dark' },
-      ]}
-    />
-  );
-}

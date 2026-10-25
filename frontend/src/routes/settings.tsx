@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Download, LifeBuoy, Trash2 } from 'lucide-react';
+import { Check, Copy, Download, Laptop, LifeBuoy, Moon, Sun, Trash2 } from 'lucide-react';
 import {
   deleteAccount,
   EXPORT_URL,
@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ThemeToggle } from '@/components/AppShell';
+import { useThemeChoice, type ThemeChoice } from '@/lib/theme';
 import { ErrorCard } from './day';
 
 /** Where questions and privacy requests go (`CONTACT_EMAIL` in src/web.rs). */
@@ -142,6 +142,22 @@ function Preferences({ settings, connected }: { settings: Settings; connected: b
         </Row>
       </CardBody>
     </Card>
+  );
+}
+
+function ThemeToggle() {
+  const [choice, setChoice] = useThemeChoice();
+  return (
+    <Segmented<ThemeChoice>
+      label="Theme"
+      value={choice}
+      onChange={setChoice}
+      options={[
+        { value: 'light', label: <><Sun /> Light</> },
+        { value: 'system', label: <><Laptop /> System</> },
+        { value: 'dark', label: <><Moon /> Dark</> },
+      ]}
+    />
   );
 }
 
