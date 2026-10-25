@@ -112,10 +112,32 @@ async fn run_user(ctx: &Ctx<'_>, user: &User, days: u64) -> bool {
             return false;
         }
     };
-    let ok = if user.deleted {
+    let ok = locked_user(ctx, user, days).await;
+    if let Err(e) = lock.release(ctx.store).await {
+        tracing::warn!("releasing the lock failed: {e:#}");
+    }
+    ok
+}
+
+/// [`run_user`] once the lock is held.
+async fn locked_user(ctx: &Ctx<'_>, listed: &User, days: u64) -> bool {
+    // The run's list may be stale: the account may have been deleted since,
+    // and syncing it now would leave a status behind that a new account
+    // with the same ID would inherit.
+    let user = match users::get(ctx.store, &listed.uid).await {
+        Ok(Some(u)) => u,
+        Ok(None) => return true,
+        Err(e) => {
+            tracing::error!("re-reading the user failed: {e:#}");
+            return false;
+        }
+    };
+    if user.deleted {
         delete_logged(ctx, &user.uid).await
+    } else if user.token.is_none() {
+        true
     } else {
-        let ok = match sync_and_record(ctx, user, days).await {
+        let ok = match sync_and_record(ctx, &user, days).await {
             Ok(ok) => ok,
             Err(e) => {
                 tracing::error!("recording the run failed: {e:#}");
@@ -132,11 +154,7 @@ async fn run_user(ctx: &Ctx<'_>, user: &User, days: u64) -> bool {
                 false
             }
         }
-    };
-    if let Err(e) = lock.release(ctx.store).await {
-        tracing::warn!("releasing the lock failed: {e:#}");
     }
-    ok
 }
 
 /// Syncs a user and records the outcome in their status.
