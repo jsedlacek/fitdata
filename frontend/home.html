@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)" />
-    <title>Fitdata · all your Fitbit data on one page</title>
+    <title>Fitdata · ask AI about your Fitbit data</title>
     <meta
       name="description"
-      content="Sleep, heart rate, HRV, SpO₂ and activity from your Fitbit in one clean dashboard, and in Claude or ChatGPT, so you can simply ask."
+      content="Connect Claude or ChatGPT to your Fitbit sleep, heart rate, HRV and activity, and just ask. Plus a clean dashboard with all of it on one page."
     />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -36,39 +36,22 @@
     </header>
 
     <main>
-      <section class="mx-auto max-w-5xl px-4 pt-16 text-center sm:pt-24">
-        <h1 class="mx-auto max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-6xl">All your Fitbit data on one page</h1>
-        <p class="mx-auto mt-5 max-w-xl text-lg text-ink-2 text-pretty">
-          Sleep, heart rate, HRV, SpO₂ and activity in one clean dashboard. And in Claude or ChatGPT, so you can simply ask.
-        </p>
-        <div class="mt-8 flex flex-wrap justify-center gap-3">
-          <a href="/auth/login" class="inline-flex h-11 items-center rounded-lg bg-ink px-5 text-sm font-medium text-page hover:opacity-90">Sign in with Google</a>
-          <a href="https://github.com/jsedlacek/fitdata" class="inline-flex h-11 items-center rounded-lg border bg-surface px-5 text-sm font-medium hover:bg-shade">Open source</a>
-        </div>
-        <p class="mt-3 text-[13px] text-muted">Free · read-only · works with Fitbit through the Google Health API</p>
-      </section>
-
-      <section class="mx-auto mt-14 max-w-6xl px-4">
-        <figure class="overflow-hidden rounded-xl border bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.35)]">
-          <div class="flex items-center gap-1.5 border-b px-3 py-2">
-            <span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span>
-            <span class="mx-auto rounded-md bg-surface-2 px-3 py-0.5 text-[11px] text-muted">fitdata.jakub.contact</span>
-          </div>
-          <picture>
-            <source srcset="/src/home/day-dark.jpg" media="(prefers-color-scheme: dark)" />
-            <img src="/src/home/day-light.jpg" alt="The Fitdata day view: sleep, resting heart rate, HRV, steps and other metrics above a chart of heart rate and steps through the day" width="2560" height="1600" class="block h-auto w-full" />
-          </picture>
-        </figure>
-      </section>
-
-      <section class="mx-auto grid max-w-5xl items-center gap-10 px-4 py-24 md:grid-cols-2">
-        <div>
-          <h2 class="text-3xl font-semibold tracking-tight text-balance">Ask Claude or ChatGPT about your health</h2>
-          <p class="mt-4 text-ink-2 text-pretty">
-            Connect Fitdata to your AI assistant in a minute. It reads your data only when you ask, and only yours.
+      <section class="mx-auto grid max-w-6xl items-center gap-12 px-4 pt-14 pb-20 sm:pt-20 lg:grid-cols-[1fr_minmax(0,30rem)]">
+        <div class="text-center lg:text-left">
+          <p class="inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-1 text-[13px] text-ink-2">
+            <span class="size-1.5 rounded-full bg-s1"></span> Works with Claude and ChatGPT
           </p>
+          <h1 class="mt-5 text-4xl font-semibold tracking-tight text-balance sm:text-6xl">Ask AI about your Fitbit data</h1>
+          <p class="mx-auto mt-5 max-w-xl text-lg text-ink-2 text-pretty lg:mx-0">
+            Connect Claude or ChatGPT to your sleep, heart rate, HRV and activity, and just ask. Plus a clean dashboard with all of it on one page.
+          </p>
+          <div class="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
+            <a href="/auth/login" class="inline-flex h-11 items-center rounded-lg bg-ink px-5 text-sm font-medium text-page hover:opacity-90">Sign in with Google</a>
+            <a href="https://github.com/jsedlacek/fitdata" class="inline-flex h-11 items-center rounded-lg border bg-surface px-5 text-sm font-medium hover:bg-shade">Open source</a>
+          </div>
+          <p class="mt-3 text-[13px] text-muted">Free · read-only · works with Fitbit through the Google Health API</p>
         </div>
-        <figure>
+        <figure class="mx-auto w-full max-w-md lg:max-w-none">
           <div class="space-y-4 rounded-2xl border bg-surface p-5 text-[15px] leading-relaxed shadow-[0_24px_60px_-28px_rgba(11,11,11,0.35)]">
             <p class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-4 py-2.5 text-white">
               How have my resting heart rate and HRV changed since summer?
@@ -85,13 +68,26 @@
         </figure>
       </section>
 
+      <section class="mx-auto max-w-5xl px-4 pb-24 text-center">
+        <h2 class="text-sm font-medium text-muted">Ask anything, for example</h2>
+        <ul class="mt-5 flex flex-wrap justify-center gap-2.5">
+          <li class="rounded-full border bg-surface px-4 py-2 text-sm text-ink-2">Why did I sleep worse this week?</li>
+          <li class="rounded-full border bg-surface px-4 py-2 text-sm text-ink-2">Do evening runs change my deep sleep?</li>
+          <li class="rounded-full border bg-surface px-4 py-2 text-sm text-ink-2">Is my resting heart rate going down?</li>
+          <li class="rounded-full border bg-surface px-4 py-2 text-sm text-ink-2">Compare my HRV on workout and rest days</li>
+          <li class="rounded-full border bg-surface px-4 py-2 text-sm text-ink-2">How much do I sleep on weekends?</li>
+          <li class="rounded-full border bg-surface px-4 py-2 text-sm text-ink-2">What changed when I was ill in September?</li>
+        </ul>
+      </section>
+
       <section class="bg-surface-2 py-24">
         <div class="mx-auto max-w-5xl px-4 text-center">
-          <h2 class="text-3xl font-semibold tracking-tight">Months at a glance</h2>
-          <p class="mx-auto mt-4 max-w-xl text-ink-2">Sleep, resting heart rate, HRV and activity over a week, a quarter or your whole history.</p>
+          <h2 class="text-3xl font-semibold tracking-tight">And all your data on one page</h2>
+          <p class="mx-auto mt-4 max-w-xl text-ink-2">Every metric day by day, and trends over weeks and months.</p>
         </div>
         <div class="mx-auto mt-12 max-w-6xl px-4">
-          <figure class="overflow-hidden rounded-xl border bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.35)]">
+          <div class="hidden md:ml-auto md:block md:w-[68%]">
+            <figure class="overflow-hidden rounded-xl border bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.35)]">
           <div class="flex items-center gap-1.5 border-b px-3 py-2">
             <span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span>
             <span class="mx-auto rounded-md bg-surface-2 px-3 py-0.5 text-[11px] text-muted">fitdata.jakub.contact</span>
@@ -101,6 +97,19 @@
             <img src="/src/home/trends-light.jpg" alt="The Fitdata trends view: sleep stages by night and resting heart rate and HRV over 90 days" width="2560" height="1560" class="block h-auto w-full" loading="lazy" />
           </picture>
         </figure>
+          </div>
+          <div class="relative z-10 md:-mt-[30%] md:w-[76%]">
+            <figure class="overflow-hidden rounded-xl border bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.35)]">
+          <div class="flex items-center gap-1.5 border-b px-3 py-2">
+            <span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span>
+            <span class="mx-auto rounded-md bg-surface-2 px-3 py-0.5 text-[11px] text-muted">fitdata.jakub.contact</span>
+          </div>
+          <picture>
+            <source srcset="/src/home/day-dark.jpg" media="(prefers-color-scheme: dark)" />
+            <img src="/src/home/day-light.jpg" alt="The Fitdata day view: sleep, resting heart rate, HRV, steps and other metrics above a chart of heart rate and steps through the day" width="2560" height="1600" class="block h-auto w-full" />
+          </picture>
+        </figure>
+          </div>
         </div>
       </section>
 

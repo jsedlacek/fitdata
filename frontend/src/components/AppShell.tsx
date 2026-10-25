@@ -17,8 +17,8 @@ export function AppShell() {
   return (
     <div className="min-h-dvh">
       <header className="sticky top-0 z-40 border-b bg-page/85 backdrop-blur supports-[backdrop-filter]:bg-page/70">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6">
-          <Link to="/" search={{}} className="flex items-center gap-2 font-semibold tracking-tight">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4 sm:gap-6">
+          <Link to="/" search={{}} className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
             <img src="/favicon.svg" alt="" className="size-7" />
             <span className="hidden sm:inline">Fitdata</span>
           </Link>
@@ -27,8 +27,11 @@ export function AppShell() {
             <NavLink to="/trends">Trends</NavLink>
           </nav>
           <div className="flex-1" />
+          {data && <AskAi />}
           {data?.user.connected !== false && <SyncStatus run={data?.lastSync ?? null} />}
-          <ThemeToggle />
+          <div className="hidden sm:block">
+            <ThemeToggle />
+          </div>
           {data && <AccountMenu />}
         </div>
       </header>
@@ -57,11 +60,50 @@ export function AppShell() {
   );
 }
 
+const MCP_SEEN = 'mcp-seen';
+
+/**
+ * Asking Claude or ChatGPT is what sets Fitdata apart, so the header offers
+ * it; a dot marks it until the instructions have been opened once.
+ */
+function AskAi() {
+  const [seen, setSeen] = useState(() => {
+    try {
+      return localStorage.getItem(MCP_SEEN) === '1';
+    } catch {
+      return true;
+    }
+  });
+  const open = (isOpen: boolean) => {
+    if (!isOpen || seen) return;
+    setSeen(true);
+    try {
+      localStorage.setItem(MCP_SEEN, '1');
+    } catch {
+      // Private mode: the dot comes back next time, nothing worse.
+    }
+  };
+  return (
+    <Popover onOpenChange={open}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" className="relative px-2 text-ink-2 hover:text-ink lg:px-2.5" aria-label="Ask Claude or ChatGPT about your data">
+          <Bot />
+          <span className="hidden lg:inline">Ask Claude or ChatGPT</span>
+          {!seen && <span className="absolute right-1 top-1 size-2 rounded-full bg-s1 ring-2 ring-page" />}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80">
+        <McpConnect />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function NavLink({ to, children }: { to: '/' | '/trends'; children: React.ReactNode }) {
   return (
     <Link
       to={to}
-      className="rounded-md px-2.5 py-1.5 text-ink-2 transition-colors hover:bg-shade hover:text-ink"
+      className="rounded-md px-2 py-1.5 text-ink-2 transition-colors sm:px-2.5 hover:bg-shade hover:text-ink"
       activeProps={{ className: 'bg-shade !text-ink font-medium' }}
       activeOptions={{ exact: true, includeSearch: false }}
     >
@@ -152,6 +194,11 @@ function AccountMenu() {
           </>
         ) : (
           <>
+            {/* On phones the header has no room for the theme switch. */}
+            <div className="mb-2 flex items-center justify-between border-b pb-3 sm:hidden">
+              <span className="text-ink-2">Theme</span>
+              <ThemeToggle />
+            </div>
             <div className="flex flex-col gap-1">
               <Button variant="ghost" size="sm" className="justify-start" onClick={() => setMcp(true)}>
                 <Bot /> Connect Claude / ChatGPT
