@@ -16,6 +16,7 @@ import {
 import { DEMO } from '@/lib/demo';
 import { browserTimeZone, timeZones } from '@/lib/prefs';
 import { SyncStatus } from '@/components/AppShell';
+import { InstallCard } from '@/components/InstallApp';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Segmented } from '@/components/ui/segmented';
@@ -51,6 +52,7 @@ export function SettingsPage() {
             </Card>
           )}
           <Preferences settings={user.settings} connected={user.connected} />
+          {!DEMO && <InstallCard />}
           {!DEMO && (
             <>
               <YourData />

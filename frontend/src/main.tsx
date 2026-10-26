@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { router } from './router';
+import './lib/install';
 import './index.css';
 
 // Stale queries refetch when the tab comes back into focus, so a dashboard left open catches up.

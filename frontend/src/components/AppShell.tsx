@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { Button } from './ui/button';
 import { ReconnectBanner } from './ReconnectBanner';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { InstallHint } from './InstallApp';
 import { McpConnect } from './McpConnect';
 
 export function AppShell() {
@@ -49,6 +50,7 @@ export function AppShell() {
       </header>
       <main className="mx-auto max-w-6xl px-5 pb-16 pt-[max(env(safe-area-inset-top),1.5rem)] sm:px-6 sm:pt-5">
         {DEMO ? <DemoNote /> : <ReconnectBanner run={data?.lastSync ?? null} user={data?.user ?? null} />}
+        {!DEMO && data?.user.connected && <InstallHint />}
         <Outlet />
         {DEMO && <DemoAbout />}
       </main>

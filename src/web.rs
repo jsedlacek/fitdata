@@ -54,6 +54,9 @@ const PUBLIC_FILES: &[&str] = &[
     "manifest.webmanifest",
     // The home page's link preview (Open Graph), fetched by social networks' crawlers.
     "og.jpg",
+    // Shown by Android's install dialog (the manifest's screenshots).
+    "screenshot-narrow.webp",
+    "screenshot-wide.webp",
 ];
 
 pub struct Config {
