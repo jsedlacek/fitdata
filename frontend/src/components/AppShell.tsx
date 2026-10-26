@@ -50,6 +50,7 @@ export function AppShell() {
       <main className="mx-auto max-w-6xl px-5 pb-16 pt-[max(env(safe-area-inset-top),1.5rem)] sm:px-6 sm:pt-5">
         {DEMO ? <DemoNote /> : <ReconnectBanner run={data?.lastSync ?? null} user={data?.user ?? null} />}
         <Outlet />
+        {DEMO && <DemoAbout />}
       </main>
       {data && (
         <footer className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-5 pb-28 text-[13px] text-muted sm:px-6 sm:pb-8">
@@ -66,15 +67,88 @@ export function AppShell() {
   );
 }
 
-/** The demo says once, quietly, what it is and where your own data is. */
+/**
+ * The demo's short note: what the data is, and the way to your own. Tinted
+ * like a test-mode strip, so it never reads as someone's real dashboard.
+ */
 function DemoNote() {
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl bg-surface-2 px-4 py-2.5 text-[13px]">
-      <span className="text-ink-2">Demo with made-up data</span>
-      <a href="/auth/login" className="font-medium text-s1 hover:underline">
-        See your own Fitbit data →
-      </a>
+    <div className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl bg-[color-mix(in_srgb,var(--s1)_9%,var(--surface))] px-4 py-3 text-[13px]">
+      <p className="min-w-0 flex-1 basis-72 text-ink-2">
+        <span className="mr-1.5 rounded-md bg-s1 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">Demo</span>
+        90 days of a made-up person&apos;s Fitbit data, generated in your browser.
+      </p>
+      <div className="flex items-center gap-4">
+        <a href="#about-demo" className="text-ink-2 underline-offset-2 hover:text-ink hover:underline">
+          How it works
+        </a>
+        <a href="/auth/login" className="inline-flex h-8 items-center rounded-lg bg-ink px-3 font-medium text-page hover:opacity-90">
+          Connect your Fitbit
+        </a>
+      </div>
     </div>
+  );
+}
+
+/** The longer version at the end of every demo page: what this is, why, and what connecting your own data does. */
+function DemoAbout() {
+  const steps = [
+    ['Sign in with Google', 'and allow Fitdata to read your Fitbit data, through Google’s official Health API. Read-only: it can’t change anything.'],
+    ['Your history loads', 'in a few minutes, the same pages as here, and stays up to date every hour.'],
+    ['Ask your AI', 'if you like: add Fitdata to Claude or ChatGPT and ask about your own nights and days.'],
+  ];
+  return (
+    <section id="about-demo" className="mt-16 scroll-mt-20 rounded-2xl border bg-surface p-6 sm:p-8" aria-labelledby="about-demo-title">
+      <h2 id="about-demo-title" className="text-xl font-semibold tracking-tight">
+        This is a demo
+      </h2>
+      <div className="mt-6 grid gap-8 md:grid-cols-3">
+        <div>
+          <h3 className="text-sm font-semibold">What you’re seeing</h3>
+          <p className="mt-1.5 text-sm text-ink-2">
+            90 days of a made-up person: their nights, heart rate, HRV, SpO₂, steps and workouts, generated in your browser to look like real Fitbit
+            data. It isn’t anyone’s real data, and nothing you do here is stored.
+          </p>
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold">Why a demo</h3>
+          <p className="mt-1.5 text-sm text-ink-2">
+            So you can try every page before you connect anything: hover a chart to read all rows at one moment, step through the days, open Trends.
+          </p>
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold">With your own data</h3>
+          <ol className="mt-1.5 space-y-2 text-sm text-ink-2">
+            {steps.map(([title, text], i) => (
+              <li key={title} className="flex gap-2.5">
+                <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-ink text-[11px] font-semibold text-page">{i + 1}</span>
+                <span>
+                  <b className="font-medium text-ink">{title}</b> {text}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </div>
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-x-6 gap-y-4 border-t pt-6">
+        <ul className="flex flex-wrap gap-x-5 gap-y-1.5 text-[13px] text-ink-2">
+          {['Read-only', 'Delete everything in one click', 'Stored in the EU', 'Free and open source'].map((t) => (
+            <li key={t} className="flex items-center gap-1.5">
+              <CheckCircle2 className="size-3.5 text-good" />
+              {t}
+            </li>
+          ))}
+        </ul>
+        <div className="flex flex-wrap items-center gap-3">
+          <a href="/docs" className="text-[13px] text-ink-2 underline-offset-2 hover:text-ink hover:underline">
+            Read the docs
+          </a>
+          <a href="/auth/login" className="inline-flex h-10 items-center rounded-lg bg-ink px-4 text-sm font-medium text-page hover:opacity-90">
+            Connect your Fitbit
+          </a>
+        </div>
+      </div>
+    </section>
   );
 }
 
