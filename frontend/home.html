@@ -137,20 +137,57 @@
             </picture>
           </figure>
           <figure class="relative z-10 mx-auto -mt-10 w-[92%] max-w-md sm:-mt-16 lg:absolute lg:bottom-0 lg:left-0 lg:mt-0 lg:w-[25rem]">
-          <div class="space-y-3.5 rounded-2xl border bg-surface p-5 text-left text-[14.5px] leading-relaxed shadow-[0_30px_70px_-24px_rgba(11,11,11,0.45)]">
-            <p class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-4 py-2.5 text-white">
-              Why am I so tired today?
-            </p>
-            <p class="inline-flex items-center gap-2 rounded-full border bg-surface-2 px-3 py-1 text-xs text-ink-2">
-              <img src="/favicon.svg" alt="" class="size-4" /> Fitdata · get_day
-            </p>
-            <div class="space-y-2 text-ink">
-              <p>Last night was rough on your body. You fell asleep at <strong>2:40</strong> and slept 5&nbsp;h&nbsp;8&nbsp;min, with 50&nbsp;min of deep sleep instead of your usual 1&nbsp;h&nbsp;54.</p>
-              <p>Your heart rate stayed around <strong>65 bpm</strong> all night, 12 above normal, and HRV fell to <strong>24 ms</strong> from about 50.</p>
-              <p class="text-ink-2">That's the typical pattern after alcohol or a late night out. One or two good nights usually bring it back.</p>
+          <div class="rounded-2xl border bg-surface p-5 text-left text-[14.5px] leading-relaxed shadow-[0_30px_70px_-24px_rgba(11,11,11,0.45)]" data-carousel aria-roledescription="carousel" aria-label="Example questions and answers">
+            <div class="grid">
+              <div class="col-start-1 row-start-1 space-y-3.5 transition-opacity duration-300" data-slide role="group" aria-roledescription="slide" aria-label="1 of 4">
+                <p class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-4 py-2.5 text-white">Why am I so tired today?</p>
+                <p class="inline-flex items-center gap-2 rounded-full border bg-surface-2 px-3 py-1 text-xs text-ink-2"><img src="/favicon.svg" alt="" class="size-4" /> Fitdata · get_day</p>
+                <div class="space-y-2 text-ink">
+                  <p>Last night was rough on your body. You fell asleep at <strong>2:40</strong> and slept 5&nbsp;h&nbsp;8&nbsp;min, with 50&nbsp;min of deep sleep instead of your usual 1&nbsp;h&nbsp;54.</p>
+                  <p>Your heart rate stayed around <strong>65 bpm</strong> all night, 12 above normal, and HRV fell to <strong>24 ms</strong> from about 50.</p>
+                  <p class="text-ink-2">That&apos;s the typical pattern after alcohol or a late night out. One or two good nights usually bring it back.</p>
+                </div>
+              </div>
+              <div class="col-start-1 row-start-1 space-y-3.5 transition-opacity duration-300 invisible opacity-0" data-slide role="group" aria-roledescription="slide" aria-label="2 of 4" aria-hidden="true">
+                <p class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-4 py-2.5 text-white">I feel off. Am I getting sick?</p>
+                <p class="inline-flex items-center gap-2 rounded-full border bg-surface-2 px-3 py-1 text-xs text-ink-2"><img src="/favicon.svg" alt="" class="size-4" /> Fitdata · get_daily_metrics</p>
+                <div class="space-y-2 text-ink">
+                  <p>Maybe. Last night your skin temperature was <strong>+0.8&nbsp;°C</strong> above your usual, you breathed <strong>15.1</strong> times a minute instead of about 13.6, and your resting heart rate was <strong>61</strong>, six above your average.</p>
+                  <p>All three went up together, which often happens a day or two before a cold shows.</p>
+                  <p class="text-ink-2">Take it easy today and see how tonight looks.</p>
+                </div>
+              </div>
+              <div class="col-start-1 row-start-1 space-y-3.5 transition-opacity duration-300 invisible opacity-0" data-slide role="group" aria-roledescription="slide" aria-label="3 of 4" aria-hidden="true">
+                <p class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-4 py-2.5 text-white">Do I sleep better when I go to bed before 23:00?</p>
+                <p class="inline-flex items-center gap-2 rounded-full border bg-surface-2 px-3 py-1 text-xs text-ink-2"><img src="/favicon.svg" alt="" class="size-4" /> Fitdata · query</p>
+                <div class="space-y-2 text-ink">
+                  <p>Yes, a little. Over the last 90 days, nights that started before 23:00 gave you <strong>7&nbsp;h&nbsp;52</strong> of sleep and <strong>1&nbsp;h&nbsp;41</strong> of deep sleep; nights after midnight 7&nbsp;h&nbsp;08 and 1&nbsp;h&nbsp;22.</p>
+                  <p>Your HRV was also about <strong>4&nbsp;ms higher</strong> the next morning.</p>
+                  <p class="text-ink-2">It&apos;s 31 early nights against 22 late ones, so a real but modest difference.</p>
+                </div>
+              </div>
+              <div class="col-start-1 row-start-1 space-y-3.5 transition-opacity duration-300 invisible opacity-0" data-slide role="group" aria-roledescription="slide" aria-label="4 of 4" aria-hidden="true">
+                <p class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-4 py-2.5 text-white">Is my resting heart rate going down since I started running?</p>
+                <p class="inline-flex items-center gap-2 rounded-full border bg-surface-2 px-3 py-1 text-xs text-ink-2"><img src="/favicon.svg" alt="" class="size-4" /> Fitdata · get_daily_metrics</p>
+                <div class="space-y-2 text-ink">
+                  <p>Yes. In August it averaged <strong>58&nbsp;bpm</strong>; over the last four weeks <strong>55&nbsp;bpm</strong>, and the 7-day average has stayed below 56 since 5&nbsp;October.</p>
+                  <p>Your HRV rose over the same weeks, from about 41 to <strong>46&nbsp;ms</strong>.</p>
+                  <p class="text-ink-2">That&apos;s what better fitness usually looks like. Keep the easy days easy.</p>
+                </div>
+              </div>
+            </div>
+            <div class="mt-5 flex items-center justify-between border-t pt-3">
+              <button type="button" class="grid size-8 place-items-center rounded-full text-ink-2 hover:bg-shade hover:text-ink" data-prev aria-label="Previous example">←</button>
+              <div class="flex items-center gap-2">
+                <button type="button" class="size-2 rounded-full bg-ink/20 transition-colors data-[on]:bg-s1" data-dot="0" aria-label="Example 1" data-on aria-current="true"></button>
+                <button type="button" class="size-2 rounded-full bg-ink/20 transition-colors data-[on]:bg-s1" data-dot="1" aria-label="Example 2"></button>
+                <button type="button" class="size-2 rounded-full bg-ink/20 transition-colors data-[on]:bg-s1" data-dot="2" aria-label="Example 3"></button>
+                <button type="button" class="size-2 rounded-full bg-ink/20 transition-colors data-[on]:bg-s1" data-dot="3" aria-label="Example 4"></button>
+              </div>
+              <button type="button" class="grid size-8 place-items-center rounded-full text-ink-2 hover:bg-shade hover:text-ink" data-next aria-label="Next example">→</button>
             </div>
           </div>
-            <figcaption class="mt-2.5 text-center text-xs text-muted">Claude, ChatGPT or any MCP assistant</figcaption>
+            <figcaption class="mt-2.5 text-center text-xs text-muted">Example answers in Claude, ChatGPT or any MCP assistant</figcaption>
           </figure>
         </div>
         </div>
@@ -252,6 +289,34 @@
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
         if (tz) for (const a of document.querySelectorAll('a[href="/auth/login"]')) a.href = `/auth/login?tz=${encodeURIComponent(tz)}`;
       } catch {}
+      // The example answers: arrows and dots switch them; every 30 s the next one shows,
+      // except while the pointer or focus is on them, or for people who asked for less motion.
+      for (const box of document.querySelectorAll('[data-carousel]')) {
+        const slides = [...box.querySelectorAll('[data-slide]')];
+        const dots = [...box.querySelectorAll('[data-dot]')];
+        let at = 0;
+        let paused = false;
+        const show = (n) => {
+          at = (n + slides.length) % slides.length;
+          slides.forEach((el, i) => {
+            el.classList.toggle('invisible', i !== at);
+            el.classList.toggle('opacity-0', i !== at);
+            el.toggleAttribute('aria-hidden', i !== at);
+          });
+          dots.forEach((d, i) => {
+            d.toggleAttribute('data-on', i === at);
+            d.toggleAttribute('aria-current', i === at);
+          });
+        };
+        box.querySelector('[data-prev]').addEventListener('click', () => show(at - 1));
+        box.querySelector('[data-next]').addEventListener('click', () => show(at + 1));
+        dots.forEach((d, i) => d.addEventListener('click', () => show(i)));
+        for (const [on, off] of [['pointerenter', 'pointerleave'], ['focusin', 'focusout']]) {
+          box.addEventListener(on, () => (paused = true));
+          box.addEventListener(off, () => (paused = false));
+        }
+        if (!matchMedia('(prefers-reduced-motion: reduce)').matches) setInterval(() => paused || show(at + 1), 30_000);
+      }
       // Signed in already: the sign-in buttons open the dashboard instead.
       fetch('/api/session', { credentials: 'same-origin' })
         .then((r) => {
