@@ -35,7 +35,7 @@
   </head>
   <body class="min-h-dvh">
     <header class="sticky top-0 z-10 border-b bg-page/85 backdrop-blur">
-      <div class="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4">
+      <div class="mx-auto flex h-14 max-w-6xl items-center gap-3 px-5 sm:px-6">
         <a href="/" class="flex items-center gap-2 font-semibold tracking-tight">
           <img src="/favicon.svg" alt="" class="size-7" />
           Fitdata
@@ -47,60 +47,22 @@
     </header>
 
     <main>
-      <section class="mx-auto max-w-6xl px-4 pt-14 pb-20 text-center sm:pt-20">
-        <a href="#compare" class="inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-1 text-[13px] text-ink-2 hover:text-ink">
-          <span class="size-1.5 shrink-0 rounded-full bg-s7"></span> Fed up with the Google Health coach? <span aria-hidden="true" class="font-medium text-ink">→</span>
-        </a>
-        <h1 class="mx-auto mt-6 max-w-4xl text-4xl font-semibold tracking-tight text-balance sm:text-6xl">See what your Fitbit measured. <span class="text-s1">Ask AI what it means.</span></h1>
-        <p class="mx-auto mt-6 max-w-2xl text-lg text-ink-2 text-pretty">
-          Sleep stages, heart rate, HRV, SpO₂ and activity on one clear page, with every number explained and none of the scores or pep talk. Got a question? Ask Claude or ChatGPT about your own data.
-        </p>
-        <div class="mt-8 flex flex-wrap justify-center gap-3">
-          <a href="/auth/login" data-signed-in="Open dashboard" class="inline-flex h-11 items-center rounded-lg bg-ink px-5 text-sm font-medium text-page hover:opacity-90">Sign in with Google</a>
-        </div>
-        <p class="mt-3 text-[13px] text-muted">Free · read-only · open source · through the official Google Health API</p>
-
-        <div class="relative mt-14 text-left lg:pb-24">
-          <figure class="overflow-hidden rounded-xl border bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.35)] lg:ml-auto lg:w-[80%]">
-            <div class="flex items-center gap-1.5 border-b px-3 py-2">
-              <span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span>
-              <span class="mx-auto rounded-md bg-surface-2 px-3 py-0.5 text-[11px] text-muted">fitdata.jakub.contact</span>
-            </div>
-            <picture>
-              <source srcset="/src/home/day-dark.webp" media="(prefers-color-scheme: dark)" />
-              <img src="/src/home/day-light.webp" alt="The Fitdata day view of one night: sleep stages, heart rate, SpO₂ and HRV on one time axis, the cursor at 03:50 reading all of them at once, with a sleep summary beside them" width="2560" height="1560" class="block h-auto w-full" fetchpriority="high" />
-            </picture>
-          </figure>
-          <figure class="relative z-10 mx-auto -mt-10 w-[92%] max-w-md sm:-mt-16 lg:absolute lg:bottom-0 lg:left-0 lg:mt-0 lg:w-[25rem]">
-          <div class="space-y-3.5 rounded-2xl border bg-surface p-5 text-left text-[14.5px] leading-relaxed shadow-[0_30px_70px_-24px_rgba(11,11,11,0.45)]">
-            <p class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-4 py-2.5 text-white">
-              Why am I so tired today?
-            </p>
-            <p class="inline-flex items-center gap-2 rounded-full border bg-surface-2 px-3 py-1 text-xs text-ink-2">
-              <img src="/favicon.svg" alt="" class="size-4" /> Fitdata · get_day
-            </p>
-            <div class="space-y-2 text-ink">
-              <p>Last night was rough on your body. You fell asleep at <strong>2:40</strong> and slept 5&nbsp;h&nbsp;8&nbsp;min, with 50&nbsp;min of deep sleep instead of your usual 1&nbsp;h&nbsp;54.</p>
-              <p>Your heart rate stayed around <strong>65 bpm</strong> all night, 12 above normal, and HRV fell to <strong>24 ms</strong> from about 50.</p>
-              <p class="text-ink-2">That's the typical pattern after alcohol or a late night out. One or two good nights usually bring it back.</p>
-            </div>
+      <section class="mx-auto grid max-w-6xl items-center gap-x-12 gap-y-12 px-5 pt-12 pb-20 sm:px-6 sm:pt-16 lg:grid-cols-[1fr_auto]">
+        <div class="text-center lg:text-left">
+          <h1 class="text-5xl font-semibold tracking-tight text-balance sm:text-6xl">Less pep talk.<br /><span class="text-s1">More data.</span></h1>
+          <p class="mx-auto mt-6 max-w-xl text-lg text-ink-2 text-pretty lg:mx-0">Your Fitbit&apos;s sleep, heart rate, HRV and activity on one clear page, and in the AI you already use. No scores, no rings, no paid coach.</p>
+          <div class="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
+            <a href="/auth/login" data-signed-in="Open dashboard" class="inline-flex h-11 items-center rounded-lg bg-ink px-5 text-sm font-medium text-page hover:opacity-90">Sign in with Google</a>
+            <a href="/demo" class="inline-flex h-11 items-center rounded-lg border bg-surface px-5 text-sm font-medium hover:bg-shade">Try the demo</a>
           </div>
-            <figcaption class="mt-2.5 text-center text-xs text-muted">In Claude, ChatGPT or any MCP assistant · demo data</figcaption>
-          </figure>
+          <p class="mt-3 text-[13px] text-muted">Free · read-only · open source</p>
         </div>
-      </section>
-
-      <section id="compare" class="scroll-mt-14 bg-surface-2 py-20">
-        <div class="mx-auto max-w-3xl px-4 text-center">
-          <h2 class="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">Less pep talk. More data.</h2>
-          <p class="mx-auto mt-4 max-w-2xl text-ink-2 text-pretty">The Google Health app wants you to close rings, chase scores and chat with its paid coach. Fitdata shows you what your Fitbit actually measured, and lets you ask the AI you already use. Same morning, same phone:</p>
-        </div>
-        <div class="mx-auto mt-12 grid max-w-3xl grid-cols-1 items-start justify-items-center gap-x-10 gap-y-12 px-4 sm:grid-cols-2">
+        <div class="flex justify-center gap-3 max-sm:[zoom:0.64] sm:gap-6">
           <figure class="w-[16rem]">
-            <figcaption class="mb-4 text-center text-sm font-medium text-ink-2">Google Health app <span class="font-normal text-muted">· illustration</span></figcaption>
+            <figcaption class="mb-3 text-center text-sm font-medium text-ink-2">Google Health</figcaption>
             <!-- An illustration after photos of the Google Health app's Today tab (October 2026); no Google artwork. -->
-            <div class="relative aspect-[9/18.5] overflow-hidden rounded-[2.4rem] border-[7px] border-[#1d1d1c] bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.45)] ring-1 ring-border" aria-hidden="true">
-              <div class="flex items-center justify-between px-5 pt-2.5 text-[10px] font-medium text-ink-2">
+            <div class="relative aspect-[9/18.5] overflow-hidden rounded-[2.4rem] border-[7px] border-[#1d1d1c] bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.45)] ring-1 ring-border" role="img" aria-label="Illustration of the Google Health app&apos;s Today tab: a steps ring, a coach&apos;s long text about readiness and an Ask Coach button over it">
+              <div aria-hidden="true" class="flex items-center justify-between px-5 pt-2.5 text-[10px] font-medium text-ink-2">
                 <span>9:05</span><span class="h-3 w-3 rounded-full bg-[#1d1d1c]"></span><span>5G ▮</span>
               </div>
               <div class="flex items-center justify-between px-4 pt-2">
@@ -145,7 +107,7 @@
             </div>
           </figure>
           <figure class="w-[16rem]">
-            <figcaption class="mb-4 text-center text-sm font-medium text-ink-2">Fitdata <span class="font-normal text-muted">· screenshot</span></figcaption>
+            <figcaption class="mb-3 text-center text-sm font-medium text-ink">Fitdata</figcaption>
             <div class="flex aspect-[9/18.5] flex-col overflow-hidden rounded-[2.4rem] border-[7px] border-[#1d1d1c] bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.45)] ring-1 ring-border">
               <div class="flex shrink-0 items-center justify-between px-5 pt-2.5 pb-1 text-[10px] font-medium text-ink-2" aria-hidden="true">
                 <span>9:05</span><span class="h-3 w-3 rounded-full bg-[#1d1d1c]"></span><span>5G ▮</span>
@@ -158,8 +120,44 @@
             </div>
           </figure>
         </div>
-        <div class="px-4">
-        <div class="mx-auto mt-16 max-w-5xl" role="table" aria-label="The Google Health app compared with Fitdata">
+      </section>
+
+      <section class="bg-surface-2 py-20">
+        <h2 class="mx-auto max-w-3xl px-5 text-center text-3xl font-semibold tracking-tight text-balance sm:text-4xl">On a big screen. <span class="text-s1">In your AI.</span></h2>
+        <div class="mx-auto max-w-6xl px-5 sm:px-6">
+        <div class="relative mt-12 text-left lg:pb-24">
+          <figure class="overflow-hidden rounded-xl border bg-surface shadow-[0_24px_60px_-28px_rgba(11,11,11,0.35)] lg:ml-auto lg:w-[80%]">
+            <div class="flex items-center gap-1.5 border-b px-3 py-2">
+              <span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span><span class="size-2.5 rounded-full bg-grid"></span>
+              <span class="mx-auto rounded-md bg-surface-2 px-3 py-0.5 text-[11px] text-muted">fitdata.jakub.contact</span>
+            </div>
+            <picture>
+              <source srcset="/src/home/day-dark.webp" media="(prefers-color-scheme: dark)" />
+              <img src="/src/home/day-light.webp" alt="The Fitdata day view of one night: sleep stages, heart rate, SpO₂ and HRV on one time axis, the cursor at 03:50 reading all of them at once, with a sleep summary beside them" width="2560" height="1560" class="block h-auto w-full" fetchpriority="high" />
+            </picture>
+          </figure>
+          <figure class="relative z-10 mx-auto -mt-10 w-[92%] max-w-md sm:-mt-16 lg:absolute lg:bottom-0 lg:left-0 lg:mt-0 lg:w-[25rem]">
+          <div class="space-y-3.5 rounded-2xl border bg-surface p-5 text-left text-[14.5px] leading-relaxed shadow-[0_30px_70px_-24px_rgba(11,11,11,0.45)]">
+            <p class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-4 py-2.5 text-white">
+              Why am I so tired today?
+            </p>
+            <p class="inline-flex items-center gap-2 rounded-full border bg-surface-2 px-3 py-1 text-xs text-ink-2">
+              <img src="/favicon.svg" alt="" class="size-4" /> Fitdata · get_day
+            </p>
+            <div class="space-y-2 text-ink">
+              <p>Last night was rough on your body. You fell asleep at <strong>2:40</strong> and slept 5&nbsp;h&nbsp;8&nbsp;min, with 50&nbsp;min of deep sleep instead of your usual 1&nbsp;h&nbsp;54.</p>
+              <p>Your heart rate stayed around <strong>65 bpm</strong> all night, 12 above normal, and HRV fell to <strong>24 ms</strong> from about 50.</p>
+              <p class="text-ink-2">That's the typical pattern after alcohol or a late night out. One or two good nights usually bring it back.</p>
+            </div>
+          </div>
+            <figcaption class="mt-2.5 text-center text-xs text-muted">Claude, ChatGPT or any MCP assistant</figcaption>
+          </figure>
+        </div>
+        </div>
+      </section>
+
+      <section class="px-5 pt-20 sm:px-6">
+        <div class="mx-auto max-w-5xl" role="table" aria-label="The Google Health app compared with Fitdata">
           <div class="hidden gap-x-8 border-b pb-3 text-sm font-semibold sm:grid sm:grid-cols-[10rem_1fr_1fr]" role="row">
             <div role="columnheader"></div>
             <div class="text-ink-2" role="columnheader">Google Health app</div>
@@ -196,10 +194,7 @@
             <div class="flex gap-2 text-[15px] font-medium text-ink" role="cell"><svg viewBox="0 0 24 24" class="mt-0.5 size-4 shrink-0 text-s3" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span><span aria-hidden="true" class="mr-1 text-xs font-medium text-muted sm:hidden">Fitdata:</span>Phone, tablet or a big screen, in any browser. Free and open source</span></div>
           </div>
         </div>
-          <p class="mx-auto mt-6 max-w-5xl text-[11px] leading-relaxed text-muted">The Google Health app as of October 2026, from Google&apos;s screenshots and its announcement of Premium (US$9.99 a month). The phone is drawn after photos of the app&apos;s Today tab, not a screenshot; its coach can be turned off in the app&apos;s settings. Google Health is a trademark of Google LLC; Fitdata is an independent project, not affiliated with or endorsed by Google.</p>
-        </div>
       </section>
-
 
       <section class="mx-auto max-w-5xl px-4 pt-20 pb-16">
         <h2 class="text-center text-3xl font-semibold tracking-tight">Your data stays yours</h2>
@@ -227,17 +222,19 @@
         </ul>
         <p class="mt-8 text-center text-sm"><a href="/privacy" class="font-medium underline underline-offset-2 hover:text-ink-2">Privacy policy</a></p>
       </section>
-
       <section class="px-4 pb-20">
         <div class="mx-auto max-w-5xl rounded-2xl bg-s1 px-6 py-14 text-center text-white sm:py-16">
           <img src="/favicon.svg" alt="" class="mx-auto size-12 rounded-xl ring-2 ring-white/30" />
           <h2 class="mt-6 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">Try it with your own Fitbit</h2>
           <p class="mx-auto mt-3 max-w-md text-white/85">Sign in, allow read-only access, and your dashboard is ready in a few minutes. Connect Claude or ChatGPT whenever you like.</p>
-          <a href="/auth/login" data-signed-in="Open dashboard" class="mt-8 inline-flex h-11 items-center rounded-lg bg-white px-5 text-sm font-medium text-[#0b0b0b] hover:bg-white/90">Sign in with Google</a>
+          <div class="mt-8 flex flex-wrap justify-center gap-3">
+            <a href="/auth/login" data-signed-in="Open dashboard" class="inline-flex h-11 items-center rounded-lg bg-white px-5 text-sm font-medium text-[#0b0b0b] hover:bg-white/90">Sign in with Google</a>
+            <a href="/demo" class="inline-flex h-11 items-center rounded-lg px-5 text-sm font-medium text-white ring-1 ring-white/40 hover:bg-white/10">Try the demo</a>
+          </div>
           <p class="mt-3 text-[13px] text-white/70">Free · read-only · open source</p>
         </div>
       </section>
-    </main>
+
 
     <footer class="border-t">
       <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-6 text-[13px] text-muted">
@@ -246,7 +243,7 @@
         <a href="/terms" class="hover:text-ink-2">Terms</a>
         <a href="https://github.com/jsedlacek/fitdata" class="hover:text-ink-2">GitHub</a>
         <a href="mailto:fitdata@jakub.contact" class="hover:text-ink-2">Contact</a>
-        <span class="sm:ml-auto">Not affiliated with Google or Fitbit. Fitbit is a trademark of Google LLC.</span>
+        <span class="sm:ml-auto">Not affiliated with Google. Fitbit and Google Health are trademarks of Google LLC.</span>
       </div>
     </footer>
     <script>
