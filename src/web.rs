@@ -50,6 +50,8 @@ const PUBLIC_FILES: &[&str] = &[
     "icon-512.png",
     "icon-maskable-512.png",
     "manifest.webmanifest",
+    // The home page's link preview (Open Graph), fetched by social networks' crawlers.
+    "og.jpg",
 ];
 
 pub struct Config {
