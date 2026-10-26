@@ -150,8 +150,9 @@ function metricTrack(m: Metric, days: Row[], idx: Map<number, number>, avgLabel:
       <>
         {/* The measurements lead; their 7-day average is a soft band behind them that shows the trend. */}
         {showAvg && <path d={linePath(s, ts, avg7)} fill="none" stroke={m.color} strokeOpacity={0.2} strokeWidth={7} strokeLinecap="round" strokeLinejoin="round" />}
-        <path d={linePath(s, ts, vs, DAY * 1.5)} fill="none" stroke={m.color} strokeWidth={1.5} strokeLinejoin="round" />
-        {days.length <= 45 && ts.map((t, i) => (vs[i] == null ? null : <circle key={t} cx={s.x(t)} cy={s.y(vs[i]!)} r={2.25} fill={m.color} />))}
+        <path d={linePath(s, ts, vs, DAY * 1.5)} fill="none" stroke={m.color} strokeWidth={1.25} strokeLinejoin="round" />
+        {/* A day with a gap on both sides has no line to show it: a dot does. Otherwise dots only on hover. */}
+        {ts.map((t, i) => (vs[i] == null || vs[i - 1] != null || vs[i + 1] != null ? null : <circle key={t} cx={s.x(t)} cy={s.y(vs[i]!)} r={2} fill={m.color} />))}
       </>
     ) : m.kind === 'dev' ? (
       <>
@@ -181,7 +182,7 @@ function metricTrack(m: Metric, days: Row[], idx: Map<number, number>, avgLabel:
         // Changes average out to zero, so the latest one says more.
         if (m.kind === 'dev') {
           const last = days.findLastIndex((d) => d[m.key] != null);
-          return last < 0 ? <Muted>No data</Muted> : <><b>{fmt(vs[last])}</b>{m.unit} <Muted>{dateW(days[last].t)}</Muted></>;
+          return last < 0 ? <><b>–</b> <Muted>No data</Muted></> : <><b>{fmt(vs[last])}</b>{m.unit} <Muted>{dateW(days[last].t)}</Muted></>;
         }
         return (
           <>
@@ -192,7 +193,8 @@ function metricTrack(m: Metric, days: Row[], idx: Map<number, number>, avgLabel:
       return (
         <>
           <b>{fmt(vs[i])}</b>{m.kind === 'dev' ? '' : ' '}{m.unit}
-          {m.kind === 'line' && avg7[i] != null && <Muted> · 7-day avg {fmt(avg7[i])}</Muted>}
+          {/* The second line: the 7-day average where there is one, else the day. */}
+          <Muted> {m.kind === 'line' && avg7[i] != null ? `7-day avg ${fmt(avg7[i])}` : dateW(days[i].t)}</Muted>
         </>
       );
     },
@@ -248,12 +250,12 @@ function sleepTracks(days: Row[], idx: Map<number, number>, avgLabel: string) {
             </>
           );
         const d = days[i];
-        if (d.sleep == null) return <Muted>No data</Muted>;
+        if (d.sleep == null) return <><b>–</b> <Muted>No data</Muted></>;
         return (
           <>
             <b>{hm(d.sleep)}</b> h{' '}
             <Muted>
-              · deep {hm(d.deep)} · REM {hm(d.rem)}
+              deep {hm(d.deep)} · REM {hm(d.rem)}
             </Muted>
           </>
         );
@@ -274,9 +276,9 @@ function sleepTracks(days: Row[], idx: Map<number, number>, avgLabel: string) {
             </>
           );
         const d = days[i];
-        return d.bedtime == null ? <Muted>No data</Muted> : (
+        return d.bedtime == null ? <><b>–</b> <Muted>No data</Muted></> : (
           <>
-            <b>{clock(d.bedtime)}</b>–<b>{clock(d.wake!)}</b>
+            <b>{clock(d.bedtime)}</b>–<b>{clock(d.wake!)}</b> <Muted>{dateW(d.t)}</Muted>
           </>
         );
       },

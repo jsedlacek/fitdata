@@ -309,7 +309,13 @@ export function Track({
 function Readout({ fn, big, d }: { fn: (t: number | null) => ReactNode; big?: boolean; d: Range }) {
   const c = useCursor();
   const t = c != null && c >= d[0] && c <= d[1] ? c : null;
-  return <div className={cn('truncate tabular-nums text-ink', big ? 'text-[13px] [&_b]:text-lg [&_b]:font-semibold' : 'text-[13px] leading-5')}>{fn(t)}</div>;
+  // Beside the chart (big) the column is narrow: the value on one line, its context (muted) on the
+  // next, hovered or not, so the row's height never changes. Above the chart: one line.
+  return (
+    <div className={cn('tabular-nums text-ink', big ? 'w-full text-[13px] leading-snug [&_b]:text-lg [&_b]:font-semibold [&_.text-muted]:block' : 'truncate text-[13px] leading-5')}>
+      {fn(t)}
+    </div>
+  );
 }
 
 function Crosshair({ s, marks, overlay }: { s: Scale; marks?: (t: number) => Mark[]; overlay?: (s: Scale, t: number | null) => ReactNode }) {
