@@ -3,7 +3,8 @@ import dayDark from '@/home/day-dark.jpg';
 import dayLight from '@/home/day-light.jpg';
 import trendsDark from '@/home/trends-dark.jpg';
 import trendsLight from '@/home/trends-light.jpg';
-import { A, Callout, Cards, H2, H3, Kbd, Shot, Swatch } from '../ui';
+import { DayFigure, TrendFigure, STAGE_LEGEND } from '../figures';
+import { A, Callout, Cards, H2, H3, Kbd, Mark, Shot, Swatch } from '../ui';
 
 export function Introduction() {
   return (
@@ -122,7 +123,7 @@ export function DayPage() {
         </li>
         <li>Click the date to open a calendar; days with data are marked.</li>
         <li>
-          Every day has its own address (<code>/?date=2026-10-24</code>), so you can bookmark or share a link to it (others still see only their own
+          Every day has its own address (<code>/dash?date=2026-10-24</code>), so you can bookmark or share a link to it (others still see only their own
           data).
         </li>
       </ul>
@@ -159,6 +160,7 @@ export function DayPage() {
         of them and a cursor appears in all of them at the same moment, with the values in the chart headers (see{' '}
         <A to="charts">Reading the charts</A>).
       </p>
+      <DayFigure part="night" />
       <ul>
         <li>
           <strong>Sleep stages</strong>: when you were in deep, light, REM sleep or awake, and restless moments. See <A to="sleep#stages">Sleep stages</A>
@@ -196,6 +198,7 @@ export function DayPage() {
       </ul>
       <H2 id="day-section">Day</H2>
       <p>The day section runs from the moment you woke up until midnight.</p>
+      <DayFigure part="day" />
       <ul>
         <li>
           <strong>Heart rate</strong>: the line is your average heart rate in each minute, the light band around it the lowest and highest reading in
@@ -240,10 +243,11 @@ export function TrendsPage() {
       </p>
       <H2 id="lines">Lines: daily values and the 7-day average</H2>
       <p>
-        Resting heart rate, HRV, SpO₂ and breathing rate are drawn as a <strong>line</strong> with the value of each day (with dots for periods up to 45
-        days). From 30 days up a <strong>soft, wide band</strong> of the same color runs behind it: the <strong>7-day average</strong>, each day's value
-        averaged with the six days before it (at least three of them with data).
+        Resting heart rate, HRV, SpO₂ and breathing rate are drawn as a <strong>line</strong> with the value of each day. A <strong>soft, wide band</strong>{' '}
+        of the same color runs behind it: the <strong>7-day average</strong>, each day's value averaged with the six days before it (at least three of
+        them with data). It is computed over your whole history, so on a 7-day view it includes the days before, too.
       </p>
+      <TrendFigure rows={['rhr', 'hrv']} color="var(--s5)" />
       <p>
         Single days jump around for many reasons; the band shows the direction. One odd night barely moves it, and a trend worth noticing is one the
         band follows for a week or more.
@@ -256,6 +260,13 @@ export function TrendsPage() {
       </Callout>
       <H2 id="night-rows">Night rows</H2>
       <p>Each night is dated by the morning it ended, like on the Day page.</p>
+      <TrendFigure
+        rows={['stages', 'window']}
+        legend={[
+          ...STAGE_LEGEND.map(([m, l]) => [m, l, `${l} in the night's bar; the bar without its awake top is the time asleep.`] as typeof STAGE_LEGEND[number]),
+          [<Mark kind="block" color="color-mix(in srgb, var(--s7) 55%, transparent)" />, 'Bedtime – wake', 'From falling asleep (top) to waking up (bottom); earlier is higher.'],
+        ]}
+      />
       <ul>
         <li>
           <strong>Sleep stages</strong>: one stacked bar per night, from the bottom <Swatch color="var(--stage-deep)">Deep</Swatch>,{' '}
@@ -278,6 +289,15 @@ export function TrendsPage() {
         </li>
       </ul>
       <H2 id="day-rows">Day rows</H2>
+      <TrendFigure
+        rows={['steps', 'azm']}
+        legend={[
+          [<Mark kind="bars" color="var(--s3)" />, 'Steps', 'One bar per day.'],
+          [<Mark kind="bars" color="var(--s2)" />, 'Zone minutes', 'Active Zone Minutes per day.'],
+          [<Mark kind="dash" />, 'Goal', '10,000 steps, and 22 zone minutes a day (150 a week).'],
+          [<Mark kind="cursor" color="var(--s3)" />, 'Cursor', 'The day under the pointer, with its values on the left.'],
+        ]}
+      />
       <ul>
         <li>
           <strong>Steps</strong>: one bar per day; the dashed line marks 10,000 steps. See <A to="steps">Steps</A>.
@@ -314,6 +334,14 @@ export function Charts() {
         and the values at that moment in each chart's header. The time or date is shown on the axis below. When you are not hovering, the headers show
         a summary instead: the night's or day's value, or the average of the period.
       </p>
+      <TrendFigure
+        rows={['rhr', 'hrv', 'spo2']}
+        days={14}
+        legend={[
+          [<Mark kind="cursor" color="var(--s5)" />, 'One cursor', 'Hover one chart and every chart of the section marks the same day or minute.'],
+          [<Mark kind="pill" />, 'On the axis', 'The date or time under the cursor.'],
+        ]}
+      />
       <H2 id="keyboard">Keyboard</H2>
       <ul>
         <li>

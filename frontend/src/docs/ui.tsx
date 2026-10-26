@@ -151,3 +151,58 @@ export function Cards({ items }: { items: { to: string; title: string; text: str
     </div>
   );
 }
+
+/** A live chart from the app, on demo data, framed for a page. */
+export function Example({ children, caption }: { children: ReactNode; caption?: ReactNode }) {
+  return (
+    <figure className="not-docs my-6">
+      <div className="rounded-xl border bg-surface p-4 sm:p-5">{children}</div>
+      <figcaption className="mt-2 text-center text-xs text-muted">{caption ?? 'Demo data. Move the pointer over the chart, or tap it.'}</figcaption>
+    </figure>
+  );
+}
+
+/** How a part of a chart looks, drawn small: the mark of a legend row. */
+export function Mark({ kind, color = 'var(--s1)' }: { kind: 'line' | 'band' | 'dots' | 'bars' | 'block' | 'cursor' | 'shade' | 'dash' | 'range' | 'pill'; color?: string }) {
+  return (
+    <svg viewBox="0 0 32 16" className="h-4 w-8 shrink-0 overflow-visible" aria-hidden>
+      {kind === 'line' && <path d="M1 11 L8 7 L14 9 L21 4 L31 6" fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" />}
+      {kind === 'band' && <path d="M2 10 C10 8 20 8 30 6" fill="none" stroke={color} strokeOpacity={0.2} strokeWidth={7} strokeLinecap="round" />}
+      {kind === 'range' && <path d="M1 4 L31 3 L31 12 L1 13 Z" fill="var(--band)" opacity={0.6} />}
+      {kind === 'dots' && [4, 11, 18, 25].map((x, i) => <circle key={x} cx={x} cy={[9, 6, 10, 7][i]} r={1.8} fill={color} />)}
+      {kind === 'bars' && [3, 10, 17, 24].map((x, i) => <rect key={x} x={x} y={[8, 4, 10, 6][i]} width={5} height={16 - [8, 4, 10, 6][i]} rx={1} fill={color} />)}
+      {kind === 'block' && <rect x={3} y={4} width={26} height={8} rx={2} fill={color} />}
+      {kind === 'shade' && <rect x={6} y={0} width={20} height={16} fill={color} />}
+      {kind === 'dash' && <line x1={1} x2={31} y1={8} y2={8} stroke="var(--ink-2)" strokeDasharray="3 3" strokeOpacity={0.7} />}
+      {kind === 'cursor' && (
+        <>
+          <line x1={16} x2={16} y1={0} y2={16} stroke="var(--ink)" strokeOpacity={0.35} />
+          <circle cx={16} cy={7} r={3.5} fill={color} stroke="var(--surface)" strokeWidth={1.5} />
+        </>
+      )}
+      {kind === 'pill' && (
+        <>
+          <rect x={3} y={3} width={26} height={10} rx={3} fill="var(--ink)" />
+          <rect x={8} y={7} width={16} height={2} rx={1} fill="var(--page)" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/** What each line, band, dot or bar of the example above means. */
+export function Legend({ items }: { items: [ReactNode, string, ReactNode][] }) {
+  return (
+    <dl className="not-docs -mt-2 mb-6 grid gap-x-6 gap-y-3 text-[14px] leading-snug sm:grid-cols-2">
+      {items.map(([mark, label, text]) => (
+        <div key={label} className="flex gap-3">
+          <div className="mt-0.5">{mark}</div>
+          <div>
+            <dt className="font-medium text-ink">{label}</dt>
+            <dd className="text-ink-2">{text}</dd>
+          </div>
+        </div>
+      ))}
+    </dl>
+  );
+}

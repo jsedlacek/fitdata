@@ -97,7 +97,11 @@ export function demoDay(date: string): DayDetail {
   const restless = stages.filter((s) => s.stage === 'LIGHT' && s.end - s.start > 15 * MIN && r() < 0.35).map((s) => ({ start: s.start + 5 * MIN, end: s.start + 7 * MIN }));
   const stageAt = (x: number) => stages.find((s) => s.start <= x && x < s.end)?.stage;
 
-  const ex = plans(date, r).map((p) => ({ ...p, s: local(date, p.start), e: local(date, p.start + p.minutes) }));
+  // Nobody runs in their sleep: an activity starts at the earliest 20 minutes after waking.
+  const ex = plans(date, r).map((p) => {
+    const s0 = Math.max(local(date, p.start), sEnd + 20 * MIN);
+    return { ...p, s: s0, e: s0 + p.minutes * MIN };
+  });
   const start = Math.min(sStart, midnight);
   const heartRate: DayDetail['heartRate'] = [];
   for (let x = start; x < end; x += MIN) {
@@ -181,6 +185,13 @@ export function demoDay(date: string): DayDetail {
 
 let settings: Settings = { timeZone: TZ, units: 'metric', weekStart: 'monday', clock: '24h' };
 const user = (): Me => ({ id: 'demo', connected: true, settings, settingsSaved: true });
+
+/** The demo's last date that falls on `weekday` (0 = Sunday), for the docs' examples. */
+export function demoLastDay(weekday: number) {
+  let d = addDays(today(), -1);
+  while (new Date(`${d}T12:00:00Z`).getUTCDay() !== weekday) d = addDays(d, -1);
+  return d;
+}
 
 /** /api/overview: 90 days ending yesterday. */
 export function demoOverview(): Overview {

@@ -3,6 +3,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { overviewQuery, type Daily } from '@/lib/api';
+import { demoOverview } from '@/lib/demo';
 import { DAY, dayValue } from '@/lib/chart';
 import { hhmm, hm, num } from '@/lib/format';
 import { prefs } from '@/lib/prefs';
@@ -460,5 +461,30 @@ function DayRow({ d, maxSleep, maxSteps }: { d: Row; maxSleep: number; maxSteps:
       <td className="w-16 py-2 text-right">{num(d.steps)}</td>
       <td className="py-2 text-right">{num(d.azm)}</td>
     </tr>
+  );
+}
+
+/** The docs' live example: some Trends rows over the demo's last `days` days. */
+export function TrendExample({ rows, days: n = 30 }: { rows: ('stages' | 'window' | Key)[]; days?: number }) {
+  const history = useMemo(() => toRows(demoOverview().days), []);
+  const days = history.slice(-n);
+  const { idx, domain } = useRows(days);
+  const label = `${n}-day avg`;
+  const sl = sleepTracks(days, idx, label);
+  return (
+    <SyncGroup domain={domain} mode="date">
+      <div className="space-y-3">
+        {rows.map((k) =>
+          k === 'stages' ? (
+            <Track key={k} side title="Sleep stages" height={96} {...sl.stages} />
+          ) : k === 'window' ? (
+            <Track key={k} side title="Bedtime – wake" height={64} {...sl.window} />
+          ) : (
+            <Track key={k} side title={M[k].title} height={M[k].height ?? 64} {...metricTrack(M[k], days, idx, label, history)} />
+          ),
+        )}
+        <TimeAxis side />
+      </div>
+    </SyncGroup>
   );
 }

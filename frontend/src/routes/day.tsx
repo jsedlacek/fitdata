@@ -5,6 +5,7 @@ import { ArrowDownRight, ArrowUpRight, RefreshCw } from 'lucide-react';
 import { dayQuery, overviewQuery, syncQuery, type Daily, type DayDetail, type Exercise, type Stage } from '@/lib/api';
 import { MIN, wallClock } from '@/lib/chart';
 import { clock, duration, hm, num, temperature } from '@/lib/format';
+import { demoDay, demoLastDay } from '@/lib/demo';
 import { before, mean, type MetricKey } from '@/lib/stats';
 import { createStore, useStore } from '@/lib/store';
 import { ExIcon, exerciseLabel } from '@/components/Activity';
@@ -308,7 +309,7 @@ function Stat({ label, value, hint, help }: { label: string; value: ReactNode; h
   );
 }
 
-function NightSection({ p, m }: { p: Prepared; m: Daily | null }) {
+function NightSection({ p, m, bare }: { p: Prepared; m: Daily | null; bare?: boolean }) {
   const { night, nightRange: range, clock } = p;
   if (!night || !range) {
     return (
@@ -331,56 +332,62 @@ function NightSection({ p, m }: { p: Prepared; m: Daily | null }) {
   const spo2Y = niceTicks(Math.min(...p.spo2.v, 92), 100, 2);
   const hrvY = niceTicks(0, Math.max(...p.hrv.v, 40), 2);
 
+  // The charts alone, for the docs' examples (bare).
+  const charts = (
+    <div className="space-y-4">
+      <Track
+        title="Sleep stages" help={<Help topic="stages" />} height={lanes.length * 20 + 12} y={[0, lanes.length]} ticks={lanes.map((_, i) => i + 0.5)} tickFmt={(v) => lanes[Math.floor(v)].label}
+        domain={range}
+        draw={(s) => {
+          const h = s.y(0) - s.y(1);
+          return blocks.map((b, i) => (
+            <rect key={i} x={s.x(b.start)} y={s.y(lane[b.key] + 1) + h * 0.16} width={Math.max(1, s.x(b.end) - s.x(b.start) - 0.5)} height={h * 0.68} rx={1.5} fill={color[b.key]} />
+          ));
+        }}
+        readout={(t) => {
+          const b = t == null ? undefined : (night.restless.find((r) => r.start <= t && t < r.end) ?? night.stages.find((r) => r.start <= t && t < r.end));
+          if (!b) return <><b>{duration(asleep)}</b> asleep</>;
+          return (
+            <>
+              <i className="mr-1.5 inline-block size-2 rounded-full align-[1px]" style={{ background: color[b.key] }} />
+              <span className="font-medium text-ink-2">{label[b.key]}</span> <Muted>{clock(b.start)}–{clock(b.end)}</Muted>
+            </>
+          );
+        }}
+      />
+      <Track
+        title="Heart rate" help={<Help topic="nightHr" />} height={70} {...hrY} domain={range}
+        marks={(t) => {
+          const i = nearest(p.hr.t, t, 2 * MIN);
+          return [{ v: i < 0 ? null : p.hr.avg[i], color: 'var(--s5)' }];
+        }}
+        draw={(s) => <path d={linePath(s, p.hr.t, p.hr.avg, 5 * MIN)} fill="none" stroke="var(--s5)" strokeWidth={1.25} strokeLinejoin="round" />}
+        readout={(t) => {
+          const i = t == null ? -1 : nearest(p.hr.t, t, 2 * MIN);
+          return i < 0 ? <><b>{num(m?.resting_hr)}</b> bpm resting</> : <><b>{num(p.hr.avg[i])}</b> bpm</>;
+        }}
+      />
+      {p.spo2.v.length > 0 && (
+        <Track
+          title="SpO₂" help={<Help topic="spo2" />} height={50} {...spo2Y} domain={range} draw={spo2.draw} marks={spo2.marks}
+          readout={(t) => (spo2.value(t) == null ? <><b>{num(m?.spo2_avg, 1)}</b> % avg</> : <><b>{num(spo2.value(t), 1)}</b> %</>)}
+        />
+      )}
+      {p.hrv.v.length > 0 && (
+        <Track
+          title="HRV" help={<Help topic="hrv" />} height={50} {...hrvY} domain={range} draw={hrv.draw} marks={hrv.marks} points={hrv.points}
+          readout={(t) => (hrv.value(t) == null ? <><b>{num(m?.hrv_ms, 1)}</b> ms avg</> : <><b>{num(hrv.value(t), 1)}</b> ms</>)}
+        />
+      )}
+      <TimeAxis domain={range} />
+    </div>
+  );
+  if (bare) return charts;
+
   return (
     <Section title="Night" note={`${clock(night.span.start)} – ${clock(night.span.end)}, the night that ended this morning`}>
       <div className="grid grid-cols-[minmax(0,1fr)] gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="space-y-4">
-          <Track
-            title="Sleep stages" help={<Help topic="stages" />} height={lanes.length * 20 + 12} y={[0, lanes.length]} ticks={lanes.map((_, i) => i + 0.5)} tickFmt={(v) => lanes[Math.floor(v)].label}
-            domain={range}
-            draw={(s) => {
-              const h = s.y(0) - s.y(1);
-              return blocks.map((b, i) => (
-                <rect key={i} x={s.x(b.start)} y={s.y(lane[b.key] + 1) + h * 0.16} width={Math.max(1, s.x(b.end) - s.x(b.start) - 0.5)} height={h * 0.68} rx={1.5} fill={color[b.key]} />
-              ));
-            }}
-            readout={(t) => {
-              const b = t == null ? undefined : (night.restless.find((r) => r.start <= t && t < r.end) ?? night.stages.find((r) => r.start <= t && t < r.end));
-              if (!b) return <><b>{duration(asleep)}</b> asleep</>;
-              return (
-                <>
-                  <i className="mr-1.5 inline-block size-2 rounded-full align-[1px]" style={{ background: color[b.key] }} />
-                  <span className="font-medium text-ink-2">{label[b.key]}</span> <Muted>{clock(b.start)}–{clock(b.end)}</Muted>
-                </>
-              );
-            }}
-          />
-          <Track
-            title="Heart rate" help={<Help topic="nightHr" />} height={70} {...hrY} domain={range}
-            marks={(t) => {
-              const i = nearest(p.hr.t, t, 2 * MIN);
-              return [{ v: i < 0 ? null : p.hr.avg[i], color: 'var(--s5)' }];
-            }}
-            draw={(s) => <path d={linePath(s, p.hr.t, p.hr.avg, 5 * MIN)} fill="none" stroke="var(--s5)" strokeWidth={1.25} strokeLinejoin="round" />}
-            readout={(t) => {
-              const i = t == null ? -1 : nearest(p.hr.t, t, 2 * MIN);
-              return i < 0 ? <><b>{num(m?.resting_hr)}</b> bpm resting</> : <><b>{num(p.hr.avg[i])}</b> bpm</>;
-            }}
-          />
-          {p.spo2.v.length > 0 && (
-            <Track
-              title="SpO₂" help={<Help topic="spo2" />} height={50} {...spo2Y} domain={range} draw={spo2.draw} marks={spo2.marks}
-              readout={(t) => (spo2.value(t) == null ? <><b>{num(m?.spo2_avg, 1)}</b> % avg</> : <><b>{num(spo2.value(t), 1)}</b> %</>)}
-            />
-          )}
-          {p.hrv.v.length > 0 && (
-            <Track
-              title="HRV" help={<Help topic="hrv" />} height={50} {...hrvY} domain={range} draw={hrv.draw} marks={hrv.marks} points={hrv.points}
-              readout={(t) => (hrv.value(t) == null ? <><b>{num(m?.hrv_ms, 1)}</b> ms avg</> : <><b>{num(hrv.value(t), 1)}</b> ms</>)}
-            />
-          )}
-          <TimeAxis domain={range} />
-        </div>
+        {charts}
         {/* Beside the charts on wide screens; under them, in two columns, on tablets. */}
         <div className="grid items-start gap-x-8 md:grid-cols-2 lg:block">
           <div>
@@ -501,7 +508,7 @@ function ExRow({ x, clock, exs }: { x: Ex; clock: (t: number) => string; exs: Ex
   );
 }
 
-function DaySection({ p, m, className }: { p: Prepared; m: Daily | null; className?: string }) {
+function DaySection({ p, m, className, bare }: { p: Prepared; m: Daily | null; className?: string; bare?: boolean }) {
   const { dayRange: range, clock, exercises: exs } = p;
   useEffect(() => () => exFocus.set(null), []);
   const exAt = (t: number | null) => (t == null ? undefined : exs.find((e) => e.start <= t && t < e.end));
@@ -512,58 +519,64 @@ function DaySection({ p, m, className }: { p: Prepared; m: Daily | null; classNa
   const stepsY = niceTicks(0, Math.max(...within(p.steps.t, p.steps.v, range), 500), 1);
   const total = p.steps.v.reduce((a, b) => a + b, 0);
 
+  // The charts alone, for the docs' examples (bare).
+  const charts = (
+    <div className="space-y-4">
+      <Track
+        title="Heart rate" help={<Help topic="dayHr" />} height={170 + LANE_H} padTop={LANE_H + 4} {...hrY} domain={range}
+        draw={(s) => (
+          <>
+            {exBands(s, exs, true)}
+            <path d={bandPath(s, p.hr.t, p.hr.lo, p.hr.hi, 5 * MIN)} fill="var(--band)" opacity={0.6} />
+            <path d={linePath(s, p.hr.t, p.hr.avg, 5 * MIN)} fill="none" stroke="var(--s1)" strokeWidth={1.25} strokeLinejoin="round" />
+          </>
+        )}
+        overlay={(s, t) => <ExHighlight s={s} at={exAt(t)} lane />}
+        marks={(t) => {
+          const i = nearest(p.hr.t, t, 2 * MIN);
+          return [{ v: i < 0 ? null : p.hr.avg[i], color: 'var(--s1)' }];
+        }}
+        readout={(t) => {
+          const i = t == null ? -1 : nearest(p.hr.t, t, 2 * MIN);
+          if (i < 0) return <><b>{num(m?.hr_avg)}</b> bpm avg <Muted>· {num(m?.hr_min)}–{num(m?.hr_max)}</Muted></>;
+          const e = exAt(t);
+          return (
+            <>
+              {e && <Muted>{e.label} {clock(e.start)}–{clock(e.end)} · </Muted>}
+              <b>{num(p.hr.avg[i])}</b> bpm <Muted>· {num(p.hr.lo[i])}–{num(p.hr.hi[i])}</Muted>
+            </>
+          );
+        }}
+      />
+      <Track
+        title="Steps per 15 min" help={<Help topic="steps" />} height={64} {...stepsY} tickFmt={(v) => (v >= 1000 ? `${num(v / 1000, v % 1000 ? 1 : 0)}k` : num(v))} domain={range}
+        draw={(s) => (
+          <>
+            {exBands(s, exs, false)}
+            <path d={barsPath(s, stepMids, p.steps.v, Math.max(1, (s.x(15 * MIN) - s.x(0)) * 0.7), 0, 1.5)} fill="var(--s3)" />
+          </>
+        )}
+        overlay={(s, t) => <ExHighlight s={s} at={exAt(t)} lane={false} />}
+        points={stepMids}
+        marks={(t) => {
+          const i = stepAt(t);
+          return [{ v: i < 0 ? null : p.steps.v[i], color: 'var(--s3)', t: stepMids[i] }];
+        }}
+        readout={(t) => {
+          const i = t == null ? -1 : stepAt(t);
+          if (i < 0) return <><b>{num(m?.steps ?? total)}</b> steps</>;
+          return <><b>{num(p.steps.v[i])}</b> <Muted>{clock(p.steps.t[i])}–{clock(p.steps.t[i] + 15 * MIN)}</Muted></>;
+        }}
+      />
+      <TimeAxis domain={range} />
+    </div>
+  );
+  if (bare) return charts;
+
   return (
     <Section title="Day" note={`${clock(range[0])} – midnight`} className={className}>
       <div className="grid grid-cols-[minmax(0,1fr)] gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="space-y-4">
-          <Track
-            title="Heart rate" help={<Help topic="dayHr" />} height={170 + LANE_H} padTop={LANE_H + 4} {...hrY} domain={range}
-            draw={(s) => (
-              <>
-                {exBands(s, exs, true)}
-                <path d={bandPath(s, p.hr.t, p.hr.lo, p.hr.hi, 5 * MIN)} fill="var(--band)" opacity={0.6} />
-                <path d={linePath(s, p.hr.t, p.hr.avg, 5 * MIN)} fill="none" stroke="var(--s1)" strokeWidth={1.25} strokeLinejoin="round" />
-              </>
-            )}
-            overlay={(s, t) => <ExHighlight s={s} at={exAt(t)} lane />}
-            marks={(t) => {
-              const i = nearest(p.hr.t, t, 2 * MIN);
-              return [{ v: i < 0 ? null : p.hr.avg[i], color: 'var(--s1)' }];
-            }}
-            readout={(t) => {
-              const i = t == null ? -1 : nearest(p.hr.t, t, 2 * MIN);
-              if (i < 0) return <><b>{num(m?.hr_avg)}</b> bpm avg <Muted>· {num(m?.hr_min)}–{num(m?.hr_max)}</Muted></>;
-              const e = exAt(t);
-              return (
-                <>
-                  {e && <Muted>{e.label} {clock(e.start)}–{clock(e.end)} · </Muted>}
-                  <b>{num(p.hr.avg[i])}</b> bpm <Muted>· {num(p.hr.lo[i])}–{num(p.hr.hi[i])}</Muted>
-                </>
-              );
-            }}
-          />
-          <Track
-            title="Steps per 15 min" help={<Help topic="steps" />} height={64} {...stepsY} tickFmt={(v) => (v >= 1000 ? `${num(v / 1000, v % 1000 ? 1 : 0)}k` : num(v))} domain={range}
-            draw={(s) => (
-              <>
-                {exBands(s, exs, false)}
-                <path d={barsPath(s, stepMids, p.steps.v, Math.max(1, (s.x(15 * MIN) - s.x(0)) * 0.7), 0, 1.5)} fill="var(--s3)" />
-              </>
-            )}
-            overlay={(s, t) => <ExHighlight s={s} at={exAt(t)} lane={false} />}
-            points={stepMids}
-            marks={(t) => {
-              const i = stepAt(t);
-              return [{ v: i < 0 ? null : p.steps.v[i], color: 'var(--s3)', t: stepMids[i] }];
-            }}
-            readout={(t) => {
-              const i = t == null ? -1 : stepAt(t);
-              if (i < 0) return <><b>{num(m?.steps ?? total)}</b> steps</>;
-              return <><b>{num(p.steps.v[i])}</b> <Muted>{clock(p.steps.t[i])}–{clock(p.steps.t[i] + 15 * MIN)}</Muted></>;
-            }}
-          />
-          <TimeAxis domain={range} />
-        </div>
+        {charts}
         <div className="grid items-start gap-x-8 md:grid-cols-2 lg:block">
           <div>
           <div className="mb-1 text-xs text-muted">Heart rate, whole day</div>
@@ -605,5 +618,19 @@ function DaySkeleton() {
       <Skeleton className="h-[72px] rounded-xl" />
       <Skeleton className="h-[380px] rounded-xl" />
     </div>
+  );
+}
+
+/**
+ * The docs' live example: one demo day's night or day charts, without the
+ * side panels. The last Saturday of the demo, which has a run, a ride and a walk.
+ */
+export function DayExample({ part }: { part: 'night' | 'day' }) {
+  const day = useMemo(() => demoDay(demoLastDay(6)), []);
+  const p = useMemo(() => prepare(day), [day]);
+  return (
+    <SyncGroup domain={[Date.parse(day.range[0]), Date.parse(day.range[1])]} mode="time" tz={day.timeZone}>
+      {part === 'night' ? <NightSection p={p} m={day.metrics} bare /> : <DaySection p={p} m={day.metrics} bare />}
+    </SyncGroup>
   );
 }

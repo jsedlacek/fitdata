@@ -1,5 +1,6 @@
 // One page per metric: what it is, how it is measured, how to read it, what moves it.
-import { A, Callout, Cards, Facts, H2, H3, Swatch, TypicalRange } from '../ui';
+import { DayFigure, STAGE_LEGEND, TrendFigure } from '../figures';
+import { A, Callout, Cards, Facts, H2, H3, Mark, Swatch, TypicalRange } from '../ui';
 
 export function Metrics() {
   return (
@@ -54,6 +55,13 @@ export function Sleep() {
           ['Shown', 'Day page: Night section and key numbers; Trends: Sleep stages, Bedtime – wake'],
           ['Unit', 'hours and minutes'],
           ['Source', 'Sleep sessions and stages detected by Fitbit from movement and heart rate'],
+        ]}
+      />
+      <TrendFigure
+        rows={['stages', 'window']}
+        legend={[
+          ...STAGE_LEGEND,
+          [<Mark kind="block" color="color-mix(in srgb, var(--s7) 55%, transparent)" />, 'Bedtime – wake', 'From falling asleep (top) to waking up (bottom); earlier is higher.'],
         ]}
       />
       <H2 id="duration">Sleep duration (Asleep)</H2>
@@ -187,6 +195,7 @@ export function RestingHeartRate() {
         color="var(--s5)"
         marks={[{ at: 50, label: 'endurance athletes' }]}
       />
+      <TrendFigure rows={['rhr']} color="var(--s5)" />
       <H2 id="reading">How to read it</H2>
       <p>
         For most adults, a resting heart rate between 60 and 100 bpm is normal; well-trained people often have 40–60. More useful than the number
@@ -232,6 +241,7 @@ export function Hrv() {
           ['Better', 'higher, compared with your own usual value'],
         ]}
       />
+      <TrendFigure rows={['hrv']} color="var(--s7)" />
       <H2 id="what-it-is">What it is</H2>
       <p>
         Your heart doesn't beat like a metronome. Even at 60 bpm, the gaps between beats vary, say 980 ms, then 1,030 ms, then 995 ms. These changes
@@ -282,6 +292,7 @@ export function Spo2() {
         ]}
       />
       <TypicalRange min={85} max={100} band={[95, 100]} unit="%" label="Normal blood oxygen saturation at sea level" color="var(--s1)" marks={[{ at: 90, label: 'low' }]} />
+      <TrendFigure rows={['spo2']} color="var(--s1)" />
       <H2 id="reading">How to read it</H2>
       <p>
         In healthy people the nightly average is usually between 95 and 98 %, and it barely changes from night to night. Short dips during the night are
@@ -319,6 +330,7 @@ export function BreathingRate() {
         ]}
       />
       <TypicalRange min={8} max={24} band={[12, 20]} unit="/min" label="Breathing rate of adults at rest" color="var(--s3)" />
+      <TrendFigure rows={['breath']} color="var(--s3)" />
       <H2 id="reading">How to read it</H2>
       <p>
         Breathing at rest is usually between 12 and 20 breaths a minute, often at the lower end during sleep. Your own value is very stable from night
@@ -347,6 +359,14 @@ export function SkinTemperature() {
           ['Unit', '°C or °F (Settings → Units)'],
           ['Source', 'Wrist sensor, nightly value calculated by Google'],
           ['Better', 'no single direction; close to your average is usual'],
+        ]}
+      />
+      <TrendFigure
+        rows={['temp']}
+        legend={[
+          [<Mark kind="bars" color="var(--s2)" />, 'Warmer', 'A night warmer than your average, by how much.'],
+          [<Mark kind="bars" color="var(--s1)" />, 'Cooler', 'A night cooler than your average.'],
+          [<Mark kind="cursor" color="var(--s2)" />, 'Cursor', 'The night under the pointer, with its change on the left.'],
         ]}
       />
       <H2 id="absolute">The night's value</H2>
@@ -394,6 +414,7 @@ export function HeartRate() {
           ['Source', 'Optical sensor of the device, readings every few seconds'],
         ]}
       />
+      <DayFigure part="day" />
       <H2 id="day">During the day</H2>
       <p>
         The heart rate chart in the Day section shows, for each minute, the <strong>average</strong> as a line and the <strong>lowest and highest</strong>{' '}
@@ -445,6 +466,14 @@ export function Steps() {
           ['Better', 'more, up to a point'],
         ]}
       />
+      <TrendFigure
+        rows={['steps']}
+        legend={[
+          [<Mark kind="bars" color="var(--s3)" />, 'Steps', 'One bar per day.'],
+          [<Mark kind="dash" />, 'Goal', '10,000 steps a day.'],
+          [<Mark kind="cursor" color="var(--s3)" />, 'Cursor', 'The day under the pointer, with its value on the left.'],
+        ]}
+      />
       <H2 id="per-15-min">Steps per 15 minutes</H2>
       <p>
         On the Day page, each bar is the number of steps in a quarter of an hour. It shows when in the day you moved and how long you sat still. A
@@ -481,6 +510,14 @@ export function ZoneMinutes() {
           ['Unit', 'minutes'],
           ['Source', 'Calculated by Fitbit from your heart rate zones; Fitdata sums them per day'],
           ['Better', 'more, toward 150 a week'],
+        ]}
+      />
+      <TrendFigure
+        rows={['azm']}
+        legend={[
+          [<Mark kind="bars" color="var(--s2)" />, 'Zone minutes', 'One bar per day.'],
+          [<Mark kind="dash" />, 'Goal', '22 a day, which adds up to the 150 a week recommended.'],
+          [<Mark kind="cursor" color="var(--s2)" />, 'Cursor', 'The day under the pointer, with its value on the left.'],
         ]}
       />
       <H2 id="how-counted">How they are counted</H2>
@@ -540,6 +577,13 @@ export function ActiveCalories() {
           ['Source', 'Estimated by Fitbit from heart rate, movement and your profile (age, sex, height, weight); Fitdata sums them per day'],
         ]}
       />
+      <TrendFigure
+        rows={['kcal']}
+        legend={[
+          [<Mark kind="bars" color="var(--s4)" />, 'Active kcal', 'One bar per day.'],
+          [<Mark kind="cursor" color="var(--s4)" />, 'Cursor', 'The day under the pointer, with its value on the left.'],
+        ]}
+      />
       <H2 id="reading">How to read it</H2>
       <p>
         Your body burns energy all the time just to keep running: the basal metabolic rate, typically 1,300–1,900 kcal a day for adults. Active
@@ -570,6 +614,7 @@ export function Exercises() {
           ['Source', 'Exercise sessions from Fitbit, with Fitbit’s summary of each'],
         ]}
       />
+      <DayFigure part="day" />
       <H2 id="in-the-charts">In the charts</H2>
       <p>
         Each exercise appears as a round icon above the heart rate chart, and as a faint shaded band over its time in the heart rate and steps charts.
