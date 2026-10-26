@@ -148,9 +148,10 @@ function metricTrack(m: Metric, days: Row[], idx: Map<number, number>, avgLabel:
   const draw = (s: Scale) =>
     m.kind === 'line' ? (
       <>
-        <path d={linePath(s, ts, vs, DAY * 1.5)} fill="none" stroke={m.color} strokeOpacity={showAvg ? 0.45 : 1} strokeWidth={showAvg ? 1 : 1.5} />
-        {days.length <= 45 && ts.map((t, i) => (vs[i] == null ? null : <circle key={t} cx={s.x(t)} cy={s.y(vs[i]!)} r={2} fill={m.color} />))}
-        {showAvg && <path d={linePath(s, ts, avg7)} fill="none" stroke={m.color} strokeWidth={2} strokeLinejoin="round" />}
+        {/* The measurements lead; their 7-day average is a soft band behind them that shows the trend. */}
+        {showAvg && <path d={linePath(s, ts, avg7)} fill="none" stroke={m.color} strokeOpacity={0.2} strokeWidth={7} strokeLinecap="round" strokeLinejoin="round" />}
+        <path d={linePath(s, ts, vs, DAY * 1.5)} fill="none" stroke={m.color} strokeWidth={1.5} strokeLinejoin="round" />
+        {days.length <= 45 && ts.map((t, i) => (vs[i] == null ? null : <circle key={t} cx={s.x(t)} cy={s.y(vs[i]!)} r={2.25} fill={m.color} />))}
       </>
     ) : m.kind === 'dev' ? (
       <>
@@ -172,7 +173,7 @@ function metricTrack(m: Metric, days: Row[], idx: Map<number, number>, avgLabel:
     tickFmt: m.kind === 'bar' ? k : (v: number) => num(v, ticks.some((x) => x % 1) ? 1 : 0),
     marks: (t: number) => {
       const i = at(t);
-      return i == null ? [] : [{ v: m.kind === 'line' ? (avg7[i] ?? vs[i]) : vs[i], color: m.color }];
+      return i == null ? [] : [{ v: vs[i], color: m.color }];
     },
     readout: (t: number | null) => {
       const i = at(t);
@@ -191,7 +192,7 @@ function metricTrack(m: Metric, days: Row[], idx: Map<number, number>, avgLabel:
       return (
         <>
           <b>{fmt(vs[i])}</b>{m.kind === 'dev' ? '' : ' '}{m.unit}
-          {m.kind === 'line' && avg7[i] != null && <Muted> · 7-day {fmt(avg7[i])}</Muted>}
+          {m.kind === 'line' && avg7[i] != null && <Muted> · 7-day avg {fmt(avg7[i])}</Muted>}
         </>
       );
     },
@@ -350,7 +351,7 @@ function Rows({ days, history, label }: { days: Row[]; history: Row[]; label: st
           title="Night"
           note={
             <span className="inline-flex items-center gap-1">
-              Each night is dated by the morning it ended.{days.length >= AVG_FROM && ' Thin line: daily values, thick line: 7-day average.'}
+              Each night is dated by the morning it ended.{days.length >= AVG_FROM && ' The soft band behind each line is the 7-day average: the trend without the day-to-day ups and downs.'}
               {days.length >= AVG_FROM && <Help topic="trendLines" />}
             </span>
           }

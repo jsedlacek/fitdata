@@ -90,7 +90,7 @@ export const HELP = {
   },
   trendLines: {
     title: 'Reading the lines',
-    text: 'Thin line: daily values; thick line: the 7-day average. The scale fits the period and does not start at zero, so small changes look big.',
+    text: 'The line and its dots are each day’s value. The soft band behind it is the average of the last 7 days, so one odd night barely moves it but a change that lasts shows. The scale fits the period and does not start at zero, so small changes look big.',
     doc: 'trends#lines',
   },
 } satisfies Record<string, Topic>;

@@ -240,13 +240,13 @@ export function TrendsPage() {
       </p>
       <H2 id="lines">Lines: daily values and the 7-day average</H2>
       <p>
-        Resting heart rate, HRV, SpO₂ and breathing rate are drawn as two lines in one color: a <strong>thin, faded line</strong> with the value of each
-        day (with dots for periods up to 45 days), and a <strong>thick line</strong> with the <strong>7-day average</strong>: each day's value averaged
-        with the six days before it (at least three of them with data).
+        Resting heart rate, HRV, SpO₂ and breathing rate are drawn as a <strong>line</strong> with the value of each day (with dots for periods up to 45
+        days). From 30 days up a <strong>soft, wide band</strong> of the same color runs behind it: the <strong>7-day average</strong>, each day's value
+        averaged with the six days before it (at least three of them with data).
       </p>
       <p>
-        Single days jump around for many reasons; the thick line shows the direction. A trend worth noticing is one the thick line follows for a week
-        or more.
+        Single days jump around for many reasons; the band shows the direction. One odd night barely moves it, and a trend worth noticing is one the
+        band follows for a week or more.
       </p>
       <Callout kind="warn" title="The scale is zoomed in">
         <p>

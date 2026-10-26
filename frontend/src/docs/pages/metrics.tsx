@@ -258,7 +258,7 @@ export function Hrv() {
           <strong>HRV rising over weeks</strong> usually comes with better fitness, sleep and lower stress.
         </li>
         <li>
-          <strong>It is noisy.</strong> Night-to-night changes of 10–20 % are normal. Follow the thick 7-day average line on the Trends page rather than
+          <strong>It is noisy.</strong> Night-to-night changes of 10–20 % are normal. Follow the 7-day average, the soft band on the Trends page, rather than
           single nights.
         </li>
       </ul>
