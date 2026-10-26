@@ -1,7 +1,7 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, CheckCircle2, RefreshCw, Settings, TriangleAlert } from 'lucide-react';
+import { BookOpen, Bot, CheckCircle2, RefreshCw, Settings, TriangleAlert } from 'lucide-react';
 import { overviewQuery, saveSettings, startSync, syncQuery, type Me, type Overview, type SyncRun } from '@/lib/api';
 import { detectSettings, setPrefs } from '@/lib/prefs';
 import { ago } from '@/lib/format';
@@ -31,6 +31,11 @@ export function AppShell() {
           <div className="flex-1" />
           {data && <AskAi />}
           {data?.user.connected !== false && <SyncStatus run={data?.lastSync ?? null} />}
+          <Button asChild variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink">
+            <a href="/docs" target="_blank" rel="noopener" aria-label="Docs: what the metrics and charts mean" title="Docs: what the metrics and charts mean">
+              <BookOpen />
+            </a>
+          </Button>
           {data && (
             <Button asChild variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink">
               <Link to="/settings" aria-label="Settings" title="Settings" activeProps={{ className: 'bg-shade !text-ink' }}>
@@ -47,6 +52,7 @@ export function AppShell() {
       {data && (
         <footer className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 pb-8 text-[13px] text-muted">
           <span className="flex gap-4 sm:ml-auto">
+            <a href="/docs" className="hover:text-ink-2">Docs</a>
             <a href="/privacy" className="hover:text-ink-2">Privacy</a>
             <a href="/terms" className="hover:text-ink-2">Terms</a>
             <a href="https://github.com/jsedlacek/fitdata" className="hover:text-ink-2">GitHub</a>

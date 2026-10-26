@@ -8,6 +8,7 @@ import { duration, hm, num, temperature } from '@/lib/format';
 import { before, mean, type MetricKey } from '@/lib/stats';
 import { createStore, useStore } from '@/lib/store';
 import { ExIcon, exerciseLabel } from '@/components/Activity';
+import { Help } from '@/components/Help';
 import { DateNav } from '@/components/DateNav';
 import { FirstSync } from '@/components/FirstSync';
 import { SyncGroup, TimeAxis, Track, bandPath, barsPath, linePath, nearest, niceTicks, useCursor, type Range, type Scale } from '@/components/chart/kit';
@@ -15,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { InlineBar, Section } from '@/components/ui/section';
 import { Skeleton } from '@/components/ui/skeleton';
+import type { HelpKey } from '@/lib/help';
 import { cn } from '@/lib/utils';
 
 /** Days that have any measurement (the daily table also holds empty rows). */
@@ -107,25 +109,25 @@ const Muted = ({ children }: { children: ReactNode }) => <span className="text-m
 // ── KPIs, grouped like the sections below ──
 
 /** `better`: which direction of change is good (1 = up, -1 = down); unset for neutral metrics. */
-type Kpi = { key: MetricKey; label: string; unit?: string; digits?: number; time?: boolean; better?: 1 | -1 };
+type Kpi = { key: MetricKey; label: string; help: HelpKey; unit?: string; digits?: number; time?: boolean; better?: 1 | -1 };
 
 const GROUPS: { title: string; items: Kpi[] }[] = [
   {
     title: 'Night',
     items: [
-      { key: 'sleep_minutes', label: 'Asleep', time: true, better: 1 },
-      { key: 'resting_hr', label: 'Resting HR', unit: 'bpm', better: -1 },
-      { key: 'hrv_ms', label: 'HRV', unit: 'ms', digits: 1, better: 1 },
-      { key: 'spo2_avg', label: 'SpO₂', unit: '%', digits: 1 },
-      { key: 'respiratory_rate', label: 'Breathing', unit: '/min', digits: 1 },
+      { key: 'sleep_minutes', label: 'Asleep', help: 'sleep', time: true, better: 1 },
+      { key: 'resting_hr', label: 'Resting HR', help: 'restingHr', unit: 'bpm', better: -1 },
+      { key: 'hrv_ms', label: 'HRV', help: 'hrv', unit: 'ms', digits: 1, better: 1 },
+      { key: 'spo2_avg', label: 'SpO₂', help: 'spo2', unit: '%', digits: 1 },
+      { key: 'respiratory_rate', label: 'Breathing', help: 'breathing', unit: '/min', digits: 1 },
     ],
   },
   {
     title: 'Day',
     items: [
-      { key: 'steps', label: 'Steps', better: 1 },
-      { key: 'azm', label: 'Zone minutes', unit: 'min', better: 1 },
-      { key: 'active_kcal', label: 'Active kcal', unit: 'kcal' },
+      { key: 'steps', label: 'Steps', help: 'steps', better: 1 },
+      { key: 'azm', label: 'Zone minutes', help: 'azm', unit: 'min', better: 1 },
+      { key: 'active_kcal', label: 'Active kcal', help: 'kcal', unit: 'kcal' },
     ],
   },
 ];
@@ -143,7 +145,10 @@ function KpiStrip({ days, date }: { days: Daily[]; date: string }) {
               const fmt = (x: number) => (k.time ? hm(x) : num(x, k.digits ?? 0));
               return (
                 <div key={k.key}>
-                  <div className="text-xs text-ink-2">{k.label}</div>
+                  <div className="flex items-center gap-1 text-xs text-ink-2">
+                    {k.label}
+                    <Help topic={k.help} />
+                  </div>
                   <div className="text-[22px] font-semibold leading-tight tracking-tight tabular-nums">
                     {v == null ? '–' : fmt(v)}
                     {v != null && (k.time || k.unit) && <span className="ml-0.5 text-xs font-normal text-ink-2">{k.time ? 'h' : k.unit}</span>}
@@ -155,7 +160,10 @@ function KpiStrip({ days, date }: { days: Daily[]; date: string }) {
           </div>
         </div>
       ))}
-      <p className="text-[11px] text-muted md:col-span-2">Changes against the 7-day average; green and red only where higher or lower is clearly better.</p>
+      <p className="flex items-center gap-1 text-[11px] text-muted md:col-span-2">
+        Changes against the 7-day average; green and red only where higher or lower is clearly better.
+        <Help topic="kpis" />
+      </p>
     </div>
   );
 }
@@ -253,10 +261,13 @@ function seriesTrack(ts: number[], vs: number[], color: string, gap: number, dot
   };
 }
 
-function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
+function Stat({ label, value, hint, help }: { label: string; value: ReactNode; hint?: string; help?: HelpKey }) {
   return (
     <div className="flex items-baseline justify-between gap-3 border-b py-2 text-[13px] last:border-0">
-      <span className="text-ink-2">{label}</span>
+      <span className="flex items-center gap-1 text-ink-2">
+        {label}
+        {help && <Help topic={help} />}
+      </span>
       <span className="text-right tabular-nums">
         {value}
         {hint && <span className="ml-1.5 text-xs text-muted">{hint}</span>}
@@ -293,7 +304,7 @@ function NightSection({ p, m }: { p: Prepared; m: Daily | null }) {
       <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
         <div className="space-y-4">
           <Track
-            title="Sleep stages" height={lanes.length * 20 + 12} y={[0, lanes.length]} ticks={lanes.map((_, i) => i + 0.5)} tickFmt={(v) => lanes[Math.floor(v)].label}
+            title="Sleep stages" help={<Help topic="stages" />} height={lanes.length * 20 + 12} y={[0, lanes.length]} ticks={lanes.map((_, i) => i + 0.5)} tickFmt={(v) => lanes[Math.floor(v)].label}
             domain={range}
             draw={(s) => {
               const h = s.y(0) - s.y(1);
@@ -313,7 +324,7 @@ function NightSection({ p, m }: { p: Prepared; m: Daily | null }) {
             }}
           />
           <Track
-            title="Heart rate" height={70} {...hrY} domain={range}
+            title="Heart rate" help={<Help topic="nightHr" />} height={70} {...hrY} domain={range}
             marks={(t) => {
               const i = nearest(p.hr.t, t, 2 * MIN);
               return [{ v: i < 0 ? null : p.hr.avg[i], color: 'var(--s5)' }];
@@ -326,13 +337,13 @@ function NightSection({ p, m }: { p: Prepared; m: Daily | null }) {
           />
           {p.spo2.v.length > 0 && (
             <Track
-              title="SpO₂" height={50} {...spo2Y} domain={range} draw={spo2.draw} marks={spo2.marks}
+              title="SpO₂" help={<Help topic="spo2" />} height={50} {...spo2Y} domain={range} draw={spo2.draw} marks={spo2.marks}
               readout={(t) => (spo2.value(t) == null ? <><b>{num(m?.spo2_avg, 1)}</b> % avg</> : <><b>{num(spo2.value(t), 1)}</b> %</>)}
             />
           )}
           {p.hrv.v.length > 0 && (
             <Track
-              title="HRV" height={50} {...hrvY} domain={range} draw={hrv.draw} marks={hrv.marks} points={hrv.points}
+              title="HRV" help={<Help topic="hrv" />} height={50} {...hrvY} domain={range} draw={hrv.draw} marks={hrv.marks} points={hrv.points}
               readout={(t) => (hrv.value(t) == null ? <><b>{num(m?.hrv_ms, 1)}</b> ms avg</> : <><b>{num(hrv.value(t), 1)}</b> ms</>)}
             />
           )}
@@ -342,9 +353,9 @@ function NightSection({ p, m }: { p: Prepared; m: Daily | null }) {
           <Stat label="Fell asleep" value={clock(night.span.start)} />
           <Stat label="Woke up" value={clock(night.span.end)} />
           <Stat label="Asleep" value={duration(asleep)} />
-          <Stat label="Efficiency" value={`${num((asleep / inBed) * 100)} %`} hint={`of ${duration(inBed)}`} />
-          <Stat label="Heart rate asleep" value={m?.nonrem_hr != null ? `${num(m.nonrem_hr)} bpm` : '–'} />
-          <Stat label="Skin temperature" value={temperature(m?.nightly_temp_c)} />
+          <Stat label="Efficiency" help="efficiency" value={`${num((asleep / inBed) * 100)} %`} hint={`of ${duration(inBed)}`} />
+          <Stat label="Heart rate asleep" help="hrAsleep" value={m?.nonrem_hr != null ? `${num(m.nonrem_hr)} bpm` : '–'} />
+          <Stat label="Skin temperature" help="skinTemp" value={temperature(m?.nightly_temp_c)} />
           <StageTable night={night} />
         </div>
       </div>
@@ -471,7 +482,7 @@ function DaySection({ p, m, className }: { p: Prepared; m: Daily | null; classNa
       <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
         <div className="space-y-4">
           <Track
-            title="Heart rate" height={170 + LANE_H} padTop={LANE_H + 4} {...hrY} domain={range}
+            title="Heart rate" help={<Help topic="dayHr" />} height={170 + LANE_H} padTop={LANE_H + 4} {...hrY} domain={range}
             draw={(s) => (
               <>
                 {exBands(s, exs, true)}
@@ -497,7 +508,7 @@ function DaySection({ p, m, className }: { p: Prepared; m: Daily | null; classNa
             }}
           />
           <Track
-            title="Steps per 15 min" height={64} {...stepsY} tickFmt={(v) => (v >= 1000 ? `${num(v / 1000, v % 1000 ? 1 : 0)}k` : num(v))} domain={range}
+            title="Steps per 15 min" help={<Help topic="steps" />} height={64} {...stepsY} tickFmt={(v) => (v >= 1000 ? `${num(v / 1000, v % 1000 ? 1 : 0)}k` : num(v))} domain={range}
             draw={(s) => (
               <>
                 {exBands(s, exs, false)}

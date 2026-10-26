@@ -9,9 +9,11 @@ import { prefs } from '@/lib/prefs';
 import { mean as meanOf, rolling } from '@/lib/stats';
 import { useStore } from '@/lib/store';
 import { SyncGroup, TimeAxis, Track, barsPath, dateW, linePath, niceTicks, useGroup, type Range, type Scale } from '@/components/chart/kit';
+import { Help } from '@/components/Help';
 import { InlineBar, Section } from '@/components/ui/section';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
+import type { HelpKey } from '@/lib/help';
 import { cn } from '@/lib/utils';
 import { ErrorCard, withData } from './day';
 
@@ -88,18 +90,18 @@ const clock = (m: number) => {
 };
 
 type Key = 'rhr' | 'hrv' | 'spo2' | 'breath' | 'temp' | 'steps' | 'azm' | 'kcal';
-type Metric = { key: Key; title: string; unit: string; digits?: number; kind: 'line' | 'bar' | 'dev'; color: string; goal?: number; height?: number };
+type Metric = { key: Key; title: string; help: HelpKey; unit: string; digits?: number; kind: 'line' | 'bar' | 'dev'; color: string; goal?: number; height?: number };
 
 const M: Record<Key, Metric> = {
-  rhr: { key: 'rhr', title: 'Resting heart rate', unit: 'bpm', kind: 'line', color: 'var(--s5)' },
-  hrv: { key: 'hrv', title: 'HRV', unit: 'ms', digits: 1, kind: 'line', color: 'var(--s7)' },
-  spo2: { key: 'spo2', title: 'SpO₂', unit: '%', digits: 1, kind: 'line', color: 'var(--s1)', height: 48 },
-  breath: { key: 'breath', title: 'Breathing rate', unit: '/min', digits: 1, kind: 'line', color: 'var(--s3)', height: 48 },
-  temp: { key: 'temp', title: 'Skin temp. change', unit: '°', digits: 1, kind: 'dev', color: 'var(--s2)', height: 48 },
-  steps: { key: 'steps', title: 'Steps', unit: '', kind: 'bar', color: 'var(--s3)', goal: 10000 },
+  rhr: { key: 'rhr', title: 'Resting heart rate', help: 'restingHr', unit: 'bpm', kind: 'line', color: 'var(--s5)' },
+  hrv: { key: 'hrv', title: 'HRV', help: 'hrv', unit: 'ms', digits: 1, kind: 'line', color: 'var(--s7)' },
+  spo2: { key: 'spo2', title: 'SpO₂', help: 'spo2', unit: '%', digits: 1, kind: 'line', color: 'var(--s1)', height: 48 },
+  breath: { key: 'breath', title: 'Breathing rate', help: 'breathing', unit: '/min', digits: 1, kind: 'line', color: 'var(--s3)', height: 48 },
+  temp: { key: 'temp', title: 'Skin temp. change', help: 'skinTempChange', unit: '°', digits: 1, kind: 'dev', color: 'var(--s2)', height: 48 },
+  steps: { key: 'steps', title: 'Steps', help: 'steps', unit: '', kind: 'bar', color: 'var(--s3)', goal: 10000 },
   // 150 Active Zone Minutes a week, the WHO's and Fitbit's default goal.
-  azm: { key: 'azm', title: 'Zone minutes', unit: 'min', kind: 'bar', color: 'var(--s2)', height: 48, goal: 22 },
-  kcal: { key: 'kcal', title: 'Active kcal', unit: 'kcal', kind: 'bar', color: 'var(--s4)', height: 48 },
+  azm: { key: 'azm', title: 'Zone minutes', help: 'azm', unit: 'min', kind: 'bar', color: 'var(--s2)', height: 48, goal: 22 },
+  kcal: { key: 'kcal', title: 'Active kcal', help: 'kcal', unit: 'kcal', kind: 'bar', color: 'var(--s4)', height: 48 },
 };
 
 const k = (v: number) => (v >= 1000 ? `${num(v / 1000, v % 1000 ? 1 : 0)}k` : num(v));
@@ -331,15 +333,24 @@ function Rows({ days, label }: { days: Row[]; label: string }) {
   const row = (key: Key) => {
     const m = M[key];
     if (days.every((d) => d[key] == null)) return null;
-    return <Track key={key} side title={m.title} height={m.height ?? 64} {...metricTrack(m, days, idx, label)} />;
+    return <Track key={key} side title={m.title} help={<Help topic={m.help} />} height={m.height ?? 64} {...metricTrack(m, days, idx, label)} />;
   };
   return (
     <SyncGroup domain={domain} mode="date">
       <div className="space-y-10">
-        <Section title="Night" note="Each night is dated by the morning it ended. Thin line: daily values, thick line: 7-day average." action={<StageLegend />}>
+        <Section
+          title="Night"
+          note={
+            <span className="inline-flex items-center gap-1">
+              Each night is dated by the morning it ended. Thin line: daily values, thick line: 7-day average.
+              <Help topic="trendLines" />
+            </span>
+          }
+          action={<StageLegend />}
+        >
           <div className="space-y-3">
-            <Track side title="Sleep stages" height={96} {...sl.stages} />
-            <Track side title="Bedtime – wake" height={64} {...sl.window} />
+            <Track side title="Sleep stages" help={<Help topic="stages" />} height={96} {...sl.stages} />
+            <Track side title="Bedtime – wake" help={<Help topic="schedule" />} height={64} {...sl.window} />
             {row('rhr')}
             {row('hrv')}
             {row('spo2')}

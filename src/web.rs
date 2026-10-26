@@ -117,6 +117,10 @@ pub async fn serve(cfg: Config) -> Result<()> {
     for (path, file) in [("/privacy", "privacy.html"), ("/terms", "terms.html")] {
         public_files = public_files.route_service(path, page(&state.static_dir, file));
     }
+    // The docs are public as well; their pages (/docs/hrv, ...) are routed in the browser.
+    for path in ["/docs", "/docs/", "/docs/{*page}"] {
+        public_files = public_files.route_service(path, page(&state.static_dir, "docs.html"));
+    }
     let home = page(&state.static_dir, "home.html");
     let dashboard = page(&state.static_dir, "index.html");
     let root = get(move |State(cfg): State<Shared>, req: Request| async move {

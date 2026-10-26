@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Download, Laptop, LifeBuoy, LogOut, Moon, Sun, Trash2 } from 'lucide-react';
+import { BookOpen, Check, Copy, Download, Laptop, LifeBuoy, LogOut, Moon, Sun, Trash2 } from 'lucide-react';
 import {
   deleteAccount,
   EXPORT_URL,
@@ -233,6 +233,11 @@ function Support({ userId }: { userId: string }) {
       <CardHeader title="Help" subtitle="Questions, problems, ideas or privacy requests." />
       <CardBody className="space-y-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <Button asChild variant="outline" size="sm">
+            <a href="/docs" target="_blank" rel="noopener">
+              <BookOpen /> Read the docs
+            </a>
+          </Button>
           <Button asChild variant="outline" size="sm">
             <a href={mailto}>
               <LifeBuoy /> Contact support
