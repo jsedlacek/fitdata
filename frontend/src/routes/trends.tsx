@@ -125,10 +125,18 @@ function useRows(days: Row[]) {
 
 const barW = (s: Scale, gap = 0.3) => Math.max(1, (s.x(DAY) - s.x(0)) * (1 - gap));
 
-function metricTrack(m: Metric, days: Row[], idx: Map<number, number>, avgLabel: string) {
+/** From this many days up a line chart gets its 7-day average; over a week it would only repeat the daily values. */
+const AVG_FROM = 30;
+
+/**
+ * `days` are the last days of `history`: the 7-day average is computed over the
+ * whole history, so it starts at the chart's left edge instead of a week in.
+ */
+function metricTrack(m: Metric, days: Row[], idx: Map<number, number>, avgLabel: string, history: Row[]) {
   const ts = days.map((d) => d.t);
   const vs = days.map((d) => d[m.key]);
-  const avg7 = rolling(vs, 7);
+  const showAvg = days.length >= AVG_FROM;
+  const avg7 = showAvg ? rolling(history.map((d) => d[m.key]), 7).slice(history.length - days.length) : vs.map(() => null);
   const present = vs.filter((v): v is number => v != null);
   const mu = mean(present) ?? 0;
   const { y, ticks } =
@@ -140,9 +148,9 @@ function metricTrack(m: Metric, days: Row[], idx: Map<number, number>, avgLabel:
   const draw = (s: Scale) =>
     m.kind === 'line' ? (
       <>
-        <path d={linePath(s, ts, vs, DAY * 1.5)} fill="none" stroke={m.color} strokeOpacity={0.45} strokeWidth={1} />
+        <path d={linePath(s, ts, vs, DAY * 1.5)} fill="none" stroke={m.color} strokeOpacity={showAvg ? 0.45 : 1} strokeWidth={showAvg ? 1 : 1.5} />
         {days.length <= 45 && ts.map((t, i) => (vs[i] == null ? null : <circle key={t} cx={s.x(t)} cy={s.y(vs[i]!)} r={2} fill={m.color} />))}
-        <path d={linePath(s, ts, avg7)} fill="none" stroke={m.color} strokeWidth={2} strokeLinejoin="round" />
+        {showAvg && <path d={linePath(s, ts, avg7)} fill="none" stroke={m.color} strokeWidth={2} strokeLinejoin="round" />}
       </>
     ) : m.kind === 'dev' ? (
       <>
@@ -319,7 +327,7 @@ export function TrendsPage({ range }: { range: Period }) {
           {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
         </div>
       ) : days.length ? (
-        <Rows key={range} days={days} label={range === 'all' ? 'all-time avg' : `${range}-day avg`} />
+        <Rows key={range} days={days} history={rows} label={range === 'all' ? 'all-time avg' : `${range}-day avg`} />
       ) : (
         <p className="py-16 text-center text-sm text-muted">No data in this period.</p>
       )}
@@ -327,13 +335,13 @@ export function TrendsPage({ range }: { range: Period }) {
   );
 }
 
-function Rows({ days, label }: { days: Row[]; label: string }) {
+function Rows({ days, history, label }: { days: Row[]; history: Row[]; label: string }) {
   const { idx, domain } = useRows(days);
   const sl = sleepTracks(days, idx, label);
   const row = (key: Key) => {
     const m = M[key];
     if (days.every((d) => d[key] == null)) return null;
-    return <Track key={key} side title={m.title} help={<Help topic={m.help} />} height={m.height ?? 64} {...metricTrack(m, days, idx, label)} />;
+    return <Track key={key} side title={m.title} help={<Help topic={m.help} />} height={m.height ?? 64} {...metricTrack(m, days, idx, label, history)} />;
   };
   return (
     <SyncGroup domain={domain} mode="date">
@@ -342,8 +350,8 @@ function Rows({ days, label }: { days: Row[]; label: string }) {
           title="Night"
           note={
             <span className="inline-flex items-center gap-1">
-              Each night is dated by the morning it ended. Thin line: daily values, thick line: 7-day average.
-              <Help topic="trendLines" />
+              Each night is dated by the morning it ended.{days.length >= AVG_FROM && ' Thin line: daily values, thick line: 7-day average.'}
+              {days.length >= AVG_FROM && <Help topic="trendLines" />}
             </span>
           }
           action={<StageLegend />}
