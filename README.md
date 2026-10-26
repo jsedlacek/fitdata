@@ -40,7 +40,7 @@ Each line holds one data point exactly as the API returned it. The list of types
 
 ## Dashboard (frontend/)
 
-React + Vite + TypeScript, Tailwind v4, shadcn/ui-style components (Radix), TanStack Router and Query, ECharts charts.
+React + Vite + TypeScript, Tailwind v4, shadcn/ui-style components (Radix), TanStack Router and Query, charts drawn as SVG by a small kit of our own (`src/components/chart/kit.tsx`).
 
 ```bash
 cd frontend && npm install

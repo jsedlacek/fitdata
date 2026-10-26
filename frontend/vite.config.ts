@@ -14,17 +14,14 @@ export default defineConfig({
     proxy: { '/api': 'http://localhost:8080', '/auth': 'http://localhost:8080' },
   },
   build: {
-    chunkSizeWarningLimit: 1200,
+    // One app chunk (React, Radix, TanStack) of about 160 kB gzipped; splitting it gains little.
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       input: {
         index: 'index.html',
         home: 'home.html',
         privacy: 'privacy.html',
         terms: 'terms.html',
-      },
-      output: {
-        // ECharts is most of the bundle and changes rarely: its own long-cached chunk.
-        manualChunks: (id) => (/node_modules\/(echarts|zrender)\//.test(id) ? 'echarts' : undefined),
       },
     },
   },

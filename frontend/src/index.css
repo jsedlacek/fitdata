@@ -6,12 +6,12 @@
 
 :root {
   color-scheme: light;
-  --page: #f9f9f7;
-  --surface: #fcfcfb;
+  --page: #ffffff;
+  --surface: #ffffff;
   --surface-2: #f3f2ee;
   --ink: #0b0b0b;
   --ink-2: #52514e;
-  --muted: #898781;
+  --muted: #6f6d68;
   --grid: #e1e0d9;
   --axis: #c3c2b7;
   --border: rgba(11, 11, 11, 0.1);
@@ -25,8 +25,16 @@
   --s7: #6250d6;
   --band: #b7d3f6;
   --shade: rgba(11, 11, 11, 0.045);
+  /* Sleep stages: one cool family, light sleep lighter than deep; awake stands out.
+     Each at least 3:1 against the page, like all colors that carry data. */
+  --stage-deep: #1d4f9e;
+  --stage-light: #4f8be0;
+  --stage-rem: var(--s7);
+  --stage-awake: #c27c00;
+  /* Exercise: icons in --s7, their time on charts as a faint wash of it. */
+  --ex-band: color-mix(in srgb, var(--s7) 7%, transparent);
   /* Status (always paired with an icon + label). */
-  --good: #0ca30c;
+  --good: #0b7f0b;
   --warning: #fab219;
   --critical: #d03b3b;
 }
@@ -52,6 +60,12 @@
     --s7: #9085e9;
     --band: #184f95;
     --shade: rgba(255, 255, 255, 0.06);
+    --stage-deep: #2d66b8;
+    --stage-light: #6aa0e8;
+    --stage-awake: #c98500;
+    --ex-band: color-mix(in srgb, var(--s7) 13%, transparent);
+    --good: #0ca30c;
+    --critical: #e5484d;
   }
 }
 
@@ -75,6 +89,12 @@
   --s7: #9085e9;
   --band: #184f95;
   --shade: rgba(255, 255, 255, 0.06);
+  --stage-deep: #2d66b8;
+  --stage-light: #6aa0e8;
+  --stage-awake: #c98500;
+  --ex-band: color-mix(in srgb, var(--s7) 13%, transparent);
+  --good: #0ca30c;
+  --critical: #e5484d;
 }
 
 @theme inline {

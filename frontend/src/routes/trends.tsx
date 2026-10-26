@@ -1,51 +1,305 @@
-import { useMemo } from 'react';
+// Trends: full-width rows with labels on the side, grouped like the day page into Night and Day.
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { overviewQuery, type Daily } from '@/lib/api';
-import { chrome, row } from '@/lib/chart';
-import { duration, hm, num, weekdayShort } from '@/lib/format';
-import { mean, rolling, type MetricKey } from '@/lib/stats';
-import { useResolvedTheme } from '@/lib/theme';
-import { EChart } from '@/components/EChart';
-import { Legend } from '@/components/DayTimeline';
-import { STAGES } from '@/components/SleepCard';
-import { Card, CardBody, CardHeader } from '@/components/ui/card';
+import { DAY, dayValue } from '@/lib/chart';
+import { hhmm, hm, num } from '@/lib/format';
+import { prefs } from '@/lib/prefs';
+import { mean as meanOf, rolling } from '@/lib/stats';
+import { useStore } from '@/lib/store';
+import { SyncGroup, TimeAxis, Track, barsPath, dateW, linePath, niceTicks, useGroup, type Range, type Scale } from '@/components/chart/kit';
+import { InlineBar, Section } from '@/components/ui/section';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 import { ErrorCard, withData } from './day';
 
-export type Range = '7' | '30' | '90' | 'all';
+export type Period = '7' | '30' | '90' | 'all';
 
-type Metric = { key: MetricKey; title: string; unit: string; digits?: number; kind: 'line' | 'bar'; color: string; max?: number };
+/** One day as the charts use it: x value, sleep as minutes from the wake day's midnight. */
+type Row = {
+  t: number;
+  date: string;
+  sleep: number | null;
+  deep: number | null;
+  light: number | null;
+  rem: number | null;
+  awake: number | null;
+  /** Minutes from midnight; bedtime is negative when before midnight. */
+  bedtime: number | null;
+  wake: number | null;
+  rhr: number | null;
+  hrv: number | null;
+  spo2: number | null;
+  breath: number | null;
+  /** Change from the mean of all nights, in the user's units. */
+  temp: number | null;
+  steps: number | null;
+  azm: number | null;
+  kcal: number | null;
+};
 
-const METRICS: Metric[] = [
-  { key: 'resting_hr', title: 'Resting heart rate', unit: 'bpm', kind: 'line', color: 's5' },
-  { key: 'hrv_ms', title: 'HRV', unit: 'ms', digits: 1, kind: 'line', color: 's1' },
-  { key: 'steps', title: 'Steps', unit: 'steps', kind: 'bar', color: 's3' },
-  { key: 'azm', title: 'Active Zone Minutes', unit: 'min', kind: 'bar', color: 's2' },
-  { key: 'spo2_avg', title: 'SpO₂ overnight', unit: '%', digits: 1, kind: 'line', color: 's1', max: 100 },
-  { key: 'respiratory_rate', title: 'Breathing rate asleep', unit: 'breaths/min', digits: 1, kind: 'line', color: 's3' },
-];
+const mean = (vs: (number | null)[]) => meanOf(vs.filter((v): v is number => v != null));
 
-export function TrendsPage({ range }: { range: Range }) {
+/** A local time from the API ("2026-10-24T23:14:00+02:00") as minutes from midnight of `date`. */
+function minutesFrom(date: string, at: string | null) {
+  if (!at) return null;
+  const m = Number(at.slice(11, 13)) * 60 + Number(at.slice(14, 16));
+  return (dayValue(at.slice(0, 10)) - dayValue(date)) / 60_000 + m;
+}
+
+function toRows(days: Daily[]): Row[] {
+  const tempMean = mean(days.map((d) => d.nightly_temp_c));
+  const f = prefs().units === 'imperial' ? 1.8 : 1;
+  return days.map((d) => ({
+    t: dayValue(d.date),
+    date: d.date,
+    sleep: d.sleep_minutes,
+    deep: d.sleep_deep_minutes,
+    light: d.sleep_light_minutes,
+    rem: d.sleep_rem_minutes,
+    awake: d.sleep_awake_minutes,
+    bedtime: minutesFrom(d.date, d.sleep_start),
+    wake: minutesFrom(d.date, d.sleep_end),
+    rhr: d.resting_hr,
+    hrv: d.hrv_ms,
+    spo2: d.spo2_avg,
+    breath: d.respiratory_rate,
+    temp: d.nightly_temp_c != null && tempMean != null ? (d.nightly_temp_c - tempMean) * f : null,
+    steps: d.steps,
+    azm: d.azm,
+    kcal: d.active_kcal,
+  }));
+}
+
+const STAGES = [
+  { key: 'awake', label: 'Awake', color: 'var(--stage-awake)' },
+  { key: 'rem', label: 'REM', color: 'var(--stage-rem)' },
+  { key: 'light', label: 'Light', color: 'var(--stage-light)' },
+  { key: 'deep', label: 'Deep', color: 'var(--stage-deep)' },
+] as const;
+
+/** Minutes from midnight as a wall-clock time, in the user's clock. */
+const clock = (m: number) => {
+  const x = ((Math.round(m) % 1440) + 1440) % 1440;
+  return hhmm(`${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`);
+};
+
+type Key = 'rhr' | 'hrv' | 'spo2' | 'breath' | 'temp' | 'steps' | 'azm' | 'kcal';
+type Metric = { key: Key; title: string; unit: string; digits?: number; kind: 'line' | 'bar' | 'dev'; color: string; goal?: number; height?: number };
+
+const M: Record<Key, Metric> = {
+  rhr: { key: 'rhr', title: 'Resting heart rate', unit: 'bpm', kind: 'line', color: 'var(--s5)' },
+  hrv: { key: 'hrv', title: 'HRV', unit: 'ms', digits: 1, kind: 'line', color: 'var(--s7)' },
+  spo2: { key: 'spo2', title: 'SpO₂', unit: '%', digits: 1, kind: 'line', color: 'var(--s1)', height: 48 },
+  breath: { key: 'breath', title: 'Breathing rate', unit: '/min', digits: 1, kind: 'line', color: 'var(--s3)', height: 48 },
+  temp: { key: 'temp', title: 'Skin temp. change', unit: '°', digits: 1, kind: 'dev', color: 'var(--s2)', height: 48 },
+  steps: { key: 'steps', title: 'Steps', unit: '', kind: 'bar', color: 'var(--s3)', goal: 10000 },
+  // 150 Active Zone Minutes a week, the WHO's and Fitbit's default goal.
+  azm: { key: 'azm', title: 'Zone minutes', unit: 'min', kind: 'bar', color: 'var(--s2)', height: 48, goal: 22 },
+  kcal: { key: 'kcal', title: 'Active kcal', unit: 'kcal', kind: 'bar', color: 'var(--s4)', height: 48 },
+};
+
+const k = (v: number) => (v >= 1000 ? `${num(v / 1000, v % 1000 ? 1 : 0)}k` : num(v));
+const Muted = ({ children }: { children: ReactNode }) => <span className="text-muted">{children}</span>;
+
+/** Data extent with a little room (at least ±3 % of the mean), ticks only inside it. */
+function tight(vs: number[], mu: number) {
+  const lo = Math.min(...vs), hi = Math.max(...vs);
+  const pad = Math.max((hi - lo) * 0.12, Math.abs(mu) * 0.03);
+  const y: Range = [lo - pad, hi + pad];
+  return { y, ticks: niceTicks(y[0], y[1], 2).ticks.filter((t) => t > y[0] && t < y[1]) };
+}
+
+function useRows(days: Row[]) {
+  return useMemo(() => {
+    const idx = new Map(days.map((d, i) => [d.t, i]));
+    const domain: Range = [days[0].t - DAY / 2, days.at(-1)!.t + DAY / 2];
+    return { idx, domain, ts: days.map((d) => d.t) };
+  }, [days]);
+}
+
+const barW = (s: Scale, gap = 0.3) => Math.max(1, (s.x(DAY) - s.x(0)) * (1 - gap));
+
+function metricTrack(m: Metric, days: Row[], idx: Map<number, number>, avgLabel: string) {
+  const ts = days.map((d) => d.t);
+  const vs = days.map((d) => d[m.key]);
+  const avg7 = rolling(vs, 7);
+  const present = vs.filter((v): v is number => v != null);
+  const mu = mean(present) ?? 0;
+  const { y, ticks } =
+    m.kind === 'line'
+      ? tight(present, mu)
+      : m.kind === 'dev'
+        ? { y: [-1.2, 1.2] as Range, ticks: [-1, 0, 1] }
+        : niceTicks(0, Math.max(...present, m.goal ?? 0), 2);
+  const draw = (s: Scale) =>
+    m.kind === 'line' ? (
+      <>
+        <path d={linePath(s, ts, vs, DAY * 1.5)} fill="none" stroke={m.color} strokeOpacity={0.45} strokeWidth={1} />
+        {days.length <= 45 && ts.map((t, i) => (vs[i] == null ? null : <circle key={t} cx={s.x(t)} cy={s.y(vs[i]!)} r={2} fill={m.color} />))}
+        <path d={linePath(s, ts, avg7)} fill="none" stroke={m.color} strokeWidth={2} strokeLinejoin="round" />
+      </>
+    ) : m.kind === 'dev' ? (
+      <>
+        <path d={barsPath(s, ts, vs.map((v) => (v != null && v > 0 ? v : null)), barW(s), 0, 1)} fill="var(--s2)" />
+        <path d={barsPath(s, ts, vs.map((v) => (v != null && v < 0 ? v : null)), barW(s), 0, 1)} fill="var(--s1)" />
+      </>
+    ) : (
+      <>
+        <path d={barsPath(s, ts, vs, barW(s), 0, days.length > 60 ? 1 : 2)} fill={m.color} />
+        {m.goal && <line x1={0} x2={s.w} y1={s.y(m.goal)} y2={s.y(m.goal)} stroke="var(--ink-2)" strokeDasharray="3 3" strokeOpacity={0.6} />}
+      </>
+    );
+  const at = (t: number | null) => (t == null ? undefined : idx.get(t));
+  const fmt = (v: number | null | undefined) => (m.kind === 'dev' && v != null ? `${v >= 0 ? '+' : '−'}${num(Math.abs(v), 1)}` : num(v, m.digits ?? 0));
+  return {
+    y,
+    ticks,
+    draw,
+    tickFmt: m.kind === 'bar' ? k : (v: number) => num(v, ticks.some((x) => x % 1) ? 1 : 0),
+    marks: (t: number) => {
+      const i = at(t);
+      return i == null ? [] : [{ v: m.kind === 'line' ? (avg7[i] ?? vs[i]) : vs[i], color: m.color }];
+    },
+    readout: (t: number | null) => {
+      const i = at(t);
+      if (i == null) {
+        // Changes average out to zero, so the latest one says more.
+        if (m.kind === 'dev') {
+          const last = days.findLastIndex((d) => d[m.key] != null);
+          return last < 0 ? <Muted>No data</Muted> : <><b>{fmt(vs[last])}</b>{m.unit} <Muted>{dateW(days[last].t)}</Muted></>;
+        }
+        return (
+          <>
+            <b>{fmt(mu)}</b> {m.unit} <Muted>{avgLabel}</Muted>
+          </>
+        );
+      }
+      return (
+        <>
+          <b>{fmt(vs[i])}</b>{m.kind === 'dev' ? '' : ' '}{m.unit}
+          {m.kind === 'line' && avg7[i] != null && <Muted> · 7-day {fmt(avg7[i])}</Muted>}
+        </>
+      );
+    },
+  };
+}
+
+function sleepTracks(days: Row[], idx: Map<number, number>, avgLabel: string) {
+  const ts = days.map((d) => d.t);
+  const at = (t: number | null) => (t == null ? undefined : idx.get(t));
+  // Cumulative bars deep → +light → +REM → +awake, the tallest painted first so the lower ones cover it.
+  const stack = (s: Scale) => {
+    const w = barW(s, days.length > 60 ? 0.2 : 0.3);
+    return STAGES.slice()
+      .reverse()
+      .map((st, si, arr) => {
+        const keys = arr.slice(0, si + 1).map((x) => x.key);
+        const top = days.map((d) => (d.sleep == null ? null : keys.reduce((a, kk) => a + (d[kk] ?? 0), 0)));
+        return <path key={st.key} d={barsPath(s, ts, top, w, 0, si === arr.length - 1 ? 2 : 0)} fill={st.color} />;
+      })
+      .reverse();
+  };
+  const window = (s: Scale) => {
+    const w = barW(s, 0.3);
+    return (
+      <>
+        {days.map((d) =>
+          d.bedtime == null ? null : (
+            <rect key={d.t} x={s.x(d.t) - w / 2} width={w} y={s.y(-d.bedtime)} height={s.y(-d.wake!) - s.y(-d.bedtime)} rx={Math.min(2, w / 2)} fill="var(--s7)" opacity={0.55} />
+          ),
+        )}
+      </>
+    );
+  };
+  const avgSleep = mean(days.map((d) => d.sleep));
+  const avgBed = mean(days.map((d) => d.bedtime));
+  const avgWake = mean(days.map((d) => d.wake));
+  // Earlier is higher; ticks every 4 hours of the clock.
+  const top = -Math.min(...days.map((d) => d.bedtime ?? Infinity), 0) + 30;
+  const bottom = -Math.max(...days.map((d) => d.wake ?? -Infinity), 420) - 30;
+  const winTicks: number[] = [];
+  for (let v = Math.floor(top / 240) * 240; v > bottom; v -= 240) if (v < top) winTicks.push(v);
+  return {
+    stages: {
+      ...niceTicksHours(Math.max(...days.map((d) => (d.sleep ?? 0) + (d.awake ?? 0)), 480)),
+      tickFmt: (v: number) => `${v / 60} h`,
+      draw: stack,
+      readout: (t: number | null) => {
+        const i = at(t);
+        if (i == null)
+          return (
+            <>
+              <b>{hm(avgSleep)}</b> h <Muted>{avgLabel}</Muted>
+            </>
+          );
+        const d = days[i];
+        if (d.sleep == null) return <Muted>No data</Muted>;
+        return (
+          <>
+            <b>{hm(d.sleep)}</b> h{' '}
+            <Muted>
+              · deep {hm(d.deep)} · REM {hm(d.rem)}
+            </Muted>
+          </>
+        );
+      },
+    },
+    window: {
+      y: [bottom, top] as Range,
+      ticks: winTicks,
+      tickFmt: (v: number) => clock(-v),
+      draw: window,
+      marks: () => [],
+      readout: (t: number | null) => {
+        const i = at(t);
+        if (i == null)
+          return (
+            <>
+              <b>{clock(avgBed ?? 0)}</b>–<b>{clock(avgWake ?? 0)}</b> <Muted>avg</Muted>
+            </>
+          );
+        const d = days[i];
+        return d.bedtime == null ? <Muted>No data</Muted> : (
+          <>
+            <b>{clock(d.bedtime)}</b>–<b>{clock(d.wake!)}</b>
+          </>
+        );
+      },
+    },
+  };
+}
+
+/** A y-range from 0 in whole hours, labelled every 2 or 4 hours. */
+function niceTicksHours(maxMin: number) {
+  const step = maxMin > 600 ? 240 : 120;
+  const top = Math.ceil(maxMin / 60) * 60;
+  const ticks: number[] = [];
+  for (let v = 0; v <= top; v += step) ticks.push(v);
+  return { y: [0, top] as Range, ticks };
+}
+
+export function TrendsPage({ range }: { range: Period }) {
   const navigate = useNavigate();
   const overview = useQuery(overviewQuery);
   const all = withData(overview.data?.days ?? []);
-  const days = range === 'all' ? all : all.slice(-Number(range));
+  const picked = range === 'all' ? all : all.slice(-Number(range));
+  // Temperature is relative to all nights, so its baseline doesn't move with the period.
+  const rows = useMemo(() => toRows(all), [overview.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const days = rows.slice(rows.length - picked.length);
 
   if (overview.isError) return <ErrorCard onRetry={() => overview.refetch()} />;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Trends</h1>
-          <p className="text-sm text-muted">
-            {days.length ? `${weekdayShort(days[0].date)} – ${weekdayShort(days.at(-1)!.date)}` : ''}
-            {days.length > 0 && days.length < 7 && ' · the rolling average shows from 7 days of data'}
-          </p>
+          <p className="text-sm text-muted">{days.length ? `${dateW(days[0].t)} – ${dateW(days.at(-1)!.t)}` : ''}</p>
         </div>
-        <Segmented<Range>
+        <Segmented<Period>
           label="Period"
           value={range}
           onChange={(r) => navigate({ to: '/trends', search: { range: r } })}
@@ -57,211 +311,131 @@ export function TrendsPage({ range }: { range: Range }) {
           ]}
         />
       </div>
-
       {overview.isPending ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-[260px] rounded-xl" />)}
+        <div className="space-y-3">
+          {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
         </div>
+      ) : days.length ? (
+        <Rows key={range} days={days} label={range === 'all' ? 'all-time avg' : `${range}-day avg`} />
       ) : (
-        <>
-          <SleepTrend days={days} />
-          <div className="grid gap-4 md:grid-cols-2">
-            {METRICS.map((m) => <TrendCard key={m.key} metric={m} days={days} />)}
-          </div>
-          <DaysTable days={days} />
-        </>
+        <p className="py-16 text-center text-sm text-muted">No data in this period.</p>
       )}
     </div>
   );
 }
 
-/** Bounds and step snapped to 1/2/5 × 10ⁿ, so the edge labels sit on grid lines (about 3 steps). */
-function niceRange(lo: number, hi: number, cap = Infinity) {
-  const raw = (hi - lo) / 3 || 1;
-  const p = 10 ** Math.floor(Math.log10(raw));
-  const interval = [1, 2, 5, 10].map((f) => f * p).find((s) => s >= raw)!;
-  return { min: Math.floor(lo / interval) * interval, max: Math.min(cap, Math.ceil(hi / interval) * interval), interval };
-}
-
-function TrendCard({ metric: m, days }: { metric: Metric; days: Daily[] }) {
-  const theme = useResolvedTheme();
-  const values = days.map((d) => d[m.key]);
-  const avg7 = rolling(values, 7);
-  const showAvg = days.length >= 7;
-  const present = values.filter((v): v is number => v != null);
-  const option = useMemo(() => {
-    const t = chrome();
-    const color = t.c[m.color as 's1'];
-    // Levels get a y-range of at least ±10 % of the mean so noise doesn't read as a trend.
-    const mu = mean(present) ?? 0;
-    const pad = Math.abs(mu) * 0.1;
-    const yRange = m.kind === 'line' && present.length
-      ? niceRange(Math.min(...present, mu - pad), Math.max(...present, mu + pad), m.max)
-      : { min: 0 };
-    return {
-      animation: false,
-      textStyle: t.textStyle,
-      grid: { left: 44, right: 12, top: 12, bottom: 26 },
-      tooltip: {
-        ...t.tooltip, trigger: 'axis', axisPointer: { type: m.kind === 'bar' ? 'shadow' : 'line', shadowStyle: { color: t.c.shade } },
-        formatter: (ps: { dataIndex: number }[]) => {
-          const i = ps[0].dataIndex;
-          let html = `<div style="font-weight:600;margin-bottom:2px">${weekdayShort(days[i].date)}</div>`;
-          html += row(color, m.title, values[i] == null ? '–' : `${num(values[i], m.digits ?? 0)} ${m.unit}`);
-          if (showAvg && avg7[i] != null) html += row(t.c.ink2, '7-day avg', `${num(avg7[i], m.digits ?? 0)} ${m.unit}`);
-          return html;
-        },
-      },
-      xAxis: {
-        type: 'category', data: days.map((d) => weekdayShort(d.date)), axisLabel: { ...t.axisLabel, hideOverlap: true },
-        axisLine: { lineStyle: { color: t.c.axis } }, axisTick: { show: false },
-      },
-      yAxis: { ...t.valueAxis, ...yRange, axisLabel: { ...t.axisLabel, formatter: (v: number) => (v >= 10000 ? `${v / 1000}k` : num(v, 'interval' in yRange && yRange.interval < 1 ? 1 : 0)) } },
-      series: [
-        m.kind === 'bar'
-          ? { type: 'bar', data: values, barMaxWidth: 26, itemStyle: { color, borderRadius: [4, 4, 0, 0] } }
-          : {
-              type: 'line', data: values, connectNulls: false, symbol: 'circle', symbolSize: days.length > 45 ? 0 : 7,
-              lineStyle: { width: showAvg ? 1 : 2, color, opacity: showAvg ? 0.5 : 1 },
-              itemStyle: { color, borderColor: t.c.surface, borderWidth: 1.5 },
-            },
-        ...(showAvg
-          ? [{ type: 'line', data: avg7, symbol: 'none', smooth: 0.3, lineStyle: { width: 2.5, color: t.c.ink2 }, z: 3 }]
-          : []),
-      ],
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, theme]);
-
-  const last = present.at(-1);
+function Rows({ days, label }: { days: Row[]; label: string }) {
+  const { idx, domain } = useRows(days);
+  const sl = sleepTracks(days, idx, label);
+  const row = (key: Key) => {
+    const m = M[key];
+    if (days.every((d) => d[key] == null)) return null;
+    return <Track key={key} side title={m.title} height={m.height ?? 64} {...metricTrack(m, days, idx, label)} />;
+  };
   return (
-    <Card>
-      <CardHeader
-        title={m.title}
-        subtitle={m.unit}
-        action={
-          <div className="text-right">
-            <div className="text-lg font-semibold tabular-nums leading-tight">{num(mean(present), m.digits ?? 0)}</div>
-            <div className="text-[11px] text-muted">Period avg{last != null ? ` · latest ${num(last, m.digits ?? 0)}` : ''}</div>
+    <SyncGroup domain={domain} mode="date">
+      <div className="space-y-10">
+        <Section title="Night" note="Each night is dated by the morning it ended. Thin line: daily values, thick line: 7-day average." action={<StageLegend />}>
+          <div className="space-y-3">
+            <Track side title="Sleep stages" height={96} {...sl.stages} />
+            <Track side title="Bedtime – wake" height={64} {...sl.window} />
+            {row('rhr')}
+            {row('hrv')}
+            {row('spo2')}
+            {row('breath')}
+            {row('temp')}
+            <TimeAxis side />
           </div>
-        }
-      />
-      <CardBody className="pt-1">
-        <EChart option={option} className="h-[200px]" label={`Chart: ${m.title} by day`} />
-        {showAvg && (
-          <div className="mt-1 flex gap-4 text-xs text-ink-2">
-            <Legend color={`var(--${m.color})`} label="Daily" />
-            <Legend color="var(--ink-2)" label="7-day avg" />
+        </Section>
+        <Section title="Day" note="Dashed lines: 10,000 steps and 22 zone minutes a day (150 a week)">
+          <div className="space-y-3">
+            {row('steps')}
+            {row('azm')}
+            {row('kcal')}
+            <TimeAxis side />
           </div>
-        )}
-      </CardBody>
-    </Card>
+        </Section>
+        <Section title="All days" note="Hovering a row moves the cursor in the charts; click a day to open it">
+          <DaysTable days={days} />
+        </Section>
+      </div>
+    </SyncGroup>
   );
 }
 
-function SleepTrend({ days }: { days: Daily[] }) {
-  const theme = useResolvedTheme();
-  const keys: Record<string, MetricKey> = { DEEP: 'sleep_deep_minutes', LIGHT: 'sleep_light_minutes', REM: 'sleep_rem_minutes', AWAKE: 'sleep_awake_minutes' };
-  const nights = days.filter((d) => d.sleep_minutes != null);
-  const option = useMemo(() => {
-    const t = chrome();
-    return {
-      animation: false,
-      textStyle: t.textStyle,
-      grid: { left: 44, right: 12, top: 12, bottom: 26 },
-      tooltip: {
-        ...t.tooltip, trigger: 'axis', axisPointer: { type: 'shadow', shadowStyle: { color: t.c.shade } },
-        formatter: (ps: { dataIndex: number }[]) => {
-          const d = nights[ps[0].dataIndex];
-          return `<div style="font-weight:600;margin-bottom:2px">${weekdayShort(d.date)} · ${duration(d.sleep_minutes)}</div>` +
-            STAGES.map((s) => row(t.c[s.color.slice(2) as 's1'], s.label, duration(d[keys[s.key]] as number | null))).join('');
-        },
-      },
-      xAxis: {
-        type: 'category', data: nights.map((d) => weekdayShort(d.date)), axisLabel: { ...t.axisLabel, hideOverlap: true },
-        axisLine: { lineStyle: { color: t.c.axis } }, axisTick: { show: false },
-      },
-      yAxis: { ...t.valueAxis, min: 0, axisLabel: { ...t.axisLabel, formatter: (v: number) => `${v / 60} h` }, interval: 120 },
-      series: STAGES.map((s, i) => ({
-        type: 'bar', stack: 'sleep', name: s.label, barMaxWidth: 34,
-        data: nights.map((d) => d[keys[s.key]] ?? 0),
-        itemStyle: {
-          color: t.c[s.color.slice(2) as 's1'], borderColor: t.c.surface, borderWidth: 1,
-          borderRadius: i === STAGES.length - 1 ? [4, 4, 0, 0] : 0,
-        },
-      })),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nights, theme]);
-  const avg = mean(nights.map((d) => d.sleep_minutes!));
+function StageLegend() {
   return (
-    <Card>
-      <CardHeader
-        title="Sleep"
-        subtitle="Sleep stages by night (dated by the day you woke up)"
-        action={
-          <div className="text-right">
-            <div className="text-lg font-semibold tabular-nums leading-tight">{avg != null ? `${hm(avg)} h` : '–'}</div>
-            <div className="text-[11px] text-muted">Period avg sleep</div>
-          </div>
-        }
-      />
-      <CardBody className="pt-1">
-        {nights.length ? (
-          <>
-            <EChart option={option} className="h-[230px]" label="Chart of sleep stages by night" />
-            <div className="mt-1 flex flex-wrap gap-4 text-xs text-ink-2">
-              {STAGES.map((s) => <Legend key={s.key} color={`var(${s.color})`} label={s.label} />)}
-            </div>
-          </>
-        ) : (
-          <p className="py-12 text-center text-sm text-muted">No sleep data in this period.</p>
-        )}
-      </CardBody>
-    </Card>
+    <div className="flex gap-3 text-xs text-ink-2">
+      {STAGES.slice().reverse().map((s) => (
+        <span key={s.key} className="inline-flex items-center gap-1.5">
+          <i className="size-2 rounded-[2px]" style={{ background: s.color }} />
+          {s.label}
+        </span>
+      ))}
+    </div>
   );
 }
 
-function DaysTable({ days }: { days: Daily[] }) {
+function DaysTable({ days }: { days: Row[] }) {
+  const [all, setAll] = useState(false);
+  const shown = [...days].reverse().slice(0, all ? undefined : 10);
+  const maxSleep = Math.max(...days.map((d) => d.sleep ?? 0));
+  const maxSteps = Math.max(...days.map((d) => d.steps ?? 0));
+  const g = useGroup();
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[13px] tabular-nums sm:min-w-[640px]" onMouseLeave={() => g.cursor.set(null)}>
+        <thead>
+          <tr className="border-b text-xs text-ink-2">
+            <th className="py-2 text-left font-medium">Day</th>
+            <th className="hidden w-[22%] py-2 pl-4 text-left font-medium sm:table-cell">Sleep</th>
+            <th className="py-2 text-right font-medium sm:hidden">Sleep</th>
+            <th className="hidden sm:table-cell" />
+            <th className="py-2 pl-2 text-right font-medium">RHR</th>
+            <th className="py-2 text-right font-medium">HRV</th>
+            <th className="hidden w-[22%] py-2 pl-6 text-left font-medium sm:table-cell">Steps</th>
+            <th className="py-2 text-right font-medium sm:hidden">Steps</th>
+            <th className="hidden sm:table-cell" />
+            <th className="py-2 text-right font-medium">AZM</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((d) => (
+            <DayRow key={d.t} d={d} maxSleep={maxSleep} maxSteps={maxSteps} />
+          ))}
+        </tbody>
+      </table>
+      {!all && days.length > 10 && (
+        <button className="mt-3 text-[13px] font-medium text-s1 hover:underline" onClick={() => setAll(true)}>
+          Show more
+        </button>
+      )}
+    </div>
+  );
+}
+
+function DayRow({ d, maxSleep, maxSteps }: { d: Row; maxSleep: number; maxSteps: number }) {
+  const g = useGroup();
   const navigate = useNavigate();
-  const cols: [string, (d: Daily) => string][] = [
-    ['Sleep', (d) => hm(d.sleep_minutes)],
-    ['Resting HR', (d) => num(d.resting_hr)],
-    ['HRV', (d) => num(d.hrv_ms, 1)],
-    ['Steps', (d) => num(d.steps)],
-    ['AZM', (d) => num(d.azm)],
-    ['Active kcal', (d) => num(d.active_kcal)],
-    ['SpO₂', (d) => num(d.spo2_avg, 1)],
-    ['Breathing', (d) => num(d.respiratory_rate, 1)],
-    ['HR min–max', (d) => (d.hr_min == null ? '–' : `${num(d.hr_min)}–${num(d.hr_max)}`)],
-  ];
+  const hot = useStore(g.cursor) === d.t;
   return (
-    <Card>
-      <CardHeader title="All days" subtitle="Click a day to open its detail" />
-      <CardBody className="overflow-x-auto px-0 pb-1">
-        <table className="w-full text-sm tabular-nums">
-          <thead>
-            <tr className="border-b text-xs text-ink-2">
-              <th className="sticky left-0 bg-surface px-5 py-2 text-left font-medium">Day</th>
-              {cols.map(([h]) => <th key={h} className="whitespace-nowrap px-3 py-2 text-right font-medium">{h}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {[...days].reverse().map((d) => (
-              <tr
-                key={d.date}
-                className="group cursor-pointer border-b last:border-0 hover:bg-surface-2"
-                onClick={() => navigate({ to: '/', search: { date: d.date } })}
-              >
-                <td className="sticky left-0 whitespace-nowrap bg-surface px-5 py-2 group-hover:bg-surface-2">
-                  <Link to="/" search={{ date: d.date }} className="font-medium hover:text-s1">{weekdayShort(d.date)}</Link>
-                </td>
-                {cols.map(([h, f]) => <td key={h} className="whitespace-nowrap px-3 py-2 text-right">{f(d)}</td>)}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </CardBody>
-    </Card>
+    <tr
+      className={cn('cursor-pointer border-b last:border-0', hot && 'bg-surface-2')}
+      onMouseEnter={() => g.cursor.set(d.t)}
+      onClick={() => navigate({ to: '/', search: { date: d.date } })}
+    >
+      <td className="whitespace-nowrap py-2">
+        <Link to="/" search={{ date: d.date }} className="font-medium hover:text-s1">
+          {dateW(d.t)}
+        </Link>
+      </td>
+      <td className="hidden py-2 pl-4 pr-3 sm:table-cell">{d.sleep != null && <InlineBar value={d.sleep} max={maxSleep} color="var(--stage-deep)" />}</td>
+      <td className="w-14 py-2 text-right">{hm(d.sleep)}</td>
+      <td className="py-2 text-right">{num(d.rhr)}</td>
+      <td className="py-2 text-right">{num(d.hrv, 1)}</td>
+      <td className="hidden py-2 pl-6 pr-3 sm:table-cell">{d.steps != null && <InlineBar value={d.steps} max={maxSteps} color="var(--s3)" />}</td>
+      <td className="w-16 py-2 text-right">{num(d.steps)}</td>
+      <td className="py-2 text-right">{num(d.azm)}</td>
+    </tr>
   );
 }

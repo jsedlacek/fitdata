@@ -2,7 +2,7 @@ import { createRootRoute, createRoute, createRouter } from '@tanstack/react-rout
 import { AppShell } from '@/components/AppShell';
 import { DayPage } from '@/routes/day';
 import { SettingsPage } from '@/routes/settings';
-import { TrendsPage, type Range } from '@/routes/trends';
+import { TrendsPage, type Period } from '@/routes/trends';
 
 const rootRoute = createRootRoute({ component: AppShell });
 
@@ -17,14 +17,14 @@ const dayRoute = createRoute({
   },
 });
 
-const RANGES: Range[] = ['7', '30', '90', 'all'];
+const RANGES: Period[] = ['7', '30', '90', 'all'];
 
 const trendsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trends',
-  validateSearch: (s: Record<string, unknown>): { range?: Range } => {
+  validateSearch: (s: Record<string, unknown>): { range?: Period } => {
     const r = String(s.range ?? '');
-    return RANGES.includes(r as Range) ? { range: r as Range } : {};
+    return RANGES.includes(r as Period) ? { range: r as Period } : {};
   },
   component: function Trends() {
     const { range } = trendsRoute.useSearch();

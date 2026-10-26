@@ -1,35 +1,21 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { Activity, BedDouble, Flame, Footprints, HeartPulse, RefreshCw, Waves, Wind, Zap } from 'lucide-react';
-import { dayQuery, overviewQuery, syncQuery, type Daily } from '@/lib/api';
+import { ArrowDownRight, ArrowUpRight, RefreshCw } from 'lucide-react';
+import { dayQuery, overviewQuery, syncQuery, type Daily, type DayDetail, type Exercise, type Stage } from '@/lib/api';
+import { MIN, wallClock } from '@/lib/chart';
 import { duration, hm, num, temperature } from '@/lib/format';
 import { before, mean, type MetricKey } from '@/lib/stats';
+import { createStore, useStore } from '@/lib/store';
+import { ExIcon, exerciseLabel } from '@/components/Activity';
 import { DateNav } from '@/components/DateNav';
-import { DayTimeline } from '@/components/DayTimeline';
-import { ExerciseList } from '@/components/ExerciseList';
 import { FirstSync } from '@/components/FirstSync';
-import { KpiCard } from '@/components/KpiCard';
-import { NightVitals } from '@/components/NightVitals';
-import { SleepCard } from '@/components/SleepCard';
+import { SyncGroup, TimeAxis, Track, bandPath, barsPath, linePath, nearest, niceTicks, useCursor, type Range, type Scale } from '@/components/chart/kit';
 import { Button } from '@/components/ui/button';
-import { Card, CardBody, CardHeader } from '@/components/ui/card';
+import { Card, CardBody } from '@/components/ui/card';
+import { InlineBar, Section } from '@/components/ui/section';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-
-/** `better`: which direction of change is good (1 = up, -1 = down); unset for neutral metrics. */
-type Kpi = { key: MetricKey; label: string; icon: typeof Activity; unit?: string; digits?: number; accent: string; time?: boolean; better?: 1 | -1 };
-
-const KPIS: Kpi[] = [
-  { key: 'sleep_minutes', label: 'Sleep', icon: BedDouble, accent: 'var(--s7)', time: true, better: 1 },
-  { key: 'resting_hr', label: 'Resting HR', icon: HeartPulse, unit: 'bpm', accent: 'var(--s5)', better: -1 },
-  { key: 'hrv_ms', label: 'HRV', icon: Activity, unit: 'ms', digits: 1, accent: 'var(--s1)', better: 1 },
-  { key: 'steps', label: 'Steps', icon: Footprints, accent: 'var(--s3)', better: 1 },
-  { key: 'azm', label: 'Active Zone Minutes', icon: Zap, unit: 'min', accent: 'var(--s2)', better: 1 },
-  { key: 'spo2_avg', label: 'SpO₂', icon: Waves, unit: '%', digits: 1, accent: 'var(--s1)' },
-  { key: 'respiratory_rate', label: 'Breathing rate', icon: Wind, unit: '/min', digits: 1, accent: 'var(--s3)' },
-  { key: 'active_kcal', label: 'Active kcal', icon: Flame, unit: 'kcal', accent: 'var(--s2)' },
-];
 
 /** Days that have any measurement (the daily table also holds empty rows). */
 export const withData = (days: Daily[]) => days.filter((d) => d.hr_avg != null || d.sleep_minutes != null || d.steps != null);
@@ -52,7 +38,7 @@ export function DayPage({ date: wanted }: { date?: string }) {
     for (const d of [prev, next]) if (d) void queryClient.prefetchQuery(dayQuery(d));
   }, [prev, next, queryClient]);
 
-  // ← / → step between days with data, unless a control (e.g. the theme toggle) uses the arrows itself.
+  // ← / → step between days with data, unless a control (e.g. a chart or the theme toggle) uses the arrows itself.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -91,91 +77,457 @@ export function DayPage({ date: wanted }: { date?: string }) {
     );
   }
 
-  const metrics = days[idx];
-
   return (
-    <div className="space-y-5">
+    <div className="space-y-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Day overview</h1>
         <DateNav date={date} available={days.map((d) => d.date)} onChange={go} />
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {KPIS.map((k) => {
-          const v = metrics[k.key];
-          const base = before(days, date, k.key, 7);
-          const avg = mean(base);
-          const diff = v != null && avg != null ? v - avg : null;
-          const fmt = (x: number) => (k.time ? duration(x) : num(x, k.digits ?? 0));
-          const delta = diff == null ? null : `${diff >= 0 ? '+' : '−'}${fmt(Math.abs(diff))}`;
-          // Changes within 5 % of the average are noise, not worth a color.
-          const tone = diff == null || avg == null || !k.better || Math.abs(diff) < Math.abs(avg) * 0.05 ? undefined : Math.sign(diff) === k.better ? 'good' : 'bad';
-          const spark = days.filter((d) => d.date <= date).slice(-14).map((d) => d[k.key]);
-          return (
-            <KpiCard
-              key={k.key}
-              icon={k.icon}
-              label={k.label}
-              value={v == null ? '–' : k.time ? hm(v) : num(v, k.digits ?? 0)}
-              unit={k.time ? 'h' : k.unit}
-              delta={delta}
-              tone={tone}
-              baselineLabel={`vs. ${base.length}-day avg`}
-              spark={spark}
-              accent={k.accent}
-            />
-          );
-        })}
-      </div>
+      <KpiStrip days={days} date={date} />
 
       {day.isError ? (
         <ErrorCard onRetry={() => day.refetch()} />
       ) : !day.data ? (
         <>
-          <Skeleton className="h-[420px] rounded-xl" />
-          <Skeleton className="h-[360px] rounded-xl" />
+          <Skeleton className="h-[380px] rounded-xl" />
+          <Skeleton className="h-[320px] rounded-xl" />
         </>
       ) : (
-        <div className={cn('space-y-5 transition-opacity', day.isPlaceholderData && 'opacity-60')} aria-busy={day.isPlaceholderData}>
-          <DayTimeline day={day.data} />
-          <div className="grid gap-5 lg:grid-cols-5">
-            <div className="lg:col-span-3">
-              <SleepCard night={day.data.sleep} timeZone={day.data.timeZone} />
-            </div>
-            <div className="space-y-5 lg:col-span-2">
-              <HeartSummary m={metrics} />
-              <ExerciseList exercises={day.data.exercises} />
-            </div>
-          </div>
-          <NightVitals day={day.data} />
+        <div className={cn('transition-opacity', day.isPlaceholderData && 'opacity-60')} aria-busy={day.isPlaceholderData}>
+          <DayCharts key={day.data.date} day={day.data} />
         </div>
       )}
     </div>
   );
 }
 
-function HeartSummary({ m }: { m: Daily }) {
-  const items = [
-    ['Lowest', m.hr_min],
-    ['Average', m.hr_avg],
-    ['Highest', m.hr_max],
-    ['Asleep (non-REM)', m.nonrem_hr],
-  ] as const;
+const Muted = ({ children }: { children: ReactNode }) => <span className="text-muted">{children}</span>;
+
+// ── KPIs, grouped like the sections below ──
+
+/** `better`: which direction of change is good (1 = up, -1 = down); unset for neutral metrics. */
+type Kpi = { key: MetricKey; label: string; unit?: string; digits?: number; time?: boolean; better?: 1 | -1 };
+
+const GROUPS: { title: string; items: Kpi[] }[] = [
+  {
+    title: 'Night',
+    items: [
+      { key: 'sleep_minutes', label: 'Asleep', time: true, better: 1 },
+      { key: 'resting_hr', label: 'Resting HR', unit: 'bpm', better: -1 },
+      { key: 'hrv_ms', label: 'HRV', unit: 'ms', digits: 1, better: 1 },
+      { key: 'spo2_avg', label: 'SpO₂', unit: '%', digits: 1 },
+      { key: 'respiratory_rate', label: 'Breathing', unit: '/min', digits: 1 },
+    ],
+  },
+  {
+    title: 'Day',
+    items: [
+      { key: 'steps', label: 'Steps', better: 1 },
+      { key: 'azm', label: 'Zone minutes', unit: 'min', better: 1 },
+      { key: 'active_kcal', label: 'Active kcal', unit: 'kcal' },
+    ],
+  },
+];
+
+function KpiStrip({ days, date }: { days: Daily[]; date: string }) {
+  const today = days.find((d) => d.date === date)!;
   return (
-    <Card>
-      <CardHeader title="Heart rate during the day" subtitle="beats per minute" />
-      <CardBody className="grid grid-cols-2 gap-3">
-        {items.map(([label, v]) => (
-          <div key={label} className="rounded-lg bg-surface-2 px-3 py-2">
-            <div className="text-xs text-ink-2">{label}</div>
-            <div className="text-lg font-semibold tabular-nums">{num(v)}</div>
+    <div className="grid gap-x-12 gap-y-6 md:grid-cols-[auto_auto] md:justify-between">
+      {GROUPS.map((gr) => (
+        <div key={gr.title}>
+          <div className="mb-2 border-b pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted">{gr.title}</div>
+          <div className="flex flex-wrap gap-x-7 gap-y-3">
+            {gr.items.map((k) => {
+              const v = today[k.key];
+              const fmt = (x: number) => (k.time ? hm(x) : num(x, k.digits ?? 0));
+              return (
+                <div key={k.key}>
+                  <div className="text-xs text-ink-2">{k.label}</div>
+                  <div className="text-[22px] font-semibold leading-tight tracking-tight tabular-nums">
+                    {v == null ? '–' : fmt(v)}
+                    {v != null && (k.time || k.unit) && <span className="ml-0.5 text-xs font-normal text-ink-2">{k.time ? 'h' : k.unit}</span>}
+                  </div>
+                  <Delta k={k} v={v} avg={mean(before(days, date, k.key, 7))} fmt={fmt} />
+                </div>
+              );
+            })}
           </div>
-        ))}
-        <div className="col-span-2 text-xs text-muted">
-          Exercise in total {duration(m.exercise_minutes ?? 0)} · nightly temperature {temperature(m.nightly_temp_c)}
         </div>
-      </CardBody>
-    </Card>
+      ))}
+      <p className="text-[11px] text-muted md:col-span-2">Changes against the 7-day average; green and red only where higher or lower is clearly better.</p>
+    </div>
+  );
+}
+
+function Delta({ k, v, avg, fmt }: { k: Kpi; v: number | null; avg: number | null; fmt: (x: number) => string }) {
+  if (v == null || avg == null) return <div className="h-4" />;
+  const diff = v - avg;
+  // A change that rounds to nothing reads better as "= avg" than as "+0:00" or "−0".
+  if (!/[1-9]/.test(fmt(Math.abs(diff)))) return <div className="h-4 text-[11.5px] text-muted">= avg</div>;
+  // Changes within 5 % of the average are noise, not worth a color.
+  const tone = !k.better || Math.abs(diff) < Math.abs(avg) * 0.05 ? 'text-muted' : Math.sign(diff) === k.better ? 'text-good' : 'text-critical';
+  const Arrow = diff >= 0 ? ArrowUpRight : ArrowDownRight;
+  return (
+    <div
+      className={cn('flex h-4 items-center gap-0.5 text-[11.5px] tabular-nums', tone)}
+      title={tone === 'text-good' ? 'Better than average' : tone === 'text-critical' ? 'Worse than average' : undefined}
+    >
+      <Arrow className="size-3" />
+      {diff >= 0 ? '+' : '−'}
+      {fmt(Math.abs(diff))}
+    </div>
+  );
+}
+
+// ── Charts ──
+
+/** Stages bottom to top; restless (short awakenings in light sleep, as in Google Health) gets a row when present. */
+const LANES: { key: Stage | 'RESTLESS'; label: string; color: string }[] = [
+  { key: 'DEEP', label: 'Deep', color: 'var(--stage-deep)' },
+  { key: 'LIGHT', label: 'Light', color: 'var(--stage-light)' },
+  { key: 'REM', label: 'REM', color: 'var(--stage-rem)' },
+  { key: 'RESTLESS', label: 'Restless', color: 'color-mix(in srgb, var(--stage-awake) 55%, var(--page))' },
+  { key: 'AWAKE', label: 'Awake', color: 'var(--stage-awake)' },
+];
+
+type Span = { start: number; end: number };
+type Ex = Span & { e: Exercise; label: string };
+
+/** The API's day in numbers: instants as ms, rows as columns. */
+function prepare(day: DayDetail) {
+  const P = Date.parse;
+  const night = day.sleep && {
+    ...day.sleep,
+    span: { start: P(day.sleep.start), end: P(day.sleep.end) },
+    stages: day.sleep.stages.map((s) => ({ start: P(s.start), end: P(s.end), key: s.stage as Stage | 'RESTLESS' })),
+    restless: (day.sleep.restless ?? []).map((s) => ({ start: P(s.start), end: P(s.end), key: 'RESTLESS' as const })),
+  };
+  const midnight = P(day.midnight);
+  const end = P(day.range[1]);
+  return {
+    clock: wallClock(day.timeZone),
+    hr: { t: day.heartRate.map((r) => P(r[0])), lo: day.heartRate.map((r) => r[1]), avg: day.heartRate.map((r) => r[2]), hi: day.heartRate.map((r) => r[3]) },
+    steps: { t: day.steps.map((s) => P(s[0])), v: day.steps.map((s) => s[1]) },
+    spo2: { t: day.spo2.map((s) => P(s[0])), v: day.spo2.map((s) => s[1]) },
+    hrv: { t: day.hrv.map((s) => P(s[0])), v: day.hrv.map((s) => s[1]) },
+    night,
+    nightRange: night ? ([night.span.start - 10 * MIN, night.span.end + 10 * MIN] as Range) : null,
+    // The day starts when the night ends (or at midnight without one).
+    dayRange: [night && night.span.end > midnight && night.span.end < end ? night.span.end : P(day.range[0]), end] as Range,
+    exercises: day.exercises.map((e): Ex => ({ e, label: exerciseLabel(e), start: P(e.start), end: P(e.end) })),
+  };
+}
+type Prepared = ReturnType<typeof prepare>;
+
+/** Values between `a` and `b`, for the y-range of one part of the day. */
+const within = (ts: number[], vs: (number | null)[], [a, b]: Range) => vs.filter((v, i): v is number => v != null && ts[i] >= a && ts[i] <= b);
+
+function DayCharts({ day }: { day: DayDetail }) {
+  const p = useMemo(() => prepare(day), [day]);
+  return (
+    <SyncGroup domain={[Date.parse(day.range[0]), Date.parse(day.range[1])]} mode="time" tz={day.timeZone}>
+      <NightSection p={p} m={day.metrics} />
+      <DaySection p={p} m={day.metrics} className="mt-10" />
+    </SyncGroup>
+  );
+}
+
+function seriesTrack(ts: number[], vs: number[], color: string, gap: number, dots = false) {
+  return {
+    draw: (s: Scale) =>
+      dots ? (
+        <>{ts.map((t, i) => <circle key={t} cx={s.x(t)} cy={s.y(vs[i])} r={1.6} fill={color} />)}</>
+      ) : (
+        <path d={linePath(s, ts, vs, gap)} fill="none" stroke={color} strokeWidth={1.25} strokeLinejoin="round" />
+      ),
+    marks: (t: number) => {
+      const i = nearest(ts, t, gap);
+      return [{ v: i < 0 ? null : vs[i], color }];
+    },
+    value: (t: number | null) => {
+      const i = t == null ? -1 : nearest(ts, t, gap);
+      return i < 0 ? null : vs[i];
+    },
+  };
+}
+
+function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 border-b py-2 text-[13px] last:border-0">
+      <span className="text-ink-2">{label}</span>
+      <span className="text-right tabular-nums">
+        {value}
+        {hint && <span className="ml-1.5 text-xs text-muted">{hint}</span>}
+      </span>
+    </div>
+  );
+}
+
+function NightSection({ p, m }: { p: Prepared; m: Daily | null }) {
+  const { night, nightRange: range, clock } = p;
+  if (!night || !range) {
+    return (
+      <Section title="Night">
+        <p className="py-8 text-center text-sm text-muted">No sleep recorded for the night before this day.</p>
+      </Section>
+    );
+  }
+  const lanes = LANES.filter((l) => l.key !== 'RESTLESS' || night.restless.length);
+  const lane = Object.fromEntries(lanes.map((l, i) => [l.key, i]));
+  const color = Object.fromEntries(LANES.map((l) => [l.key, l.color]));
+  const label = Object.fromEntries(LANES.map((l) => [l.key, l.label]));
+  const blocks = [...night.stages, ...night.restless];
+  const asleep = night.minutes_asleep ?? 0;
+  const inBed = (night.span.end - night.span.start) / MIN;
+  const spo2 = seriesTrack(p.spo2.t, p.spo2.v, 'var(--s1)', 5 * MIN);
+  const hrv = seriesTrack(p.hrv.t, p.hrv.v, 'var(--s7)', 10 * MIN, true);
+  const hrAsleep = within(p.hr.t, p.hr.avg, range);
+  const hrY = niceTicks(Math.min(...hrAsleep, 45), Math.max(...hrAsleep, 65), 2);
+  const spo2Y = niceTicks(Math.min(...p.spo2.v, 92), 100, 2);
+  const hrvY = niceTicks(0, Math.max(...p.hrv.v, 40), 2);
+
+  return (
+    <Section title="Night" note={`${clock(night.span.start)} – ${clock(night.span.end)}, the night that ended this morning`}>
+      <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
+        <div className="space-y-4">
+          <Track
+            title="Sleep stages" height={lanes.length * 20 + 12} y={[0, lanes.length]} ticks={lanes.map((_, i) => i + 0.5)} tickFmt={(v) => lanes[Math.floor(v)].label}
+            domain={range}
+            draw={(s) => {
+              const h = s.y(0) - s.y(1);
+              return blocks.map((b, i) => (
+                <rect key={i} x={s.x(b.start)} y={s.y(lane[b.key] + 1) + h * 0.16} width={Math.max(1, s.x(b.end) - s.x(b.start) - 0.5)} height={h * 0.68} rx={1.5} fill={color[b.key]} />
+              ));
+            }}
+            readout={(t) => {
+              const b = t == null ? undefined : (night.restless.find((r) => r.start <= t && t < r.end) ?? night.stages.find((r) => r.start <= t && t < r.end));
+              if (!b) return <><b>{duration(asleep)}</b> asleep</>;
+              return (
+                <>
+                  <i className="mr-1.5 inline-block size-2 rounded-full align-[1px]" style={{ background: color[b.key] }} />
+                  <span className="font-medium text-ink-2">{label[b.key]}</span> <Muted>{clock(b.start)}–{clock(b.end)}</Muted>
+                </>
+              );
+            }}
+          />
+          <Track
+            title="Heart rate" height={70} {...hrY} domain={range}
+            marks={(t) => {
+              const i = nearest(p.hr.t, t, 2 * MIN);
+              return [{ v: i < 0 ? null : p.hr.avg[i], color: 'var(--s5)' }];
+            }}
+            draw={(s) => <path d={linePath(s, p.hr.t, p.hr.avg, 5 * MIN)} fill="none" stroke="var(--s5)" strokeWidth={1.25} strokeLinejoin="round" />}
+            readout={(t) => {
+              const i = t == null ? -1 : nearest(p.hr.t, t, 2 * MIN);
+              return i < 0 ? <><b>{num(m?.resting_hr)}</b> bpm resting</> : <><b>{num(p.hr.avg[i])}</b> bpm</>;
+            }}
+          />
+          {p.spo2.v.length > 0 && (
+            <Track
+              title="SpO₂" height={50} {...spo2Y} domain={range} draw={spo2.draw} marks={spo2.marks}
+              readout={(t) => (spo2.value(t) == null ? <><b>{num(m?.spo2_avg, 1)}</b> % avg</> : <><b>{num(spo2.value(t), 1)}</b> %</>)}
+            />
+          )}
+          {p.hrv.v.length > 0 && (
+            <Track
+              title="HRV" height={50} {...hrvY} domain={range} draw={hrv.draw} marks={hrv.marks}
+              readout={(t) => (hrv.value(t) == null ? <><b>{num(m?.hrv_ms, 1)}</b> ms avg</> : <><b>{num(hrv.value(t), 1)}</b> ms</>)}
+            />
+          )}
+          <TimeAxis domain={range} />
+        </div>
+        <div>
+          <Stat label="Fell asleep" value={clock(night.span.start)} />
+          <Stat label="Woke up" value={clock(night.span.end)} />
+          <Stat label="Asleep" value={duration(asleep)} />
+          <Stat label="Efficiency" value={`${num((asleep / inBed) * 100)} %`} hint={`of ${duration(inBed)}`} />
+          <Stat label="Heart rate asleep" value={m?.nonrem_hr != null ? `${num(m.nonrem_hr)} bpm` : '–'} />
+          <Stat label="Skin temperature" value={temperature(m?.nightly_temp_c)} />
+          <StageTable night={night} />
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function StageTable({ night }: { night: NonNullable<Prepared['night']> }) {
+  const rows = LANES.filter((l) => l.key !== 'RESTLESS').reverse();
+  const total = rows.reduce((a, l) => a + (night.stage_minutes[l.key as Stage] ?? 0), 0) || 1;
+  const max = Math.max(...rows.map((l) => night.stage_minutes[l.key as Stage] ?? 0));
+  return (
+    <table className="mt-5 w-full text-[13px] tabular-nums">
+      <thead>
+        <tr className="border-b text-xs text-ink-2">
+          <th className="py-2 text-left font-medium">Stage</th>
+          <th className="w-[40%] px-3 py-2 text-left font-medium">Time</th>
+          <th />
+          <th className="py-2 text-right font-medium">Share</th>
+        </tr>
+      </thead>
+      <tbody>
+        {[...rows].reverse().map((l) => {
+          const v = night.stage_minutes[l.key as Stage] ?? 0;
+          return (
+            <tr key={l.key} className="border-b last:border-0">
+              <td className="py-2">{l.label}</td>
+              <td className="px-3 py-2">
+                <InlineBar value={v} max={max} color={l.color} />
+              </td>
+              <td className="whitespace-nowrap py-2 text-right">{hm(v)} h</td>
+              <td className="w-12 py-2 text-right text-ink-2">{num((v / total) * 100)} %</td>
+            </tr>
+          );
+        })}
+        {night.restless_minutes != null && night.restless.length > 0 && (
+          <tr title="Short awakenings during light sleep; counted as light sleep.">
+            <td className="py-2">Restless</td>
+            <td className="px-3 py-2" />
+            <td className="whitespace-nowrap py-2 text-right">{hm(night.restless_minutes)} h</td>
+            <td className="w-12 py-2 text-right text-ink-2">{night.restless.length}×</td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+// ── Exercise: icons in a lane above the heart rate (so nothing covers the line), a faint band below ──
+
+const LANE_H = 24;
+/** The activity hovered in the list, which lights up its band in the charts. */
+const exFocus = createStore<Ex | null>(null);
+
+/** Icon centers: the middle of each activity, pushed right where two would touch. */
+function iconXs(s: Scale, exs: Ex[]) {
+  const xs: number[] = [];
+  for (const e of exs) xs.push(Math.max((s.x(e.start) + s.x(e.end)) / 2, (xs.at(-1) ?? -Infinity) + 22));
+  return xs;
+}
+
+function exBands(s: Scale, exs: Ex[], lane: boolean) {
+  const top = lane ? LANE_H : 0;
+  return (
+    <>
+      {exs.map((e) => (
+        <rect key={e.start} x={s.x(e.start)} width={s.x(e.end) - s.x(e.start)} y={top} height={s.h - top} fill="var(--ex-band)" />
+      ))}
+      {lane && iconXs(s, exs).map((x, i) => <ExIcon key={i} e={exs[i].e} x={x - 9} y={LANE_H / 2 - 10} width={18} height={18} />)}
+    </>
+  );
+}
+
+/** The band under the cursor, or of the activity hovered in the list, darkens. */
+function ExHighlight({ s, at, lane }: { s: Scale; at: Ex | undefined; lane: boolean }) {
+  const e = useStore(exFocus) ?? at;
+  const top = lane ? LANE_H : 0;
+  return e ? <rect x={s.x(e.start)} width={s.x(e.end) - s.x(e.start)} y={top} height={s.h - top} fill="var(--ex-band)" /> : null;
+}
+
+/** An activity in the list: lit while the cursor is over it in a chart, and lights the chart when hovered. */
+function ExRow({ x, clock, exs }: { x: Ex; clock: (t: number) => string; exs: Ex[] }) {
+  const focus = useStore(exFocus);
+  const t = useCursor();
+  const lit = focus === x || (t != null && exs.find((e) => e.start <= t && t < e.end) === x);
+  const mins = x.e.active_minutes ?? (x.end - x.start) / MIN;
+  return (
+    <div
+      className="-mx-2 flex items-start gap-3 rounded-lg px-2 py-1.5 text-[13px]"
+      style={{ background: lit ? 'linear-gradient(var(--ex-band), var(--ex-band)), linear-gradient(var(--ex-band), var(--ex-band))' : undefined }}
+      onMouseEnter={() => exFocus.set(x)}
+      onMouseLeave={() => exFocus.set(null)}
+    >
+      <ExIcon e={x.e} className="mt-0.5 size-5" />
+      <div className="min-w-0 flex-1">
+        <div className="flex justify-between gap-2">
+          <span className="truncate font-medium">{x.label}</span>
+          <span className="shrink-0 tabular-nums text-ink-2">{duration(mins)}</span>
+        </div>
+        <div className="text-xs tabular-nums text-muted">
+          {clock(x.start)}–{clock(x.end)}
+          {x.e.avg_hr != null && ` · avg ${num(x.e.avg_hr)} bpm`}
+          {x.e.kcal != null && ` · ${num(x.e.kcal)} kcal`}
+          {x.e.azm ? ` · ${num(x.e.azm)} AZM` : ''}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DaySection({ p, m, className }: { p: Prepared; m: Daily | null; className?: string }) {
+  const { dayRange: range, clock, exercises: exs } = p;
+  useEffect(() => () => exFocus.set(null), []);
+  const exAt = (t: number | null) => (t == null ? undefined : exs.find((e) => e.start <= t && t < e.end));
+  const stepAt = (t: number) => p.steps.t.findIndex((b) => b <= t && t < b + 15 * MIN);
+  const hrIn = [...within(p.hr.t, p.hr.lo, range), ...within(p.hr.t, p.hr.hi, range)];
+  const hrY = niceTicks(Math.min(...hrIn, 50), Math.max(...hrIn, 100), 3);
+  const stepsY = niceTicks(0, Math.max(...within(p.steps.t, p.steps.v, range), 500), 1);
+  const total = p.steps.v.reduce((a, b) => a + b, 0);
+
+  return (
+    <Section title="Day" note={`${clock(range[0])} – midnight`} className={className}>
+      <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
+        <div className="space-y-4">
+          <Track
+            title="Heart rate" height={170 + LANE_H} padTop={LANE_H + 4} {...hrY} domain={range}
+            draw={(s) => (
+              <>
+                {exBands(s, exs, true)}
+                <path d={bandPath(s, p.hr.t, p.hr.lo, p.hr.hi, 5 * MIN)} fill="var(--band)" opacity={0.6} />
+                <path d={linePath(s, p.hr.t, p.hr.avg, 5 * MIN)} fill="none" stroke="var(--s1)" strokeWidth={1.25} strokeLinejoin="round" />
+              </>
+            )}
+            overlay={(s, t) => <ExHighlight s={s} at={exAt(t)} lane />}
+            marks={(t) => {
+              const i = nearest(p.hr.t, t, 2 * MIN);
+              return [{ v: i < 0 ? null : p.hr.avg[i], color: 'var(--s1)' }];
+            }}
+            readout={(t) => {
+              const i = t == null ? -1 : nearest(p.hr.t, t, 2 * MIN);
+              if (i < 0) return <><b>{num(m?.hr_avg)}</b> bpm avg <Muted>· {num(m?.hr_min)}–{num(m?.hr_max)}</Muted></>;
+              const e = exAt(t);
+              return (
+                <>
+                  {e && <Muted>{e.label} {clock(e.start)}–{clock(e.end)} · </Muted>}
+                  <b>{num(p.hr.avg[i])}</b> bpm <Muted>· {num(p.hr.lo[i])}–{num(p.hr.hi[i])}</Muted>
+                </>
+              );
+            }}
+          />
+          <Track
+            title="Steps per 15 min" height={64} {...stepsY} tickFmt={(v) => (v >= 1000 ? `${num(v / 1000, v % 1000 ? 1 : 0)}k` : num(v))} domain={range}
+            draw={(s) => (
+              <>
+                {exBands(s, exs, false)}
+                <path d={barsPath(s, p.steps.t.map((t) => t + 7.5 * MIN), p.steps.v, Math.max(1, (s.x(15 * MIN) - s.x(0)) * 0.7), 0, 1.5)} fill="var(--s3)" />
+              </>
+            )}
+            overlay={(s, t) => <ExHighlight s={s} at={exAt(t)} lane={false} />}
+            marks={(t) => {
+              const i = stepAt(t);
+              return [{ v: i < 0 ? null : p.steps.v[i], color: 'var(--s3)' }];
+            }}
+            readout={(t) => {
+              const i = t == null ? -1 : stepAt(t);
+              if (i < 0) return <><b>{num(m?.steps ?? total)}</b> steps</>;
+              return <><b>{num(p.steps.v[i])}</b> <Muted>{clock(p.steps.t[i])}–{clock(p.steps.t[i] + 15 * MIN)}</Muted></>;
+            }}
+          />
+          <TimeAxis domain={range} />
+        </div>
+        <div>
+          <div className="mb-1 text-xs text-muted">Heart rate, whole day</div>
+          <Stat label="Lowest" value={m?.hr_min != null ? `${num(m.hr_min)} bpm` : '–'} />
+          <Stat label="Average" value={m?.hr_avg != null ? `${num(m.hr_avg)} bpm` : '–'} />
+          <Stat label="Highest" value={m?.hr_max != null ? `${num(m.hr_max)} bpm` : '–'} />
+          {exs.length > 0 && (
+            <div className="mt-5 space-y-1">
+              {exs.map((x) => <ExRow key={x.start} x={x} clock={clock} exs={exs} />)}
+            </div>
+          )}
+        </div>
+      </div>
+    </Section>
   );
 }
 
@@ -194,15 +546,13 @@ export function ErrorCard({ onRetry }: { onRetry: () => void }) {
 
 function DaySkeleton() {
   return (
-    <div className="space-y-5">
+    <div className="space-y-10">
       <div className="flex justify-between">
         <Skeleton className="h-7 w-40" />
         <Skeleton className="h-8 w-64" />
       </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-[108px] rounded-xl" />)}
-      </div>
-      <Skeleton className="h-[420px] rounded-xl" />
+      <Skeleton className="h-[72px] rounded-xl" />
+      <Skeleton className="h-[380px] rounded-xl" />
     </div>
   );
 }
