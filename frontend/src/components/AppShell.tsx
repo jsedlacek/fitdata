@@ -18,31 +18,27 @@ export function AppShell() {
   useDetectedSettings(data?.user);
   return (
     <div className="min-h-dvh">
-      <header className="sticky top-0 z-40 border-b bg-page/85 backdrop-blur supports-[backdrop-filter]:bg-page/70">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4 sm:gap-6">
+      {/* Phones have the tab bar at the bottom instead, and the page starts with its title. */}
+      <header className="sticky top-0 z-40 hidden border-b bg-page/85 backdrop-blur supports-[backdrop-filter]:bg-page/70 sm:block">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-6">
           <Link to="/" search={{}} className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
             <img src="/favicon.svg" alt="" className="size-7" />
             <span>Fitdata</span>
           </Link>
-          {/* On phones the pages are in the tab bar at the bottom, under the thumb. */}
-          <nav className="hidden items-center gap-1 text-sm sm:flex">
+          <nav className="flex items-center gap-1 text-sm">
             <NavLink to="/">Day</NavLink>
             <NavLink to="/trends">Trends</NavLink>
           </nav>
           <div className="flex-1" />
-          {data && (
-            <div className="hidden sm:block">
-              <AskAi />
-            </div>
-          )}
+          {data && <AskAi />}
           {data?.user.connected !== false && <SyncStatus run={data?.lastSync ?? null} />}
-          <Button asChild variant="ghost" size="icon-sm" className="hidden text-ink-2 hover:text-ink sm:inline-flex">
+          <Button asChild variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink">
             <a href="/docs" target="_blank" rel="noopener" aria-label="Docs: what the metrics and charts mean" title="Docs: what the metrics and charts mean">
               <BookOpen />
             </a>
           </Button>
           {data && (
-            <Button asChild variant="ghost" size="icon-sm" className="hidden text-ink-2 hover:text-ink sm:inline-flex">
+            <Button asChild variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink">
               <Link to="/settings" aria-label="Settings" title="Settings" activeProps={{ className: 'bg-shade !text-ink' }}>
                 <Settings />
               </Link>
@@ -50,12 +46,12 @@ export function AppShell() {
           )}
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 pb-16 pt-5">
+      <main className="mx-auto max-w-6xl px-5 pb-16 pt-[max(env(safe-area-inset-top),1.5rem)] sm:px-6 sm:pt-5">
         <ReconnectBanner run={data?.lastSync ?? null} user={data?.user ?? null} />
         <Outlet />
       </main>
       {data && (
-        <footer className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 pb-28 text-[13px] text-muted sm:pb-8">
+        <footer className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-5 pb-28 text-[13px] text-muted sm:px-6 sm:pb-8">
           <span className="flex gap-4 sm:ml-auto">
             <a href="/docs" className="hover:text-ink-2">Docs</a>
             <a href="/privacy" className="hover:text-ink-2">Privacy</a>
@@ -64,16 +60,16 @@ export function AppShell() {
           </span>
         </footer>
       )}
-      {data && <TabBar />}
+      {data && <TabBar failed={!!data.lastSync && !data.lastSync.ok} />}
     </div>
   );
 }
 
 /** Phones: the pages and the assistant at the bottom of the screen, as in native apps. */
-function TabBar() {
+function TabBar({ failed }: { failed: boolean }) {
   const item = 'flex flex-col items-center gap-0.5 pt-1.5 text-[11px] text-ink-2';
   const pill = 'grid h-7 w-14 place-items-center rounded-full transition-colors [&_svg]:size-[18px]';
-  const tab = (to: '/' | '/trends' | '/settings', label: string, Icon: typeof Settings) => (
+  const tab = (to: '/' | '/trends' | '/settings', label: string, Icon: typeof Settings, dot?: boolean) => (
     <Link
       to={to}
       search={{}}
@@ -81,8 +77,9 @@ function TabBar() {
       activeOptions={{ exact: true, includeSearch: false }}
       activeProps={{ className: '!text-ink font-medium [&>span]:bg-[color-mix(in_srgb,var(--s1)_14%,transparent)] [&>span]:text-s1' }}
     >
-      <span className={pill}>
+      <span className={cn(pill, 'relative')}>
         <Icon />
+        {dot && <span className="absolute right-3 top-0.5 size-2 rounded-full bg-critical ring-2 ring-page" />}
       </span>
       {label}
     </Link>
@@ -95,7 +92,8 @@ function TabBar() {
       {tab('/', 'Day', CalendarDays)}
       {tab('/trends', 'Trends', ChartSpline)}
       <AskAi tab className={item} pillClassName={pill} />
-      {tab('/settings', 'Settings', Settings)}
+      {/* The sync control is in Settings on phones; a failed sync marks the tab. */}
+      {tab('/settings', 'Settings', Settings, failed)}
     </nav>
   );
 }
@@ -179,7 +177,7 @@ function NavLink({ to, children }: { to: '/' | '/trends'; children: React.ReactN
   );
 }
 
-function SyncStatus({ run }: { run: SyncRun | null }) {
+export function SyncStatus({ run, labelled }: { run: SyncRun | null; labelled?: boolean }) {
   const queryClient = useQueryClient();
   const sync = useQuery(syncQuery);
   const start = useMutation({
@@ -230,8 +228,8 @@ function SyncStatus({ run }: { run: SyncRun | null }) {
       {/* At rest the icon tells how the last sync went; on hover it offers a new one. */}
       <Icon className={cn(color, running && 'animate-spin', !running && 'group-hover:hidden')} />
       {!running && <RefreshCw className="hidden group-hover:block" />}
-      <span className="hidden md:inline">{label}</span>
-      {run && !running && !start.isError && <span className="hidden text-muted md:inline">{ago(run.run_at)}</span>}
+      <span className={labelled ? '' : 'hidden md:inline'}>{label}</span>
+      {run && !running && !start.isError && <span className={cn('text-muted', !labelled && 'hidden md:inline')}>{ago(run.run_at)}</span>}
     </Button>
   );
 }

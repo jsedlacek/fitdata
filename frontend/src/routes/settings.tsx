@@ -14,6 +14,7 @@ import {
   type WeekStart,
 } from '@/lib/api';
 import { browserTimeZone, timeZones } from '@/lib/prefs';
+import { SyncStatus } from '@/components/AppShell';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Segmented } from '@/components/ui/segmented';
@@ -40,6 +41,12 @@ export function SettingsPage() {
       </div>
       {user ? (
         <>
+          {user.connected && (
+            // Phones have no header, so the sync control lives here.
+            <Card className="sm:hidden">
+              <CardHeader title="Sync" subtitle="Fitdata syncs your Fitbit every hour. Tap to sync now." action={<SyncStatus run={overview.data?.lastSync ?? null} labelled />} />
+            </Card>
+          )}
           <Preferences settings={user.settings} connected={user.connected} />
           <YourData />
           <Support userId={user.id} />
