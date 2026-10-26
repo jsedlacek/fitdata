@@ -87,7 +87,7 @@ function TabBar({ failed }: { failed: boolean }) {
   return (
     <nav
       aria-label="Pages"
-      className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t bg-page/90 pb-[max(env(safe-area-inset-bottom),0.5rem)] backdrop-blur sm:hidden"
+      className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t bg-page/90 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] backdrop-blur sm:hidden"
     >
       {tab('/', 'Day', CalendarDays)}
       {tab('/trends', 'Trends', ChartSpline)}

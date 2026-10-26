@@ -57,7 +57,6 @@
         </p>
         <div class="mt-8 flex flex-wrap justify-center gap-3">
           <a href="/auth/login" class="inline-flex h-11 items-center rounded-lg bg-ink px-5 text-sm font-medium text-page hover:opacity-90">Sign in with Google</a>
-          <a href="#how" class="inline-flex h-11 items-center rounded-lg border bg-surface px-5 text-sm font-medium hover:bg-shade">How it works</a>
         </div>
         <p class="mt-3 text-[13px] text-muted">Free · read-only · open source · through the official Google Health API</p>
 
@@ -89,32 +88,6 @@
             <figcaption class="mt-2.5 text-center text-xs text-muted">In Claude, ChatGPT or any MCP assistant · demo data</figcaption>
           </figure>
         </div>
-      </section>
-
-      <section id="how" class="mx-auto max-w-6xl scroll-mt-16 px-4 pb-20">
-        <h2 class="text-center text-sm font-medium text-muted">How it works</h2>
-        <ol class="mt-6 grid gap-4 md:grid-cols-3">
-          <li class="rounded-xl border bg-surface p-5">
-            <span class="grid size-7 place-items-center rounded-full bg-ink text-[13px] font-semibold text-page">1</span>
-            <h3 class="mt-4 font-semibold">Sign in with Google</h3>
-            <p class="mt-1 text-sm text-ink-2">Allow Fitdata to read your Fitbit data. It can&apos;t change anything, and your history is ready in a few minutes.</p>
-          </li>
-          <li class="rounded-xl border bg-surface p-5">
-            <span class="grid size-7 place-items-center rounded-full bg-ink text-[13px] font-semibold text-page">2</span>
-            <h3 class="mt-4 font-semibold">Read your dashboard</h3>
-            <p class="mt-1 text-sm text-ink-2">Last night and today on one page, trends over months, and a (?) next to every number that says what it means.</p>
-          </li>
-          <li class="rounded-xl border bg-surface p-5">
-            <span class="grid size-7 place-items-center rounded-full bg-ink text-[13px] font-semibold text-page">3</span>
-            <h3 class="mt-4 font-semibold">Ask your AI</h3>
-            <p class="mt-1 text-sm text-ink-2">Add Fitdata as a connector in Claude or ChatGPT (<a href="/docs/ask-ai" class="font-medium text-ink underline underline-offset-2">two-minute setup</a>), then ask:</p>
-            <ul class="mt-3 flex flex-wrap gap-1.5">
-              <li class="rounded-full border bg-surface px-3 py-1.5 text-[13px] text-ink-2">I feel off. Am I getting sick?</li>
-              <li class="rounded-full border bg-surface px-3 py-1.5 text-[13px] text-ink-2">Do evening runs change my deep sleep?</li>
-              <li class="rounded-full border bg-surface px-3 py-1.5 text-[13px] text-ink-2">Is my resting heart rate going down?</li>
-            </ul>
-          </li>
-        </ol>
       </section>
 
       <section id="compare" class="scroll-mt-14 bg-surface-2 py-20">
@@ -179,8 +152,9 @@
               </div>
               <picture class="min-h-0 flex-1">
                 <source srcset="/src/home/phone-dark.webp" media="(prefers-color-scheme: dark)" />
-                <img src="/src/home/phone-light.webp" alt="Fitdata on a phone: tiles with last night&apos;s sleep (with its stages, 23:11 to 07:23), resting heart rate, HRV, SpO₂ and breathing, then the day&apos;s steps, zone minutes and active calories, each with its change against the week, and a tab bar for Day, Trends, Ask AI and Settings" width="1170" height="2358" class="block h-full w-full object-cover object-top" loading="lazy" />
+                <img src="/src/home/phone-light.webp" alt="Fitdata on a phone: tiles with last night&apos;s sleep (with its stages, 23:11 to 07:23), resting heart rate, HRV, SpO₂ and breathing, then the day&apos;s steps, zone minutes and active calories, each with its change against the week, and a tab bar for Day, Trends, Ask AI and Settings" width="1170" height="2271" class="block h-full w-full object-cover object-top" loading="lazy" />
               </picture>
+              <div class="flex shrink-0 justify-center pt-1.5 pb-2" aria-hidden="true"><span class="h-1 w-24 rounded-full bg-ink/80"></span></div>
             </div>
           </figure>
         </div>
