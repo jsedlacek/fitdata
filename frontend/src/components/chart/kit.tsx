@@ -254,9 +254,14 @@ export function Track({
 
   return (
     <div
-      className={cn(side && 'md:grid md:grid-cols-[var(--side)_1fr]', className)}
+      // The whole row reacts, title included, and a strip behind it (::before) reaches into the gaps to the rows
+      // around, so the margins between charts move the cursor too.
+      className={cn(
+        "relative isolate before:absolute before:inset-x-0 before:-inset-y-3 before:-z-10 before:content-['']",
+        side && 'md:grid md:grid-cols-[var(--side)_1fr]',
+        className,
+      )}
       style={{ ['--side' as string]: `${SIDE}px` }}
-      // The whole row reacts, title and gaps included, not only the plotted marks.
       onPointerMove={(e) => {
         if (dragFrom.current != null || !svgRef.current) return;
         const px = e.clientX - svgRef.current.getBoundingClientRect().left - M.l;
