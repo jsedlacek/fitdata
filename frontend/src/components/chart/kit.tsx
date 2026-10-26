@@ -224,7 +224,7 @@ export function Track({
         {title}
         {help}
       </div>
-      {readout && <Readout fn={readout} big={side} />}
+      {readout && <Readout fn={readout} big={side} d={d} />}
     </div>
   );
 
@@ -300,8 +300,10 @@ export function Track({
   );
 }
 
-function Readout({ fn, big }: { fn: (t: number | null) => ReactNode; big?: boolean }) {
-  const t = useCursor();
+/** The row's value at the cursor; a cursor outside the row's time range (e.g. in the night, on a day chart) reads as none. */
+function Readout({ fn, big, d }: { fn: (t: number | null) => ReactNode; big?: boolean; d: Range }) {
+  const c = useCursor();
+  const t = c != null && c >= d[0] && c <= d[1] ? c : null;
   return <div className={cn('truncate tabular-nums text-ink', big ? 'text-[13px] [&_b]:text-lg [&_b]:font-semibold' : 'text-[13px] leading-5')}>{fn(t)}</div>;
 }
 
