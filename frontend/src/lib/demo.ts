@@ -51,9 +51,11 @@ function plans(date: string, r: () => number): Plan[] {
   const out: Plan[] = [];
   const n = seedOf(date);
   if (n % 2 === 0 && dow !== 0) out.push({ kind: 'RUNNING', name: 'Running', start: 7 * 60 + 40 + Math.round(40 * r()), minutes: 32 + Math.round(20 * r()), hr: 150 + Math.round(8 * r()) });
-  if (dow === 6 || dow === 0) out.push({ kind: 'BIKING', name: 'Cycling', start: 10 * 60 + Math.round(60 * r()), minutes: 60 + Math.round(50 * r()), hr: 128 + Math.round(10 * r()) });
+  if (dow === 6) out.push({ kind: 'BIKING', name: 'Cycling', start: 10 * 60 + Math.round(60 * r()), minutes: 60 + Math.round(50 * r()), hr: 128 + Math.round(10 * r()) });
+  if (dow === 0) out.push({ kind: n % 3 ? 'HIKING' : 'SWIMMING_POOL', name: '', start: 10 * 60 + Math.round(60 * r()), minutes: 45 + Math.round(60 * r()), hr: 112 + Math.round(10 * r()) });
   if (r() < 0.6) out.push({ kind: 'WALKING', name: 'Walking', start: 12 * 60 + 15 + Math.round(30 * r()), minutes: 18 + Math.round(15 * r()), hr: 98 });
-  if (dow === 2 || dow === 4) out.push({ kind: 'WEIGHTS', name: 'Strength training', start: 18 * 60 + Math.round(30 * r()), minutes: 45 + Math.round(15 * r()), hr: 112 });
+  if (dow === 2) out.push({ kind: 'STRENGTH_TRAINING', name: '', start: 18 * 60 + Math.round(30 * r()), minutes: 45 + Math.round(15 * r()), hr: 112 });
+  if (dow === 4) out.push({ kind: 'YOGA', name: '', start: 19 * 60 + Math.round(30 * r()), minutes: 40 + Math.round(20 * r()), hr: 84 });
   return out.sort((a, b) => a.start - b.start);
 }
 
@@ -106,7 +108,7 @@ export function demoDay(date: string): DayDetail {
     const v = st
       ? (rough ? 62 : 52 + 2.2 * drift) + (st === 'DEEP' ? -3 : st === 'REM' ? 4 : st === 'AWAKE' ? 9 : 0) + 1.5 * g()
       : e
-        ? 72 + (e.hr - 72) * Math.min(1, (x - e.s) / (5 * MIN)) + (e.kind === 'WEIGHTS' ? 12 * Math.sin((x - e.s) / (2.3 * MIN)) : 0) + 3.5 * g()
+        ? 72 + (e.hr - 72) * Math.min(1, (x - e.s) / (5 * MIN)) + (e.kind === 'STRENGTH_TRAINING' ? 12 * Math.sin((x - e.s) / (2.3 * MIN)) : 0) + 3.5 * g()
         : x < sStart
           ? 64 + 2 * g()
           : 67 + recovery + 3 * g();

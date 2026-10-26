@@ -1,3 +1,4 @@
+import { Activity, Flower2, HandFist, HeartPulse, House, Mountain, Music, Sailboat, Snowflake, Sprout, Target, Trophy, Volleyball } from 'lucide-react';
 import type { Exercise } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -10,27 +11,124 @@ const GLYPH = {
   gym: 'M20.57 14.86 22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43 7.71 2 5.57 4.14 4.14 2.71 2.71 4.14l1.43 1.43L2 7.71l1.43 1.43L2 10.57 3.43 12 7 8.43 15.57 17 12 20.57 13.43 22l1.43-1.43L16.29 22l2.14-2.14 1.43 1.43 1.43-1.43-1.43-1.43L22 16.29z',
 };
 
-const KIND: Record<string, { label: string; glyph: keyof typeof GLYPH }> = {
-  BIKING: { label: 'Cycling', glyph: 'bike' },
-  WALKING: { label: 'Walking', glyph: 'walk' },
-  HIKING: { label: 'Hiking', glyph: 'walk' },
-  RUNNING: { label: 'Running', glyph: 'run' },
-  SWIMMING_POOL: { label: 'Swimming', glyph: 'swim' },
-  SWIMMING_OPEN_WATER: { label: 'Open water swimming', glyph: 'swim' },
+type Glyph = keyof typeof GLYPH;
+
+/** Icons for the groups the filled glyphs don't cover, from lucide (drawn as white strokes). */
+const LUCIDE = {
+  hike: Mountain,
+  cardio: HeartPulse,
+  calm: Flower2,
+  dance: Music,
+  ball: Volleyball,
+  winter: Snowflake,
+  water: Sailboat,
+  fight: HandFist,
+  aim: Target,
+  garden: Sprout,
+  home: House,
+  sport: Trophy,
+  other: Activity,
 };
+type Group = Glyph | keyof typeof LUCIDE;
 
 /**
- * The activity type in English when it is a known one; Fitbit's recorded
- * name is in the account's language. Else that name, else the raw type.
+ * Every activity type of the Google Health API (Exercise.ExerciseType), by icon group.
+ * A type missing here (a new one) gets the generic icon.
  */
-export const exerciseLabel = (e: Exercise) => KIND[e.kind]?.label ?? (e.name || e.kind.toLowerCase().replace(/_/g, ' '));
+const GROUPS: Record<Group, string> = {
+  run: 'RUNNING TRAIL_RUN INCLINE_RUN TREADMILL TRACK_AND_FIELD WATER_JOGGING',
+  walk: 'WALKING NORDIC_WALKING POWER_WALKING INCLINE_WALK TREADMILL_WALK STROLLER_WALK WALK_WITH_WEIGHTS RUCKING',
+  bike: 'BIKING OUTDOOR_BIKE MOUNTAIN_BIKE ELECTRIC_BIKE STATIONARY_BIKE SPINNING ASSAULT_BIKE HAND_CYCLING UNICYCLING',
+  swim: 'SWIMMING SWIMMING_POOL SWIMMING_OPEN_WATER SYNCHRONIZED_SWIMMING WATER_AEROBICS WATER_POLO DIVING SNORKELING SCUBA_DIVING',
+  gym: 'WEIGHTLIFTING WEIGHTS FREE_WEIGHTS WEIGHT_MACHINES STRENGTH_TRAINING FUNCTIONAL_STRENGTH_TRAINING POWERLIFTING BODY_WEIGHT CALISTHENICS CROSSFIT CORE_TRAINING RESISTANCE_BANDS TRX CIRCUIT_TRAINING BOOTCAMP',
+  hike: 'HIKING BACKPACKING ORIENTEERING SNOWSHOEING CLIMBING ROCK_CLIMBING INDOOR_CLIMBING',
+  cardio: 'HIIT TABATA_WORKOUT INTERVAL_WORKOUT CARDIO_WORKOUT AEROBIC_WORKOUT ELLIPTICAL STAIRCLIMBER STEP_TRAINING JUMPING_ROPE ROWING_MACHINE CROSS_TRAINING EXERCISE_CLASS WORKOUT OUTDOOR_WORKOUT CARDIO_SCULPT FITNESS_GAMING TRAMPOLINE PARKOUR GYMNASTICS',
+  calm: 'YOGA YOGA_BIKRAM YOGA_HATHA YOGA_POWER YOGA_VINYASA PILATES STRETCHING BARRE_CLASS TAI_CHI MEDITATE',
+  dance: 'DANCING BALLET BALLROOM_DANCE BREAKDANCING HIP_HOP JAZZ_DANCE MODERN_DANCE TANGO ZUMBA CHEERLEADING MUSICAL_PERFORMANCE',
+  ball: 'SOCCER BASKETBALL VOLLEYBALL VOLLEYBALL_BEACH WATER_VOLLEYBALL HANDBALL RUGBY FOOTBALL_AMERICAN FOOTBALL_AUSTRALIAN BASEBALL SOFTBALL CRICKET HOCKEY FIELD_HOCKEY LACROSSE POLO ULTIMATE_FRISBEE FRISBEE_PLAYING_GENERAL TENNIS SQUASH BADMINTON TABLE_TENNIS PADEL PICKELBALL RACQUETBALL RACKET_SPORTS',
+  winter: 'SKIING CROSS_COUNTRY_SKI SNOWBOARDING SNOW_SPORT SNOWMOBILING ICE_SKATING SPEED_SKATING CURLING',
+  water: 'ROWING CANOEING KAYAKING PADDLEBOARDING SAILING SURFING WINDSURFING KITESURFING WAKEBOARDING WATER_SKIING FOILING WATER_SPORT FISHING',
+  fight: 'BOXING KICKBOXING MARTIAL_ARTS KARATE JIU_JITSU MUAY_THAI TAEKWONDO WRESTLING FENCING',
+  aim: 'GOLF ARCHERY SHOOTING BILLIARDS BOWLING CROQUET HUNTING',
+  garden: 'GARDENING MOWING_LAWN WEEDING HOEING SHOVELING',
+  home: 'CLEANING HOUSEHOLD_CHORES CARPENTRY PAINTING',
+  sport: 'SPORT MULTISPORT EQUESTRIAN_SPORTS SKATEBOARDING SKATING ROLLERBLADING ROLLER_SKATING SCOOTERING ELECTRIC_SCOOTER MOTOCROSS MOTORCYCLE PARAGLIDING SKYDIVING WHEELCHAIR',
+  other: '',
+};
+const GROUP_OF = new Map(Object.entries(GROUPS).flatMap(([g, kinds]) => kinds.split(' ').filter(Boolean).map((k) => [k, g as Group])));
+
+/** English names where "MOUNTAIN_BIKE" → "Mountain bike" would read oddly. */
+const LABEL: Record<string, string> = {
+  BIKING: 'Cycling',
+  OUTDOOR_BIKE: 'Outdoor cycling',
+  MOUNTAIN_BIKE: 'Mountain biking',
+  ELECTRIC_BIKE: 'E-bike',
+  STATIONARY_BIKE: 'Stationary bike',
+  ASSAULT_BIKE: 'Air bike',
+  HAND_CYCLING: 'Hand cycling',
+  SWIMMING_POOL: 'Pool swimming',
+  SWIMMING_OPEN_WATER: 'Open water swimming',
+  TRAIL_RUN: 'Trail running',
+  INCLINE_RUN: 'Incline running',
+  INCLINE_WALK: 'Incline walking',
+  TREADMILL_WALK: 'Treadmill walking',
+  STROLLER_WALK: 'Walking with a stroller',
+  WALK_WITH_WEIGHTS: 'Weighted walking',
+  HIIT: 'HIIT',
+  TRX: 'TRX',
+  CROSSFIT: 'CrossFit',
+  TABATA_WORKOUT: 'Tabata',
+  INTERVAL_WORKOUT: 'Intervals',
+  CARDIO_WORKOUT: 'Cardio',
+  AEROBIC_WORKOUT: 'Aerobics',
+  STAIRCLIMBER: 'Stair climber',
+  BODY_WEIGHT: 'Bodyweight training',
+  WEIGHTS: 'Weights',
+  MEDITATE: 'Meditation',
+  YOGA_BIKRAM: 'Bikram yoga',
+  YOGA_HATHA: 'Hatha yoga',
+  YOGA_POWER: 'Power yoga',
+  YOGA_VINYASA: 'Vinyasa yoga',
+  BARRE_CLASS: 'Barre',
+  FOOTBALL_AMERICAN: 'American football',
+  FOOTBALL_AUSTRALIAN: 'Australian football',
+  FRISBEE_PLAYING_GENERAL: 'Frisbee',
+  ULTIMATE_FRISBEE: 'Ultimate frisbee',
+  VOLLEYBALL_BEACH: 'Beach volleyball',
+  PICKELBALL: 'Pickleball',
+  CROSS_COUNTRY_SKI: 'Cross-country skiing',
+  SNOW_SPORT: 'Snow sports',
+  WATER_SPORT: 'Water sports',
+  EQUESTRIAN_SPORTS: 'Horse riding',
+  JIU_JITSU: 'Jiu-jitsu',
+  HIP_HOP: 'Hip-hop dance',
+  ELECTRIC_SCOOTER: 'E-scooter',
+  FITNESS_GAMING: 'Fitness gaming',
+  MUSICAL_PERFORMANCE: 'Music performance',
+};
+
+/** "MOUNTAIN_BIKE" → "Mountain bike". */
+const humanize = (kind: string) => kind.charAt(0) + kind.slice(1).toLowerCase().replace(/_/g, ' ');
+
+/**
+ * The activity type in English. Fitbit's own name (in the account's language)
+ * only for activities without a type.
+ */
+export const exerciseLabel = (e: Exercise) =>
+  LABEL[e.kind] ?? (!e.kind || e.kind === 'OTHER' || e.kind === 'EXERCISE_TYPE_UNSPECIFIED' ? e.name || 'Workout' : humanize(e.kind));
 
 /** The activity's round icon in the exercise color (`--s7`); also usable inside an SVG chart. */
 export function ExIcon({ e, className, ...rest }: { e: Exercise } & React.SVGProps<SVGSVGElement>) {
+  const group = GROUP_OF.get(e.kind) ?? 'other';
+  const Line = group in LUCIDE ? LUCIDE[group as keyof typeof LUCIDE] : null;
   return (
     <svg viewBox="-12 -12 24 24" className={cn('shrink-0', className)} aria-hidden {...rest}>
       <circle r={11} fill="var(--s7)" />
-      <path d={GLYPH[KIND[e.kind]?.glyph ?? 'gym']} transform="translate(-7.5,-7.5) scale(0.625)" fill="#fff" />
+      {Line ? (
+        <Line x={-6.5} y={-6.5} width={13} height={13} color="#fff" strokeWidth={2.4} />
+      ) : (
+        <path d={GLYPH[group as Glyph]} transform="translate(-7.5,-7.5) scale(0.625)" fill="#fff" />
+      )}
     </svg>
   );
 }
