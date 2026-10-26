@@ -1,11 +1,9 @@
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { AppShell } from '@/components/AppShell';
+import { DEMO } from '@/lib/demo';
 import { DayPage } from '@/routes/day';
 import { SettingsPage } from '@/routes/settings';
 import { TrendsPage, type Period } from '@/routes/trends';
-
-/** The demo (made-up data, no sign-in) runs the same app under /demo. */
-export const DEMO = location.pathname === '/demo' || location.pathname.startsWith('/demo/');
 
 const rootRoute = createRootRoute({ component: AppShell });
 

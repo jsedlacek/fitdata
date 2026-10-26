@@ -13,6 +13,7 @@ import {
   type Units,
   type WeekStart,
 } from '@/lib/api';
+import { DEMO } from '@/lib/demo';
 import { browserTimeZone, timeZones } from '@/lib/prefs';
 import { SyncStatus } from '@/components/AppShell';
 import { Button } from '@/components/ui/button';
@@ -33,24 +34,30 @@ export function SettingsPage() {
     <div className="mx-auto max-w-2xl space-y-5">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+        {!DEMO && (
         <Button asChild variant="outline" size="sm">
           <a href="/auth/logout">
             <LogOut /> Sign out
           </a>
         </Button>
+        )}
       </div>
       {user ? (
         <>
-          {user.connected && (
+          {user.connected && !DEMO && (
             // Phones have no header, so the sync control lives here.
             <Card className="sm:hidden">
               <CardHeader title="Sync" subtitle="Fitdata syncs your Fitbit every hour. Tap to sync now." action={<SyncStatus run={overview.data?.lastSync ?? null} labelled />} />
             </Card>
           )}
           <Preferences settings={user.settings} connected={user.connected} />
-          <YourData />
-          <Support userId={user.id} />
-          <DeleteAccount />
+          {!DEMO && (
+            <>
+              <YourData />
+              <Support userId={user.id} />
+              <DeleteAccount />
+            </>
+          )}
         </>
       ) : (
         Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-48 rounded-xl" />)

@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
+import { DEMO } from '@/lib/demo';
 import { Button } from './ui/button';
 
-/** How to read the data from Claude or ChatGPT through the MCP server at /mcp. */
+/** How to read the data from Claude or ChatGPT through the MCP server at /mcp; in the demo, what that looks like. */
 export function McpConnect() {
+  if (DEMO) return <DemoChat />;
   const url = `${location.origin}/mcp`;
   const [copied, setCopied] = useState(false);
   const copy = () =>
@@ -33,6 +35,23 @@ export function McpConnect() {
         </div>
       </dl>
       <p className="mt-3 text-muted">Then sign in with the same Google account as here.</p>
+    </div>
+  );
+}
+
+/** The demo can't connect an assistant, so it shows a conversation like one. */
+function DemoChat() {
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="font-medium">Ask Claude or ChatGPT about your data</p>
+      <p className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-3 py-2 text-white">Why am I so tired today?</p>
+      <p className="text-ink-2">
+        Last night you fell asleep after 1:00 and got 50 min of deep sleep instead of your usual 1 h 50. Your heart rate stayed about 10 bpm above
+        normal all night and HRV dropped to 26 ms. One or two good nights usually bring it back.
+      </p>
+      <a href="/auth/login" className="inline-flex h-9 w-full items-center justify-center rounded-lg bg-ink text-[13px] font-medium text-page hover:opacity-90">
+        Connect your Fitbit to ask
+      </a>
     </div>
   );
 }

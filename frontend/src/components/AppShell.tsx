@@ -3,6 +3,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BookOpen, Bot, CalendarDays, ChartSpline, CheckCircle2, RefreshCw, Settings, TriangleAlert } from 'lucide-react';
 import { overviewQuery, saveSettings, startSync, syncQuery, type Me, type Overview, type SyncRun } from '@/lib/api';
+import { DEMO } from '@/lib/demo';
 import { detectSettings, setPrefs } from '@/lib/prefs';
 import { ago } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -31,7 +32,7 @@ export function AppShell() {
           </nav>
           <div className="flex-1" />
           {data && <AskAi />}
-          {data?.user.connected !== false && <SyncStatus run={data?.lastSync ?? null} />}
+          {!DEMO && data?.user.connected !== false && <SyncStatus run={data?.lastSync ?? null} />}
           <Button asChild variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink">
             <a href="/docs" target="_blank" rel="noopener" aria-label="Docs: what the metrics and charts mean" title="Docs: what the metrics and charts mean">
               <BookOpen />
@@ -47,7 +48,7 @@ export function AppShell() {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-5 pb-16 pt-[max(env(safe-area-inset-top),1.5rem)] sm:px-6 sm:pt-5">
-        <ReconnectBanner run={data?.lastSync ?? null} user={data?.user ?? null} />
+        {DEMO ? <DemoNote /> : <ReconnectBanner run={data?.lastSync ?? null} user={data?.user ?? null} />}
         <Outlet />
       </main>
       {data && (
@@ -61,6 +62,18 @@ export function AppShell() {
         </footer>
       )}
       {data && <TabBar failed={!!data.lastSync && !data.lastSync.ok} />}
+    </div>
+  );
+}
+
+/** The demo says once, quietly, what it is and where your own data is. */
+function DemoNote() {
+  return (
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl bg-surface-2 px-4 py-2.5 text-[13px]">
+      <span className="text-ink-2">Demo with made-up data</span>
+      <a href="/auth/login" className="font-medium text-s1 hover:underline">
+        See your own Fitbit data →
+      </a>
     </div>
   );
 }

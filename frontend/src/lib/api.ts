@@ -1,4 +1,5 @@
-// Types and fetchers for the Rust API (src/web.rs).
+// Types and fetchers for the Rust API (src/web.rs); under /demo the data is made up in the browser (demo.ts).
+import { DEMO, demoDay, demoOverview, demoSaveSettings } from './demo';
 
 export type Daily = {
   date: string;
@@ -121,28 +122,28 @@ const get = <T,>(url: string) => request<T>(url);
 
 export const overviewQuery = {
   queryKey: ['overview'],
-  queryFn: () => get<Overview>('/api/overview'),
+  queryFn: () => (DEMO ? Promise.resolve(demoOverview()) : get<Overview>('/api/overview')),
   staleTime: 5 * 60_000,
 };
 
 export const dayQuery = (date: string) => ({
   queryKey: ['day', date],
-  queryFn: () => get<DayDetail>(`/api/day/${date}`),
+  queryFn: () => (DEMO ? Promise.resolve(demoDay(date)) : get<DayDetail>(`/api/day/${date}`)),
   staleTime: 5 * 60_000,
 });
 
 /** Whether a sync job runs: polled often while it does, otherwise now and then to notice the scheduled one. */
 export const syncQuery = {
   queryKey: ['sync'],
-  queryFn: () => get<SyncState>('/api/sync'),
+  queryFn: () => (DEMO ? Promise.resolve<SyncState>({ running: false }) : get<SyncState>('/api/sync')),
   refetchInterval: (q: { state: { data?: SyncState } }) => (q.state.data?.running ? 5_000 : 5 * 60_000),
 };
 
 /** Starts a sync job (or joins the one already running). */
-export const startSync = () => request<SyncState>('/api/sync', 'POST');
+export const startSync = () => (DEMO ? Promise.resolve<SyncState>({ running: false }) : request<SyncState>('/api/sync', 'POST'));
 
 /** Saves the settings; a new time zone also starts a sync that recalculates the data. */
-export const saveSettings = (s: Settings) => request<Me>('/api/settings', 'PUT', s);
+export const saveSettings = (s: Settings) => (DEMO ? Promise.resolve(demoSaveSettings(s)) : request<Me>('/api/settings', 'PUT', s));
 
 /** Everything stored about the user, as a ZIP (GDPR export). */
 export const EXPORT_URL = '/api/export';
