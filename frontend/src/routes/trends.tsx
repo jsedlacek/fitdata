@@ -15,7 +15,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { ErrorCard, withData } from './day';
 
-export type Period = '7' | '30' | '90' | 'all';
+/** Days shown. A number, so the router writes `?range=90` (search params are JSON: the string '90' would be `"90"`). */
+export type Period = 7 | 30 | 90 | 'all';
 
 /** One day as the charts use it: x value, sleep as minutes from the wake day's midnight. */
 type Row = {
@@ -299,10 +300,10 @@ export function TrendsPage({ range }: { range: Period }) {
           <h1 className="text-xl font-semibold tracking-tight">Trends</h1>
           <p className="text-sm text-muted">{days.length ? `${dateW(days[0].t)} – ${dateW(days.at(-1)!.t)}` : ''}</p>
         </div>
-        <Segmented<Period>
+        <Segmented
           label="Period"
-          value={range}
-          onChange={(r) => navigate({ to: '/trends', search: { range: r } })}
+          value={String(range)}
+          onChange={(r) => navigate({ to: '/trends', search: { range: r === 'all' ? 'all' : (Number(r) as Period) } })}
           options={[
             { value: '7', label: '7 days' },
             { value: '30', label: '30 days' },

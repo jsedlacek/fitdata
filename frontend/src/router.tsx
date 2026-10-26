@@ -17,18 +17,19 @@ const dayRoute = createRoute({
   },
 });
 
-const RANGES: Period[] = ['7', '30', '90', 'all'];
+const RANGES: Period[] = [7, 30, 90, 'all'];
 
 const trendsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trends',
   validateSearch: (s: Record<string, unknown>): { range?: Period } => {
-    const r = String(s.range ?? '');
+    // Old links have the number as a string (`?range="90"`).
+    const r = s.range === 'all' ? 'all' : Number(s.range);
     return RANGES.includes(r as Period) ? { range: r as Period } : {};
   },
   component: function Trends() {
     const { range } = trendsRoute.useSearch();
-    return <TrendsPage range={range ?? '30'} />;
+    return <TrendsPage range={range ?? 30} />;
   },
 });
 
