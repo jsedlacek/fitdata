@@ -125,8 +125,8 @@ function useRows(days: Row[]) {
 
 const barW = (s: Scale, gap = 0.3) => Math.max(1, (s.x(DAY) - s.x(0)) * (1 - gap));
 
-/** From this many days up a line chart gets its 7-day average; over a week it would only repeat the daily values. */
-const AVG_FROM = 30;
+/** A line chart gets its 7-day average from this many days up (every period has it now; it comes from the whole history). */
+const AVG_FROM = 7;
 
 /**
  * `days` are the last days of `history`: the 7-day average is computed over the
