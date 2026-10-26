@@ -1,7 +1,7 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, Bot, CalendarDays, ChartSpline, CheckCircle2, RefreshCw, Settings, TriangleAlert } from 'lucide-react';
+import { BookOpen, Bot, CalendarDays, ChartSpline, CheckCircle2, CodeXml, Eye, MapPin, MousePointerClick, PlugZap, RefreshCw, Settings, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react';
 import { overviewQuery, saveSettings, startSync, syncQuery, type Me, type Overview, type SyncRun } from '@/lib/api';
 import { DEMO } from '@/lib/demo';
 import { detectSettings, setPrefs } from '@/lib/prefs';
@@ -76,7 +76,7 @@ function DemoNote() {
     <div className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl bg-[color-mix(in_srgb,var(--s1)_9%,var(--surface))] px-4 py-3 text-[13px]">
       <p className="min-w-0 flex-1 basis-72 text-ink-2">
         <span className="mr-1.5 rounded-md bg-s1 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">Demo</span>
-        90 days of a made-up person&apos;s Fitbit data, generated in your browser.
+        90 days of a made-up person&apos;s Fitbit data.
       </p>
       <div className="flex items-center gap-4">
         <a href="#about-demo" className="text-ink-2 underline-offset-2 hover:text-ink hover:underline">
@@ -93,36 +93,65 @@ function DemoNote() {
 /** The longer version at the end of every demo page: what this is, why, and what connecting your own data does. */
 function DemoAbout() {
   const steps = [
-    ['Sign in with Google', 'and allow Fitdata to read your Fitbit data, through Google’s official Health API. Read-only: it can’t change anything.'],
-    ['Your history loads', 'in a few minutes, the same pages as here, and stays up to date every hour.'],
+    ['Sign in with Google', 'and allow Fitdata to read your Fitbit data through Google’s official Health API.'],
+    ['Your history loads', 'in a few minutes, on the same pages as here, and stays up to date every hour.'],
     ['Ask your AI', 'if you like: add Fitdata to Claude or ChatGPT and ask about your own nights and days.'],
   ];
+  const facts = [
+    [ShieldCheck, 'Read-only'],
+    [Trash2, 'Delete everything in one click'],
+    [MapPin, 'Stored in the EU'],
+    [CodeXml, 'Free and open source'],
+  ] as const;
+  const card = 'rounded-2xl border bg-surface p-5';
+  const chip = 'grid size-9 place-items-center rounded-xl [&_svg]:size-[18px]';
   return (
-    <section id="about-demo" className="mt-16 scroll-mt-20 rounded-2xl border bg-surface p-6 sm:p-8" aria-labelledby="about-demo-title">
-      <h2 id="about-demo-title" className="text-xl font-semibold tracking-tight">
-        This is a demo
-      </h2>
-      <div className="mt-6 grid gap-8 md:grid-cols-3">
-        <div>
-          <h3 className="text-sm font-semibold">What you’re seeing</h3>
+    <section id="about-demo" className="mt-16 scroll-mt-20 overflow-hidden rounded-3xl border" aria-labelledby="about-demo-title">
+      <div className="flex flex-wrap items-end justify-between gap-6 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--s1)_14%,var(--surface)),color-mix(in_srgb,var(--s7)_10%,var(--surface)))] px-6 py-8 sm:px-8">
+        <div className="max-w-xl">
+          <span className="rounded-md bg-s1 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">Demo</span>
+          <h2 id="about-demo-title" className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
+            This is a demo
+          </h2>
+          <p className="mt-2 text-ink-2">Everything works as with your own data, only the person is made up.</p>
+        </div>
+        <div className="flex flex-col items-start gap-1.5 sm:items-end">
+          <a href="/auth/login" className="inline-flex h-11 items-center rounded-lg bg-ink px-5 text-sm font-medium text-page hover:opacity-90">
+            Connect your Fitbit
+          </a>
+          <span className="text-xs text-ink-2">Free · read-only</span>
+        </div>
+      </div>
+      <div className="grid gap-3 bg-surface-2 p-3 sm:p-4 md:grid-cols-[1fr_1fr_1.4fr]">
+        <div className={card}>
+          <span className={cn(chip, 'bg-[color-mix(in_srgb,var(--s1)_14%,transparent)] text-s1')}>
+            <Eye />
+          </span>
+          <h3 className="mt-4 font-semibold">What you’re seeing</h3>
           <p className="mt-1.5 text-sm text-ink-2">
-            90 days of a made-up person: their nights, heart rate, HRV, SpO₂, steps and workouts, generated in your browser to look like real Fitbit
-            data. It isn’t anyone’s real data, and nothing you do here is stored.
+            90 days of a made-up person: nights, heart rate, HRV, SpO₂, steps and workouts, made to look like real Fitbit data. Nothing you do here is
+            stored.
           </p>
         </div>
-        <div>
-          <h3 className="text-sm font-semibold">Why a demo</h3>
+        <div className={card}>
+          <span className={cn(chip, 'bg-[color-mix(in_srgb,var(--s3)_16%,transparent)] text-s3')}>
+            <MousePointerClick />
+          </span>
+          <h3 className="mt-4 font-semibold">Why a demo</h3>
           <p className="mt-1.5 text-sm text-ink-2">
-            So you can try every page before you connect anything: hover a chart to read all rows at one moment, step through the days, open Trends.
+            Try every page before you connect anything: hover a chart to read all rows at one moment, step through the days, open Trends.
           </p>
         </div>
-        <div>
-          <h3 className="text-sm font-semibold">With your own data</h3>
-          <ol className="mt-1.5 space-y-2 text-sm text-ink-2">
+        <div className={card}>
+          <span className={cn(chip, 'bg-[color-mix(in_srgb,var(--s7)_16%,transparent)] text-s7')}>
+            <PlugZap />
+          </span>
+          <h3 className="mt-4 font-semibold">With your own data</h3>
+          <ol className="mt-3 space-y-3 text-sm text-ink-2">
             {steps.map(([title, text], i) => (
-              <li key={title} className="flex gap-2.5">
-                <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-ink text-[11px] font-semibold text-page">{i + 1}</span>
-                <span>
+              <li key={title} className="flex gap-3">
+                <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ink text-xs font-semibold text-page">{i + 1}</span>
+                <span className="pt-0.5">
                   <b className="font-medium text-ink">{title}</b> {text}
                 </span>
               </li>
@@ -130,24 +159,19 @@ function DemoAbout() {
           </ol>
         </div>
       </div>
-      <div className="mt-8 flex flex-wrap items-center justify-between gap-x-6 gap-y-4 border-t pt-6">
-        <ul className="flex flex-wrap gap-x-5 gap-y-1.5 text-[13px] text-ink-2">
-          {['Read-only', 'Delete everything in one click', 'Stored in the EU', 'Free and open source'].map((t) => (
-            <li key={t} className="flex items-center gap-1.5">
-              <CheckCircle2 className="size-3.5 text-good" />
-              {t}
-            </li>
-          ))}
-        </ul>
-        <div className="flex flex-wrap items-center gap-3">
-          <a href="/docs" className="text-[13px] text-ink-2 underline-offset-2 hover:text-ink hover:underline">
-            Read the docs
+      <ul className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t bg-surface px-6 py-4 text-[13px] text-ink-2">
+        {facts.map(([Icon, t]) => (
+          <li key={t} className="flex items-center gap-1.5">
+            <Icon className="size-4 text-good" />
+            {t}
+          </li>
+        ))}
+        <li>
+          <a href="/docs" className="font-medium text-s1 hover:underline">
+            Read the docs →
           </a>
-          <a href="/auth/login" className="inline-flex h-10 items-center rounded-lg bg-ink px-4 text-sm font-medium text-page hover:opacity-90">
-            Connect your Fitbit
-          </a>
-        </div>
-      </div>
+        </li>
+      </ul>
     </section>
   );
 }
