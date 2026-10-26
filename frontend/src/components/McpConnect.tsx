@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, Copy } from 'lucide-react';
+import { ArrowUpRight, Check, Copy } from 'lucide-react';
 import { DEMO } from '@/lib/demo';
 import { Button } from './ui/button';
 
@@ -39,18 +39,21 @@ export function McpConnect() {
   );
 }
 
-/** The demo can't connect an assistant, so it shows a conversation like one. */
+/** The demo can't connect an assistant: what asking looks like with your own data, and how to set it up. */
 function DemoChat() {
   return (
-    <div className="space-y-3 text-sm">
+    <div className="text-sm">
       <p className="font-medium">Ask Claude or ChatGPT about your data</p>
-      <p className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-s1 px-3 py-2 text-white">Why am I so tired today?</p>
-      <p className="text-ink-2">
-        Last night you fell asleep after 1:00 and got 50 min of deep sleep instead of your usual 1 h 50. Your heart rate stayed about 10 bpm above
-        normal all night and HRV dropped to 26 ms. One or two good nights usually bring it back.
+      <p className="mt-1 text-ink-2">
+        With your own data, Fitdata is a connector for Claude, ChatGPT and other assistants that speak MCP. Add it once in the assistant&apos;s settings,
+        then ask in plain words, like &ldquo;Why am I so tired today?&rdquo; or &ldquo;Do I sleep better after evening runs?&rdquo;
       </p>
-      <a href="/auth/login" className="inline-flex h-9 w-full items-center justify-center rounded-lg bg-ink text-[13px] font-medium text-page hover:opacity-90">
-        Connect your Fitbit to ask
+      <p className="mt-2 text-ink-2">The assistant can only read your data, nobody else&apos;s, and can&apos;t change anything.</p>
+      <a href="/docs/ask-ai" target="_blank" rel="noopener" className="mt-3 inline-flex items-center gap-0.5 font-medium text-s1 hover:underline">
+        How to connect Claude or ChatGPT <ArrowUpRight className="size-3.5" />
+      </a>
+      <a href="/auth/login" className="mt-4 inline-flex h-9 w-full items-center justify-center rounded-lg bg-ink text-[13px] font-medium text-page hover:opacity-90">
+        Connect your Fitbit
       </a>
     </div>
   );
