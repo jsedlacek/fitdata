@@ -154,11 +154,13 @@ export function barsPath(s: Scale, ts: number[], vs: (number | null)[], width: n
   return d;
 }
 
-export type Mark = { v: number | null | undefined; color: string };
+/** A dot on the crosshair; `t` puts it on its own data point instead of the cursor. */
+export type Mark = { v: number | null | undefined; color: string; t?: number };
 
 /**
  * One chart row. `draw` renders the static layers, `marks` the dots on the crosshair,
  * `readout` the text that follows the cursor (null when the pointer is elsewhere).
+ * `points` (sorted) makes a chart of discrete values: the cursor jumps from one to the next.
  */
 export function Track({
   title,
@@ -175,6 +177,8 @@ export function Track({
   grid = true,
   padTop = 6,
   overlay,
+  points,
+  help,
 }: {
   title?: ReactNode;
   height: number;
@@ -192,6 +196,9 @@ export function Track({
   padTop?: number;
   /** Drawn with the crosshair, so it can follow the cursor. */
   overlay?: (s: Scale, t: number | null) => ReactNode;
+  /** Shown after the title, e.g. a (?) explaining the chart. */
+  help?: ReactNode;
+  points?: number[];
 }) {
   const g = useGroup();
   const view = useStore(g.view);
@@ -208,11 +215,15 @@ export function Track({
     const px = e.clientX - e.currentTarget.getBoundingClientRect().left - M.l;
     return { px, t: s.t(Math.min(pw, Math.max(0, px))) };
   };
-  const snap = (t: number) => (g.mode === 'date' ? Math.round(t / DAY) * DAY : t);
+  const pts = useMemo(() => points?.filter((t) => t >= d[0] && t <= d[1]), [points, d]);
+  const snap = (t: number) => (pts?.length ? pts[nearest(pts, t, Infinity)] : g.mode === 'date' ? Math.round(t / DAY) * DAY : t);
 
   const header = (title || readout) && (
     <div className={cn('flex min-w-0 items-baseline gap-3', side ? 'mb-1 justify-between sm:mb-0 sm:flex-col sm:items-start sm:justify-start sm:gap-0.5 sm:pt-1 sm:pr-3' : 'mb-1 h-5 justify-between pl-[36px] pr-[10px]')}>
-      <div className="text-[13px] font-medium text-ink-2">{title}</div>
+      <div className="flex items-center gap-1 text-[13px] font-medium text-ink-2">
+        {title}
+        {help}
+      </div>
       {readout && <Readout fn={readout} big={side} />}
     </div>
   );
@@ -233,8 +244,13 @@ export function Track({
             const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
             if (!dir) return;
             e.preventDefault();
-            const step = g.mode === 'date' ? DAY : (e.shiftKey ? 60 : 5) * MIN;
             const cur = g.cursor.get();
+            if (pts?.length) {
+              const i = cur == null ? -1 : nearest(pts, cur, Infinity);
+              const j = cur == null || cur < pts[0] || cur > pts.at(-1)! ? (dir > 0 ? 0 : pts.length - 1) : pts[i] === cur ? i + dir : dir > 0 ? (pts[i] > cur ? i : i + 1) : pts[i] < cur ? i : i - 1;
+              return g.cursor.set(pts[Math.min(pts.length - 1, Math.max(0, j))]);
+            }
+            const step = g.mode === 'date' ? DAY : (e.shiftKey ? 60 : 5) * MIN;
             // Days sit on whole-day marks inside the padded domain.
             const [lo, hi] = g.mode === 'date' ? [Math.ceil(d[0] / DAY) * DAY, Math.floor(d[1] / DAY) * DAY] : d;
             const next = cur == null || cur < lo || cur > hi ? (dir > 0 ? lo : hi) : cur + dir * step;
@@ -303,7 +319,7 @@ function Crosshair({ s, marks, overlay }: { s: Scale; marks?: (t: number) => Mar
         <>
           <line x1={x} x2={x} y1={0} y2={s.h} stroke="var(--ink)" strokeOpacity={0.35} strokeWidth={1} />
           {marks?.(t).map((m, i) =>
-            m.v == null ? null : <circle key={i} cx={x} cy={s.y(m.v)} r={3.5} fill={m.color} stroke="var(--page)" strokeWidth={1.5} />,
+            m.v == null ? null : <circle key={i} cx={m.t == null ? x : s.x(m.t)} cy={s.y(m.v)} r={3.5} fill={m.color} stroke="var(--page)" strokeWidth={1.5} />,
           )}
         </>
       )}

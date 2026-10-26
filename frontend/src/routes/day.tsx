@@ -243,8 +243,9 @@ function seriesTrack(ts: number[], vs: number[], color: string, gap: number, dot
       ),
     marks: (t: number) => {
       const i = nearest(ts, t, gap);
-      return [{ v: i < 0 ? null : vs[i], color }];
+      return [{ v: i < 0 ? null : vs[i], color, t: ts[i] }];
     },
+    points: dots ? ts : undefined,
     value: (t: number | null) => {
       const i = t == null ? -1 : nearest(ts, t, gap);
       return i < 0 ? null : vs[i];
@@ -331,7 +332,7 @@ function NightSection({ p, m }: { p: Prepared; m: Daily | null }) {
           )}
           {p.hrv.v.length > 0 && (
             <Track
-              title="HRV" height={50} {...hrvY} domain={range} draw={hrv.draw} marks={hrv.marks}
+              title="HRV" height={50} {...hrvY} domain={range} draw={hrv.draw} marks={hrv.marks} points={hrv.points}
               readout={(t) => (hrv.value(t) == null ? <><b>{num(m?.hrv_ms, 1)}</b> ms avg</> : <><b>{num(hrv.value(t), 1)}</b> ms</>)}
             />
           )}
@@ -459,6 +460,7 @@ function DaySection({ p, m, className }: { p: Prepared; m: Daily | null; classNa
   useEffect(() => () => exFocus.set(null), []);
   const exAt = (t: number | null) => (t == null ? undefined : exs.find((e) => e.start <= t && t < e.end));
   const stepAt = (t: number) => p.steps.t.findIndex((b) => b <= t && t < b + 15 * MIN);
+  const stepMids = useMemo(() => p.steps.t.map((t) => t + 7.5 * MIN), [p]);
   const hrIn = [...within(p.hr.t, p.hr.lo, range), ...within(p.hr.t, p.hr.hi, range)];
   const hrY = niceTicks(Math.min(...hrIn, 50), Math.max(...hrIn, 100), 3);
   const stepsY = niceTicks(0, Math.max(...within(p.steps.t, p.steps.v, range), 500), 1);
@@ -499,13 +501,14 @@ function DaySection({ p, m, className }: { p: Prepared; m: Daily | null; classNa
             draw={(s) => (
               <>
                 {exBands(s, exs, false)}
-                <path d={barsPath(s, p.steps.t.map((t) => t + 7.5 * MIN), p.steps.v, Math.max(1, (s.x(15 * MIN) - s.x(0)) * 0.7), 0, 1.5)} fill="var(--s3)" />
+                <path d={barsPath(s, stepMids, p.steps.v, Math.max(1, (s.x(15 * MIN) - s.x(0)) * 0.7), 0, 1.5)} fill="var(--s3)" />
               </>
             )}
             overlay={(s, t) => <ExHighlight s={s} at={exAt(t)} lane={false} />}
+            points={stepMids}
             marks={(t) => {
               const i = stepAt(t);
-              return [{ v: i < 0 ? null : p.steps.v[i], color: 'var(--s3)' }];
+              return [{ v: i < 0 ? null : p.steps.v[i], color: 'var(--s3)', t: stepMids[i] }];
             }}
             readout={(t) => {
               const i = t == null ? -1 : stepAt(t);
