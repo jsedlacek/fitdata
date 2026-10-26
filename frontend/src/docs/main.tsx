@@ -44,10 +44,16 @@ function Docs() {
           <button className="-ml-1.5 grid size-9 place-items-center rounded-lg text-ink-2 hover:bg-shade lg:hidden" onClick={() => setMenu(true)} aria-label="Open navigation">
             <Menu className="size-5" />
           </button>
-          <a href="/docs" onClick={(e) => onLinkClick(e, '')} className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
-            <img src="/favicon.svg" alt="" className="size-7" />
-            Fitdata <span className="font-normal text-muted">Docs</span>
-          </a>
+          {/* The logo goes to the home page, "Docs" to the docs' start. */}
+          <div className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
+            <a href="/" className="flex items-center gap-2" title="Fitdata home page">
+              <img src="/favicon.svg" alt="" className="size-7" />
+              Fitdata
+            </a>
+            <a href="/docs" onClick={(e) => onLinkClick(e, '')} className="font-normal text-muted hover:text-ink">
+              Docs
+            </a>
+          </div>
           <div className="flex-1" />
           <button
             onClick={() => setSearching(true)}
@@ -58,8 +64,8 @@ function Docs() {
             <span className="hidden flex-1 text-left sm:inline">Search…</span>
             <kbd className="hidden rounded border bg-surface-2 px-1.5 text-[11px] sm:inline">{isMac ? '⌘' : 'Ctrl'} K</kbd>
           </button>
-          <a href="/dash" className="hidden h-9 items-center rounded-lg bg-ink px-3.5 text-sm font-medium text-page hover:opacity-90 sm:inline-flex">
-            Open Fitdata
+          <a href="/dash" className="inline-flex h-9 shrink-0 items-center rounded-lg bg-ink px-3.5 text-sm font-medium text-page hover:opacity-90">
+            Dashboard
           </a>
         </div>
       </header>
@@ -73,7 +79,8 @@ function Docs() {
 
       <footer className="border-t">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-6 text-[13px] text-muted">
-          <a href="/" className="hover:text-ink-2">Fitdata</a>
+          <a href="/" className="hover:text-ink-2">Home</a>
+          <a href="/dash" className="hover:text-ink-2">Dashboard</a>
           <a href="/privacy" className="hover:text-ink-2">Privacy</a>
           <a href="/terms" className="hover:text-ink-2">Terms</a>
           <a href="mailto:fitdata@jakub.contact" className="hover:text-ink-2">Contact</a>
