@@ -6,41 +6,51 @@ import { cn } from '@/lib/utils';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 
-/** Previous / next day with data, plus a month calendar marking days with data. */
+/**
+ * The page's title: the date (a button that opens a month calendar marking days
+ * with data), "Today" or "Yesterday" above it, and previous / next day with data.
+ */
 export function DateNav({ date, available, onChange }: { date: string; available: string[]; onChange: (d: string) => void }) {
   const idx = available.indexOf(date);
   const prev = idx > 0 ? available[idx - 1] : undefined;
   const next = idx >= 0 && idx < available.length - 1 ? available[idx + 1] : undefined;
   const [open, setOpen] = useState(false);
   const rel = relativeDay(date);
+  const step = 'size-9 rounded-full text-ink-2 hover:text-ink';
 
   return (
-    <div className="flex items-center gap-1.5">
-      <Button variant="outline" size="icon-sm" disabled={!prev} onClick={() => prev && onChange(prev)} aria-label="Previous day">
-        <ChevronLeft />
-      </Button>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" className="min-w-0 gap-2 px-3">
-            <CalendarDays className="text-muted" />
-            <span className="truncate first-letter:uppercase">{dateLong(date)}</span>
-            {rel && <span className="rounded bg-shade px-1.5 py-0.5 text-[11px] font-medium text-ink-2">{rel}</span>}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-[288px]">
-          <MiniCalendar
-            selected={date}
-            available={available}
-            onSelect={(d) => {
-              onChange(d);
-              setOpen(false);
-            }}
-          />
-        </PopoverContent>
-      </Popover>
-      <Button variant="outline" size="icon-sm" disabled={!next} onClick={() => next && onChange(next)} aria-label="Next day">
-        <ChevronRight />
-      </Button>
+    <div className="flex items-end justify-between gap-3">
+      <div className="min-w-0">
+        <div className="h-4 text-xs font-medium text-muted">{rel}</div>
+        <Popover open={open} onOpenChange={setOpen}>
+          <h1 className="mt-0.5">
+            <PopoverTrigger asChild>
+              <button className="group inline-flex max-w-full cursor-pointer items-center gap-1.5 rounded-md text-[22px] font-semibold tracking-tight sm:text-2xl" aria-label={`${dateLong(date)}, choose another day`}>
+                <span className="truncate first-letter:uppercase">{dateLong(date)}</span>
+                <CalendarDays className="size-4 shrink-0 text-muted transition-colors group-hover:text-ink" />
+              </button>
+            </PopoverTrigger>
+          </h1>
+          <PopoverContent align="start" className="w-[288px]">
+            <MiniCalendar
+              selected={date}
+              available={available}
+              onSelect={(d) => {
+                onChange(d);
+                setOpen(false);
+              }}
+            />
+          </PopoverContent>
+        </Popover>
+      </div>
+      <div className="flex shrink-0 gap-1">
+        <Button variant="outline" size="icon" className={step} disabled={!prev} onClick={() => prev && onChange(prev)} aria-label="Previous day">
+          <ChevronLeft />
+        </Button>
+        <Button variant="outline" size="icon" className={step} disabled={!next} onClick={() => next && onChange(next)} aria-label="Next day">
+          <ChevronRight />
+        </Button>
+      </div>
     </div>
   );
 }

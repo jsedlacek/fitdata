@@ -1,7 +1,7 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, Bot, CheckCircle2, RefreshCw, Settings, TriangleAlert } from 'lucide-react';
+import { BookOpen, Bot, CalendarDays, ChartSpline, CheckCircle2, RefreshCw, Settings, TriangleAlert } from 'lucide-react';
 import { overviewQuery, saveSettings, startSync, syncQuery, type Me, type Overview, type SyncRun } from '@/lib/api';
 import { detectSettings, setPrefs } from '@/lib/prefs';
 import { ago } from '@/lib/format';
@@ -22,22 +22,27 @@ export function AppShell() {
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4 sm:gap-6">
           <Link to="/" search={{}} className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
             <img src="/favicon.svg" alt="" className="size-7" />
-            <span className="hidden sm:inline">Fitdata</span>
+            <span>Fitdata</span>
           </Link>
-          <nav className="flex items-center gap-1 text-sm">
+          {/* On phones the pages are in the tab bar at the bottom, under the thumb. */}
+          <nav className="hidden items-center gap-1 text-sm sm:flex">
             <NavLink to="/">Day</NavLink>
             <NavLink to="/trends">Trends</NavLink>
           </nav>
           <div className="flex-1" />
-          {data && <AskAi />}
+          {data && (
+            <div className="hidden sm:block">
+              <AskAi />
+            </div>
+          )}
           {data?.user.connected !== false && <SyncStatus run={data?.lastSync ?? null} />}
-          <Button asChild variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink">
+          <Button asChild variant="ghost" size="icon-sm" className="hidden text-ink-2 hover:text-ink sm:inline-flex">
             <a href="/docs" target="_blank" rel="noopener" aria-label="Docs: what the metrics and charts mean" title="Docs: what the metrics and charts mean">
               <BookOpen />
             </a>
           </Button>
           {data && (
-            <Button asChild variant="ghost" size="icon-sm" className="text-ink-2 hover:text-ink">
+            <Button asChild variant="ghost" size="icon-sm" className="hidden text-ink-2 hover:text-ink sm:inline-flex">
               <Link to="/settings" aria-label="Settings" title="Settings" activeProps={{ className: 'bg-shade !text-ink' }}>
                 <Settings />
               </Link>
@@ -50,7 +55,7 @@ export function AppShell() {
         <Outlet />
       </main>
       {data && (
-        <footer className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 pb-8 text-[13px] text-muted">
+        <footer className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-2 px-4 pb-28 text-[13px] text-muted sm:pb-8">
           <span className="flex gap-4 sm:ml-auto">
             <a href="/docs" className="hover:text-ink-2">Docs</a>
             <a href="/privacy" className="hover:text-ink-2">Privacy</a>
@@ -59,7 +64,39 @@ export function AppShell() {
           </span>
         </footer>
       )}
+      {data && <TabBar />}
     </div>
+  );
+}
+
+/** Phones: the pages and the assistant at the bottom of the screen, as in native apps. */
+function TabBar() {
+  const item = 'flex flex-col items-center gap-0.5 pt-1.5 text-[11px] text-ink-2';
+  const pill = 'grid h-7 w-14 place-items-center rounded-full transition-colors [&_svg]:size-[18px]';
+  const tab = (to: '/' | '/trends' | '/settings', label: string, Icon: typeof Settings) => (
+    <Link
+      to={to}
+      search={{}}
+      className={item}
+      activeOptions={{ exact: true, includeSearch: false }}
+      activeProps={{ className: '!text-ink font-medium [&>span]:bg-[color-mix(in_srgb,var(--s1)_14%,transparent)] [&>span]:text-s1' }}
+    >
+      <span className={pill}>
+        <Icon />
+      </span>
+      {label}
+    </Link>
+  );
+  return (
+    <nav
+      aria-label="Pages"
+      className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t bg-page/90 pb-[max(env(safe-area-inset-bottom),0.5rem)] backdrop-blur sm:hidden"
+    >
+      {tab('/', 'Day', CalendarDays)}
+      {tab('/trends', 'Trends', ChartSpline)}
+      <AskAi tab className={item} pillClassName={pill} />
+      {tab('/settings', 'Settings', Settings)}
+    </nav>
   );
 }
 
@@ -84,7 +121,7 @@ const MCP_SEEN = 'mcp-seen';
  * Asking Claude or ChatGPT is what sets Fitdata apart, so the header offers
  * it; a dot marks it until the instructions have been opened once.
  */
-function AskAi() {
+function AskAi({ tab, className, pillClassName }: { tab?: boolean; className?: string; pillClassName?: string }) {
   const [seen, setSeen] = useState(() => {
     try {
       return localStorage.getItem(MCP_SEEN) === '1';
@@ -104,6 +141,15 @@ function AskAi() {
   return (
     <Popover onOpenChange={open}>
       <PopoverTrigger asChild>
+        {tab ? (
+          <button className={className} aria-label="Ask Claude or ChatGPT about your data">
+            <span className={cn(pillClassName, 'relative')}>
+              <Bot />
+              {!seen && <span className="absolute right-3 top-0.5 size-2 rounded-full bg-s1 ring-2 ring-page" />}
+            </span>
+            Ask AI
+          </button>
+        ) : (
         <Button variant="ghost" size="sm" className="px-2 text-ink-2 hover:text-ink md:px-2.5" aria-label="Ask Claude or ChatGPT about your data">
           <span className="relative">
             <Bot />
@@ -111,8 +157,9 @@ function AskAi() {
           </span>
           <span className="hidden md:inline">Ask Claude or ChatGPT</span>
         </Button>
+        )}
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80">
+      <PopoverContent align="end" side={tab ? 'top' : 'bottom'} className="w-80 max-w-[calc(100vw-2rem)]">
         <McpConnect />
       </PopoverContent>
     </Popover>

@@ -4,7 +4,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { ArrowDownRight, ArrowUpRight, RefreshCw } from 'lucide-react';
 import { dayQuery, overviewQuery, syncQuery, type Daily, type DayDetail, type Exercise, type Stage } from '@/lib/api';
 import { MIN, wallClock } from '@/lib/chart';
-import { duration, hm, num, temperature } from '@/lib/format';
+import { clock, duration, hm, num, temperature } from '@/lib/format';
 import { before, mean, type MetricKey } from '@/lib/stats';
 import { createStore, useStore } from '@/lib/store';
 import { ExIcon, exerciseLabel } from '@/components/Activity';
@@ -80,11 +80,8 @@ export function DayPage({ date: wanted }: { date?: string }) {
   }
 
   return (
-    <div className="space-y-10">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">Day overview</h1>
-        <DateNav date={date} available={days.map((d) => d.date)} onChange={go} />
-      </div>
+    <div className="space-y-8">
+      <DateNav date={date} available={days.map((d) => d.date)} onChange={go} />
 
       <KpiStrip days={days} date={date} />
 
@@ -111,9 +108,11 @@ const Muted = ({ children }: { children: ReactNode }) => <span className="text-m
 /** `better`: which direction of change is good (1 = up, -1 = down); unset for neutral metrics. */
 type Kpi = { key: MetricKey; label: string; help: HelpKey; unit?: string; digits?: number; time?: boolean; better?: 1 | -1 };
 
-const GROUPS: { title: string; items: Kpi[] }[] = [
+/** `tint`: the tiles' wash on phones, cool for the night and green for the day like their charts. */
+const GROUPS: { title: string; tint: string; items: Kpi[] }[] = [
   {
     title: 'Night',
+    tint: 'bg-[color-mix(in_srgb,var(--stage-light)_11%,var(--surface))]',
     items: [
       { key: 'sleep_minutes', label: 'Asleep', help: 'sleep', time: true, better: 1 },
       { key: 'resting_hr', label: 'Resting HR', help: 'restingHr', unit: 'bpm', better: -1 },
@@ -124,6 +123,7 @@ const GROUPS: { title: string; items: Kpi[] }[] = [
   },
   {
     title: 'Day',
+    tint: 'bg-[color-mix(in_srgb,var(--s3)_11%,var(--surface))]',
     items: [
       { key: 'steps', label: 'Steps', help: 'steps', better: 1 },
       { key: 'azm', label: 'Zone minutes', help: 'azm', unit: 'min', better: 1 },
@@ -132,26 +132,37 @@ const GROUPS: { title: string; items: Kpi[] }[] = [
   },
 ];
 
+/**
+ * The day's key numbers. On phones they are tiles, two to a row with the first
+ * (sleep, steps) across the full width; from tablets up a flat strip.
+ */
 function KpiStrip({ days, date }: { days: Daily[]; date: string }) {
   const today = days.find((d) => d.date === date)!;
   return (
     <div className="grid gap-x-12 gap-y-6 md:grid-cols-[auto_auto] md:justify-between">
       {GROUPS.map((gr) => (
         <div key={gr.title}>
-          <div className="mb-2 border-b pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted">{gr.title}</div>
-          <div className="flex flex-wrap gap-x-7 gap-y-3">
-            {gr.items.map((k) => {
+          <div className="mb-2 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wider text-muted md:border-b md:pb-1.5">
+            {gr.title}
+            {gr.title === 'Night' && <Help topic="kpis" className="md:hidden" />}
+          </div>
+          <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap md:gap-x-7 md:gap-y-3">
+            {gr.items.map((k, i) => {
               const v = today[k.key];
               const fmt = (x: number) => (k.time ? hm(x) : num(x, k.digits ?? 0));
+              const wide = i === 0;
               return (
-                <div key={k.key}>
+                <div key={k.key} className={cn('rounded-2xl p-3 md:rounded-none md:bg-transparent md:p-0', gr.tint, wide && 'col-span-2')}>
                   <div className="flex items-center gap-1 text-xs text-ink-2">
                     {k.label}
                     <Help topic={k.help} />
                   </div>
-                  <div className="text-[22px] font-semibold leading-tight tracking-tight tabular-nums">
-                    {v == null ? '–' : fmt(v)}
-                    {v != null && (k.time || k.unit) && <span className="ml-0.5 text-xs font-normal text-ink-2">{k.time ? 'h' : k.unit}</span>}
+                  <div className="flex items-end justify-between gap-3">
+                    <div className={cn('font-semibold leading-tight tracking-tight tabular-nums md:text-[22px]', wide ? 'text-[28px]' : 'text-[22px]')}>
+                      {v == null ? '–' : fmt(v)}
+                      {v != null && (k.time || k.unit) && <span className="ml-0.5 text-xs font-normal text-ink-2">{k.time ? 'h' : k.unit}</span>}
+                    </div>
+                    {k.key === 'sleep_minutes' && <SleepBar d={today} />}
                   </div>
                   <Delta k={k} v={v} avg={mean(before(days, date, k.key, 7))} fmt={fmt} />
                 </div>
@@ -160,10 +171,33 @@ function KpiStrip({ days, date }: { days: Daily[]; date: string }) {
           </div>
         </div>
       ))}
-      <p className="flex items-center gap-1 text-[11px] text-muted md:col-span-2">
+      <p className="hidden items-center gap-1 text-[11px] text-muted md:col-span-2 md:flex">
         Changes against the 7-day average; green and red only where higher or lower is clearly better.
         <Help topic="kpis" />
       </p>
+    </div>
+  );
+}
+
+/** Phones: the night's stages as one bar, with bedtime and wake time, beside the hours asleep. */
+function SleepBar({ d }: { d: Daily }) {
+  const parts = [
+    [d.sleep_deep_minutes, 'var(--stage-deep)'],
+    [d.sleep_light_minutes, 'var(--stage-light)'],
+    [d.sleep_rem_minutes, 'var(--stage-rem)'],
+    [d.sleep_awake_minutes, 'var(--stage-awake)'],
+  ] as const;
+  const total = parts.reduce((a, [m]) => a + (m ?? 0), 0);
+  if (!total || !d.sleep_start || !d.sleep_end) return null;
+  return (
+    <div className="mb-1.5 w-[55%] max-w-56 md:hidden" aria-hidden>
+      <div className="flex h-2 gap-0.5 overflow-hidden rounded-full">
+        {parts.map(([m, c], i) => (m ? <span key={i} style={{ width: `${(m / total) * 100}%`, background: c }} /> : null))}
+      </div>
+      <div className="mt-1 flex justify-between text-[11px] tabular-nums text-muted">
+        <span>{clock(d.sleep_start)}</span>
+        <span>{clock(d.sleep_end)}</span>
+      </div>
     </div>
   );
 }
