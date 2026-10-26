@@ -396,18 +396,18 @@ function DaysTable({ days }: { days: Row[] }) {
   const g = useGroup();
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-[13px] tabular-nums sm:min-w-[640px]" onMouseLeave={() => g.cursor.set(null)}>
+      <table className="w-full text-[13px] tabular-nums md:min-w-[640px]" onMouseLeave={() => g.cursor.set(null)}>
         <thead>
           <tr className="border-b text-xs text-ink-2">
             <th className="py-2 text-left font-medium">Day</th>
-            <th className="hidden w-[22%] py-2 pl-4 text-left font-medium sm:table-cell">Sleep</th>
-            <th className="py-2 text-right font-medium sm:hidden">Sleep</th>
-            <th className="hidden sm:table-cell" />
+            <th className="hidden w-[22%] py-2 pl-4 text-left font-medium md:table-cell">Sleep</th>
+            <th className="py-2 text-right font-medium md:hidden">Sleep</th>
+            <th className="hidden md:table-cell" />
             <th className="py-2 pl-2 text-right font-medium">RHR</th>
             <th className="py-2 text-right font-medium">HRV</th>
-            <th className="hidden w-[22%] py-2 pl-6 text-left font-medium sm:table-cell">Steps</th>
-            <th className="py-2 text-right font-medium sm:hidden">Steps</th>
-            <th className="hidden sm:table-cell" />
+            <th className="hidden w-[22%] py-2 pl-6 text-left font-medium md:table-cell">Steps</th>
+            <th className="py-2 text-right font-medium md:hidden">Steps</th>
+            <th className="hidden md:table-cell" />
             <th className="py-2 text-right font-medium">AZM</th>
           </tr>
         </thead>
@@ -441,11 +441,11 @@ function DayRow({ d, maxSleep, maxSteps }: { d: Row; maxSleep: number; maxSteps:
           {dateW(d.t)}
         </Link>
       </td>
-      <td className="hidden py-2 pl-4 pr-3 sm:table-cell">{d.sleep != null && <InlineBar value={d.sleep} max={maxSleep} color="var(--stage-deep)" />}</td>
+      <td className="hidden py-2 pl-4 pr-3 md:table-cell">{d.sleep != null && <InlineBar value={d.sleep} max={maxSleep} color="var(--stage-deep)" />}</td>
       <td className="w-14 py-2 text-right">{hm(d.sleep)}</td>
       <td className="py-2 text-right">{num(d.rhr)}</td>
       <td className="py-2 text-right">{num(d.hrv, 1)}</td>
-      <td className="hidden py-2 pl-6 pr-3 sm:table-cell">{d.steps != null && <InlineBar value={d.steps} max={maxSteps} color="var(--s3)" />}</td>
+      <td className="hidden py-2 pl-6 pr-3 md:table-cell">{d.steps != null && <InlineBar value={d.steps} max={maxSteps} color="var(--s3)" />}</td>
       <td className="w-16 py-2 text-right">{num(d.steps)}</td>
       <td className="py-2 text-right">{num(d.azm)}</td>
     </tr>

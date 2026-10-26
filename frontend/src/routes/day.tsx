@@ -133,32 +133,34 @@ const GROUPS: { title: string; tint: string; items: Kpi[] }[] = [
 ];
 
 /**
- * The day's key numbers. On phones they are tiles, two to a row with the first
- * (sleep, steps) across the full width; from tablets up a flat strip.
+ * The day's key numbers as tiles, the first of each group (sleep, steps) twice
+ * as wide. Phones: two to a row. Wider: the night in three columns and the day
+ * in four, or beside the night in two thirds and one third, both two rows high.
  */
 function KpiStrip({ days, date }: { days: Daily[]; date: string }) {
   const today = days.find((d) => d.date === date)!;
   return (
-    <div className="grid gap-x-12 gap-y-6 md:grid-cols-[auto_auto] md:justify-between">
+    <div className="grid gap-x-8 gap-y-6 lg:grid-cols-[2fr_1fr]">
       {GROUPS.map((gr) => (
         <div key={gr.title}>
-          <div className="mb-2 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wider text-muted md:border-b md:pb-1.5">
+          <div className="mb-2 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wider text-muted">
             {gr.title}
-            {gr.title === 'Night' && <Help topic="kpis" className="md:hidden" />}
+            {gr.title === 'Night' && <Help topic="kpis" />}
           </div>
-          <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap md:gap-x-7 md:gap-y-3">
+          {/* Night: 5 tiles, sleep twice as wide, fill three columns. Day: 3 fill a row of four, or two rows of two beside the night. */}
+          <div className={cn('grid grid-cols-2 gap-2', gr.title === 'Night' ? 'sm:grid-cols-3' : 'sm:grid-cols-4 lg:grid-cols-2')}>
             {gr.items.map((k, i) => {
               const v = today[k.key];
               const fmt = (x: number) => (k.time ? hm(x) : num(x, k.digits ?? 0));
               const wide = i === 0;
               return (
-                <div key={k.key} className={cn('rounded-2xl p-3 md:rounded-none md:bg-transparent md:p-0', gr.tint, wide && 'col-span-2')}>
+                <div key={k.key} className={cn('rounded-2xl p-3', gr.tint, wide && 'col-span-2')}>
                   <div className="flex items-center gap-1 text-xs text-ink-2">
                     {k.label}
                     <Help topic={k.help} />
                   </div>
                   <div className="flex items-end justify-between gap-3">
-                    <div className={cn('font-semibold leading-tight tracking-tight tabular-nums md:text-[22px]', wide ? 'text-[28px]' : 'text-[22px]')}>
+                    <div className={cn('font-semibold leading-tight tracking-tight tabular-nums', wide ? 'text-[28px]' : 'text-[22px]')}>
                       {v == null ? '–' : fmt(v)}
                       {v != null && (k.time || k.unit) && <span className="ml-0.5 text-xs font-normal text-ink-2">{k.time ? 'h' : k.unit}</span>}
                     </div>
@@ -171,15 +173,11 @@ function KpiStrip({ days, date }: { days: Daily[]; date: string }) {
           </div>
         </div>
       ))}
-      <p className="hidden items-center gap-1 text-[11px] text-muted md:col-span-2 md:flex">
-        Changes against the 7-day average; green and red only where higher or lower is clearly better.
-        <Help topic="kpis" />
-      </p>
     </div>
   );
 }
 
-/** Phones: the night's stages as one bar, with bedtime and wake time, beside the hours asleep. */
+/** The night's stages as one bar, with bedtime and wake time, beside the hours asleep. */
 function SleepBar({ d }: { d: Daily }) {
   const parts = [
     [d.sleep_deep_minutes, 'var(--stage-deep)'],
@@ -190,7 +188,7 @@ function SleepBar({ d }: { d: Daily }) {
   const total = parts.reduce((a, [m]) => a + (m ?? 0), 0);
   if (!total || !d.sleep_start || !d.sleep_end) return null;
   return (
-    <div className="mb-1.5 w-[55%] max-w-56 md:hidden" aria-hidden>
+    <div className="mb-1.5 w-[55%] max-w-56" aria-hidden>
       <div className="flex h-2 gap-0.5 overflow-hidden rounded-full">
         {parts.map(([m, c], i) => (m ? <span key={i} style={{ width: `${(m / total) * 100}%`, background: c }} /> : null))}
       </div>
@@ -383,13 +381,16 @@ function NightSection({ p, m }: { p: Prepared; m: Daily | null }) {
           )}
           <TimeAxis domain={range} />
         </div>
-        <div>
+        {/* Beside the charts on wide screens; under them, in two columns, on tablets. */}
+        <div className="grid items-start gap-x-8 md:grid-cols-2 lg:block">
+          <div>
           <Stat label="Fell asleep" value={clock(night.span.start)} />
           <Stat label="Woke up" value={clock(night.span.end)} />
           <Stat label="Asleep" value={duration(asleep)} />
           <Stat label="Efficiency" help="efficiency" value={`${num((asleep / inBed) * 100)} %`} hint={`of ${duration(inBed)}`} />
           <Stat label="Heart rate asleep" help="hrAsleep" value={m?.nonrem_hr != null ? `${num(m.nonrem_hr)} bpm` : '–'} />
           <Stat label="Skin temperature" help="skinTemp" value={temperature(m?.nightly_temp_c)} />
+          </div>
           <StageTable night={night} />
         </div>
       </div>
@@ -402,7 +403,7 @@ function StageTable({ night }: { night: NonNullable<Prepared['night']> }) {
   const total = rows.reduce((a, l) => a + (night.stage_minutes[l.key as Stage] ?? 0), 0) || 1;
   const max = Math.max(...rows.map((l) => night.stage_minutes[l.key as Stage] ?? 0));
   return (
-    <table className="mt-5 w-full text-[13px] tabular-nums">
+    <table className="mt-5 w-full text-[13px] tabular-nums md:mt-0 lg:mt-5">
       <thead>
         <tr className="border-b text-xs text-ink-2">
           <th className="py-2 text-left font-medium">Stage</th>
@@ -563,13 +564,15 @@ function DaySection({ p, m, className }: { p: Prepared; m: Daily | null; classNa
           />
           <TimeAxis domain={range} />
         </div>
-        <div>
+        <div className="grid items-start gap-x-8 md:grid-cols-2 lg:block">
+          <div>
           <div className="mb-1 text-xs text-muted">Heart rate, whole day</div>
           <Stat label="Lowest" value={m?.hr_min != null ? `${num(m.hr_min)} bpm` : '–'} />
           <Stat label="Average" value={m?.hr_avg != null ? `${num(m.hr_avg)} bpm` : '–'} />
           <Stat label="Highest" value={m?.hr_max != null ? `${num(m.hr_max)} bpm` : '–'} />
+          </div>
           {exs.length > 0 && (
-            <div className="mt-5 space-y-1">
+            <div className="mt-5 space-y-1 md:mt-0 lg:mt-5">
               {exs.map((x) => <ExRow key={x.start} x={x} clock={clock} exs={exs} />)}
             </div>
           )}

@@ -219,7 +219,7 @@ export function Track({
   const snap = (t: number) => (pts?.length ? pts[nearest(pts, t, Infinity)] : g.mode === 'date' ? Math.round(t / DAY) * DAY : t);
 
   const header = (title || readout) && (
-    <div className={cn('flex min-w-0 items-baseline gap-3', side ? 'mb-1 justify-between sm:mb-0 sm:flex-col sm:items-start sm:justify-start sm:gap-0.5 sm:pt-1 sm:pr-3' : 'mb-1 h-5 justify-between pl-[36px] pr-[10px]')}>
+    <div className={cn('flex min-w-0 items-baseline gap-3', side ? 'mb-1 justify-between md:mb-0 md:flex-col md:items-start md:justify-start md:gap-0.5 md:pt-1 md:pr-3' : 'mb-1 h-5 justify-between pl-[36px] pr-[10px]')}>
       <div className="flex items-center gap-1 text-[13px] font-medium text-ink-2">
         {title}
         {help}
@@ -229,7 +229,7 @@ export function Track({
   );
 
   return (
-    <div className={cn(side && 'sm:grid sm:grid-cols-[var(--side)_1fr]', className)} style={{ ['--side' as string]: `${SIDE}px` }}>
+    <div className={cn(side && 'md:grid md:grid-cols-[var(--side)_1fr]', className)} style={{ ['--side' as string]: `${SIDE}px` }}>
       {header}
       <div ref={ref} className="min-w-0">
         <svg
@@ -352,9 +352,9 @@ export function TimeAxis({ domain, side, fmt }: { domain?: Range; side?: boolean
   const inside = t != null && t >= d[0] && t <= d[1];
   const zoomed = !domain && (view[0] !== g.full[0] || view[1] !== g.full[1]);
   return (
-    <div className={cn(side && 'sm:grid sm:grid-cols-[var(--side)_1fr]')} style={{ ['--side' as string]: `${SIDE}px` }}>
+    <div className={cn(side && 'md:grid md:grid-cols-[var(--side)_1fr]')} style={{ ['--side' as string]: `${SIDE}px` }}>
       {side && (
-        <div className="hidden pt-1 text-[11px] text-muted sm:block">
+        <div className="hidden pt-1 text-[11px] text-muted md:block">
           {zoomed && (
             <button className="underline-offset-2 hover:text-ink hover:underline" onClick={() => g.view.set(g.full)}>
               Reset zoom
