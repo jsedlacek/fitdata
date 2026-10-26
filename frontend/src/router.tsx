@@ -4,6 +4,9 @@ import { DayPage } from '@/routes/day';
 import { SettingsPage } from '@/routes/settings';
 import { TrendsPage, type Period } from '@/routes/trends';
 
+/** The demo (made-up data, no sign-in) runs the same app under /demo. */
+export const DEMO = location.pathname === '/demo' || location.pathname.startsWith('/demo/');
+
 const rootRoute = createRootRoute({ component: AppShell });
 
 const dayRoute = createRoute({
@@ -41,6 +44,8 @@ const settingsRoute = createRoute({
 
 export const router = createRouter({
   routeTree: rootRoute.addChildren([dayRoute, trendsRoute, settingsRoute]),
+  // `/` is the home page; the dashboard is under /dash.
+  basepath: DEMO ? '/demo' : '/dash',
   defaultPreload: 'intent',
 });
 

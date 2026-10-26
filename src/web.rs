@@ -41,6 +41,8 @@ const OAUTH_COOKIE: &str = "fd_oauth";
 const SESSION_DAYS: i64 = 30;
 /// Where questions and privacy requests go; also on the public pages (`frontend/*.html`).
 const CONTACT_EMAIL: &str = "fitdata@jakub.contact";
+/// Where the dashboard lives; `/` is always the home page.
+const APP: &str = "/dash";
 /// Files from `frontend/public` served without sign-in.
 const PUBLIC_FILES: &[&str] = &[
     "favicon.ico",
@@ -92,7 +94,7 @@ pub async fn serve(cfg: Config) -> Result<()> {
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-cache"),
         ))
-        // Client-side routes (/trends, ...) get index.html.
+        // Client-side routes (/dash/trends, ...) get index.html.
         .service(
             ServeDir::new(&state.static_dir)
                 .fallback(ServeFile::new(state.static_dir.join("index.html"))),
@@ -123,16 +125,31 @@ pub async fn serve(cfg: Config) -> Result<()> {
     for path in ["/docs", "/docs/", "/docs/{*page}"] {
         public_files = public_files.route_service(path, page(&state.static_dir, "docs.html"));
     }
+    // The demo is the dashboard on made-up data generated in the browser: public, no API.
+    for path in ["/demo", "/demo/", "/demo/{*page}"] {
+        public_files = public_files.route_service(path, page(&state.static_dir, "index.html"));
+    }
+    // The home page is for everyone; signed-in visitors get "Open dashboard" on it
+    // (it asks /api/session). Links from before the dashboard moved to /dash go there.
     let home = page(&state.static_dir, "home.html");
-    let dashboard = page(&state.static_dir, "index.html");
-    let root = get(move |State(cfg): State<Shared>, req: Request| async move {
-        let service = if session_user(&cfg, req.headers()).await.is_some() {
-            dashboard
-        } else {
-            home
-        };
-        service.oneshot(req).await.into_response()
+    let root = get(move |req: Request| async move {
+        match req.uri().query() {
+            Some(q) if q.contains("date=") || q.contains("fitbit=") => {
+                Redirect::permanent(&format!("{APP}?{q}")).into_response()
+            }
+            _ => home.oneshot(req).await.into_response(),
+        }
     });
+    let moved = |to: &'static str| {
+        get(move |req: Request| async move {
+            let q = req
+                .uri()
+                .query()
+                .map(|q| format!("?{q}"))
+                .unwrap_or_default();
+            Redirect::permanent(&format!("{to}{q}"))
+        })
+    };
 
     let protected = Router::new()
         .route("/api/overview", get(overview))
@@ -153,6 +170,9 @@ pub async fn serve(cfg: Config) -> Result<()> {
         .merge(protected)
         .merge(public_files)
         .route("/", root)
+        .route("/trends", moved("/dash/trends"))
+        .route("/settings", moved("/dash/settings"))
+        .route("/api/session", get(session_status))
         // Build assets hold no user data; the public pages need the stylesheet.
         .nest_service("/assets", assets)
         .route("/healthz", get(|| async { "ok" }))
@@ -322,7 +342,17 @@ struct LoginParams {
 fn local_path(next: Option<&str>) -> &str {
     match next {
         Some(n) if n.starts_with('/') && !n.starts_with("//") && !n.contains('\\') => n,
-        _ => "/",
+        _ => APP,
+    }
+}
+
+/// Whether the browser is signed in (204) or not (401), for the public pages'
+/// "Open dashboard" links. Says nothing else.
+async fn session_status(State(cfg): State<Shared>, headers: HeaderMap) -> StatusCode {
+    if session_user(&cfg, &headers).await.is_some() {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::UNAUTHORIZED
     }
 }
 
@@ -333,7 +363,7 @@ async fn login(State(cfg): State<Shared>, Query(p): Query<LoginParams>) -> Respo
 }
 
 async fn connect_fitbit(State(cfg): State<Shared>) -> Response {
-    start_oauth(&cfg, true, "/", None)
+    start_oauth(&cfg, true, APP, None)
 }
 
 #[derive(Deserialize)]
@@ -447,7 +477,7 @@ async fn handle_callback(cfg: &Config, headers: &HeaderMap, p: CallbackParams) -
     );
     let next = match local_path(Some(&next)) {
         // The dashboard confirms restored access (ReconnectBanner).
-        "/" if reconnected => "/?fitbit=reconnected",
+        APP if reconnected => "/dash?fitbit=reconnected",
         n => n,
     };
     let mut resp = Redirect::to(next).into_response();
@@ -888,10 +918,10 @@ mod tests {
             local_path(Some("/oauth/authorize?x=1")),
             "/oauth/authorize?x=1"
         );
-        assert_eq!(local_path(Some("//evil.example")), "/");
-        assert_eq!(local_path(Some("https://evil.example")), "/");
-        assert_eq!(local_path(Some("/\\evil.example")), "/");
-        assert_eq!(local_path(None), "/");
+        assert_eq!(local_path(Some("//evil.example")), APP);
+        assert_eq!(local_path(Some("https://evil.example")), APP);
+        assert_eq!(local_path(Some("/\\evil.example")), APP);
+        assert_eq!(local_path(None), APP);
     }
 
     #[test]

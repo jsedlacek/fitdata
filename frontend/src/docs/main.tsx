@@ -58,7 +58,7 @@ function Docs() {
             <span className="hidden flex-1 text-left sm:inline">Search…</span>
             <kbd className="hidden rounded border bg-surface-2 px-1.5 text-[11px] sm:inline">{isMac ? '⌘' : 'Ctrl'} K</kbd>
           </button>
-          <a href="/" className="hidden h-9 items-center rounded-lg bg-ink px-3.5 text-sm font-medium text-page hover:opacity-90 sm:inline-flex">
+          <a href="/dash" className="hidden h-9 items-center rounded-lg bg-ink px-3.5 text-sm font-medium text-page hover:opacity-90 sm:inline-flex">
             Open Fitdata
           </a>
         </div>

@@ -115,7 +115,7 @@ fn help_page(url: &str) -> Response {
   <p>When connecting, you sign in with Google, using the same account as on the dashboard, and confirm access.</p>
   <h2>What it can do</h2>
   <p class="muted">Daily metrics and trends (<code>get_daily_metrics</code>), a day in detail (<code>get_day</code>), sleep (<code>get_sleep</code>), exercise (<code>get_exercises</code>) and your own SQL queries over the tables (<code>get_schema</code>, <code>query</code>).</p>
-  <p class="muted"><a href="/">Back to the dashboard</a></p>
+  <p class="muted"><a href="/dash">Back to the dashboard</a></p>
 </main></body></html>"#
     );
     (
