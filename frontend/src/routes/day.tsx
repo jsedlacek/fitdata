@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowDownRight, ArrowUpRight, RefreshCw } from 'lucide-react';
@@ -180,22 +180,49 @@ function KpiStrip({ days, date }: { days: Daily[]; date: string }) {
 
 /** The night's stages as one bar, with bedtime and wake time, beside the hours asleep. */
 function SleepBar({ d }: { d: Daily }) {
+  const [on, setOn] = useState<number | null>(null);
   const parts = [
-    [d.sleep_deep_minutes, 'var(--stage-deep)'],
-    [d.sleep_light_minutes, 'var(--stage-light)'],
-    [d.sleep_rem_minutes, 'var(--stage-rem)'],
-    [d.sleep_awake_minutes, 'var(--stage-awake)'],
+    [d.sleep_deep_minutes, 'var(--stage-deep)', 'Deep'],
+    [d.sleep_light_minutes, 'var(--stage-light)', 'Light'],
+    [d.sleep_rem_minutes, 'var(--stage-rem)', 'REM'],
+    [d.sleep_awake_minutes, 'var(--stage-awake)', 'Awake'],
   ] as const;
   const total = parts.reduce((a, [m]) => a + (m ?? 0), 0);
   if (!total || !d.sleep_start || !d.sleep_end) return null;
+  const hot = on == null ? null : parts[on];
   return (
-    <div className="mb-1.5 w-[55%] max-w-56" aria-hidden>
-      <div className="flex h-2 gap-0.5 overflow-hidden rounded-full">
-        {parts.map(([m, c], i) => (m ? <span key={i} style={{ width: `${(m / total) * 100}%`, background: c }} /> : null))}
+    // Hover or tap a stage: the line under the bar says what it is instead of the times.
+    <div className="mb-1.5 w-[55%] max-w-56" onPointerLeave={() => setOn(null)}>
+      <div className="flex h-4 items-center gap-0.5">
+        {parts.map(([m, c, label], i) =>
+          m ? (
+            <button
+              key={label}
+              type="button"
+              className="flex h-full cursor-default items-center first:[&>span]:rounded-l-full last:[&>span]:rounded-r-full"
+              style={{ width: `${(m / total) * 100}%` }}
+              onPointerEnter={() => setOn(i)}
+              onFocus={() => setOn(i)}
+              onBlur={() => setOn(null)}
+              onClick={() => setOn(on === i ? null : i)}
+              aria-label={`${label} ${hm(m)} h, ${num((m / total) * 100)} %`}
+            >
+              <span className={cn('h-2 w-full transition-[height]', on === i && 'h-3')} style={{ background: c }} />
+            </button>
+          ) : null,
+        )}
       </div>
-      <div className="mt-1 flex justify-between text-[11px] tabular-nums text-muted">
-        <span>{clock(d.sleep_start)}</span>
-        <span>{clock(d.sleep_end)}</span>
+      <div className="mt-0.5 flex justify-between text-[11px] tabular-nums text-muted" aria-live="polite">
+        {hot ? (
+          <span className="truncate">
+            <b className="font-medium text-ink">{hot[2]}</b> {hm(hot[0])} h · {num(((hot[0] ?? 0) / total) * 100)} %
+          </span>
+        ) : (
+          <>
+            <span>{clock(d.sleep_start)}</span>
+            <span>{clock(d.sleep_end)}</span>
+          </>
+        )}
       </div>
     </div>
   );
