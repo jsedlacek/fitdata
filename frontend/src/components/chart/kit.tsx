@@ -81,6 +81,11 @@ function mkScale(d: Range, yd: Range, w: number, h: number, padTop = 6): Scale {
   return { x: (t) => (t - d[0]) * kx, y: (v) => h - (v - yd[0]) * ky, t: (px) => d[0] + px / kx, w, h, d, yd };
 }
 
+/**
+ * The element's width, kept up to date. The SVG inside gets this width as its
+ * attribute but `width: 100%` in CSS, so it never holds its container wider
+ * than the layout gives it.
+ */
 function useWidth() {
   const ref = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(0);
@@ -235,7 +240,7 @@ export function Track({
         <svg
           width={w}
           height={height}
-          className="block touch-pan-y select-none overflow-visible rounded-sm"
+          className="block w-full touch-pan-y select-none overflow-visible rounded-sm"
           role="group"
           tabIndex={0}
           aria-label={typeof title === 'string' ? `${title}: arrow keys move the cursor` : undefined}
@@ -363,7 +368,7 @@ export function TimeAxis({ domain, side, fmt }: { domain?: Range; side?: boolean
         </div>
       )}
       <div ref={ref} className="relative h-6 min-w-0">
-        <svg width={w} height={24} className="block">
+        <svg width={w} height={24} className="block w-full overflow-visible">
           <g transform={`translate(${M.l},0)`}>
             <line x1={0} x2={pw} y1={0.5} y2={0.5} stroke="var(--axis)" />
             {ticks.map((v) => (

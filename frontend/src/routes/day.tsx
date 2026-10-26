@@ -333,7 +333,7 @@ function NightSection({ p, m }: { p: Prepared; m: Daily | null }) {
 
   return (
     <Section title="Night" note={`${clock(night.span.start)} – ${clock(night.span.end)}, the night that ended this morning`}>
-      <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="space-y-4">
           <Track
             title="Sleep stages" help={<Help topic="stages" />} height={lanes.length * 20 + 12} y={[0, lanes.length]} ticks={lanes.map((_, i) => i + 0.5)} tickFmt={(v) => lanes[Math.floor(v)].label}
@@ -514,7 +514,7 @@ function DaySection({ p, m, className }: { p: Prepared; m: Daily | null; classNa
 
   return (
     <Section title="Day" note={`${clock(range[0])} – midnight`} className={className}>
-      <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="space-y-4">
           <Track
             title="Heart rate" help={<Help topic="dayHr" />} height={170 + LANE_H} padTop={LANE_H + 4} {...hrY} domain={range}
