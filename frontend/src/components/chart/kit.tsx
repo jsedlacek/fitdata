@@ -19,6 +19,10 @@ type Group = {
   mode: Mode;
   /** Time zone of a time axis; dates are UTC midnights (`dayValue`). */
   tz: string;
+  /** The pointer is at `t` over a track. */
+  hover: (t: number | null) => void;
+  /** The pointer left a track: the cursor stays a moment, so crossing the gap to the next row doesn't blink it. */
+  leave: () => void;
 };
 
 const Ctx = createContext<Group | null>(null);
@@ -27,7 +31,21 @@ export const useGroup = () => useContext(Ctx)!;
 /** Tracks inside one group share the crosshair and the zoom. */
 export function SyncGroup({ domain, mode, tz = 'UTC', children }: { domain: Range; mode: Mode; tz?: string; children: ReactNode }) {
   const g = useMemo<Group>(
-    () => ({ cursor: createStore<number | null>(null), view: createStore(domain), sel: createStore<Range | null>(null), full: domain, mode, tz }),
+    () => {
+      const cursor = createStore<number | null>(null);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      return {
+        cursor, view: createStore(domain), sel: createStore<Range | null>(null), full: domain, mode, tz,
+        hover: (t) => {
+          clearTimeout(timer);
+          cursor.set(t);
+        },
+        leave: () => {
+          clearTimeout(timer);
+          timer = setTimeout(() => cursor.set(null), 150);
+        },
+      };
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [domain[0], domain[1], mode, tz],
   );
@@ -213,6 +231,7 @@ export function Track({
   const s = useMemo(() => mkScale(d, y, pw, height, padTop), [d, y[0], y[1], pw, height, padTop]); // eslint-disable-line react-hooks/exhaustive-deps
   const body = useMemo(() => (pw > 0 ? draw(s) : null), [s]); // eslint-disable-line react-hooks/exhaustive-deps
   const dragFrom = useRef<number | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const zoomable = !domain;
   const clipId = useMemo(() => `c${Math.random().toString(36).slice(2)}`, []);
 
@@ -234,7 +253,18 @@ export function Track({
   );
 
   return (
-    <div className={cn(side && 'md:grid md:grid-cols-[var(--side)_1fr]', className)} style={{ ['--side' as string]: `${SIDE}px` }}>
+    <div
+      className={cn(side && 'md:grid md:grid-cols-[var(--side)_1fr]', className)}
+      style={{ ['--side' as string]: `${SIDE}px` }}
+      // The whole row reacts, title and gaps included, not only the plotted marks.
+      onPointerMove={(e) => {
+        if (dragFrom.current != null || !svgRef.current) return;
+        const px = e.clientX - svgRef.current.getBoundingClientRect().left - M.l;
+        if (px < -2 || px > pw + 2) g.leave();
+        else g.hover(snap(s.t(Math.min(pw, Math.max(0, px)))));
+      }}
+      onPointerLeave={() => dragFrom.current == null && g.leave()}
+    >
       {header}
       <div ref={ref} className="min-w-0">
         <svg
@@ -262,12 +292,13 @@ export function Track({
             g.cursor.set(Math.min(hi, Math.max(lo, next)));
           }}
           onBlur={() => g.cursor.set(null)}
+          ref={svgRef}
           onPointerMove={(e) => {
-            const { px, t } = at(e);
-            g.cursor.set(px < -2 || px > pw + 2 ? null : snap(t));
-            if (dragFrom.current != null) g.sel.set([Math.min(dragFrom.current, t), Math.max(dragFrom.current, t)]);
+            if (dragFrom.current == null) return;
+            const { t } = at(e);
+            g.hover(snap(t));
+            g.sel.set([Math.min(dragFrom.current, t), Math.max(dragFrom.current, t)]);
           }}
-          onPointerLeave={() => dragFrom.current == null && g.cursor.set(null)}
           onPointerDown={(e) => {
             if (!zoomable || e.button !== 0) return;
             dragFrom.current = at(e).t;
