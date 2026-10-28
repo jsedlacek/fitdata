@@ -3,7 +3,7 @@
 //! Layout: `raw/{data-type}/{YYYY-MM-DD | YYYY-MM | all}.jsonl`, one API data
 //! point per line, exactly as returned by the API.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use chrono::{Datelike, Months, NaiveDate};
 use futures::{StreamExt, TryStreamExt, stream};
 use serde_json::{Value, json};
@@ -154,11 +154,26 @@ fn is_unavailable(e: &anyhow::Error) -> bool {
         .is_some_and(|e| matches!(e.status, 403 | 404))
 }
 
+/// A server error that outlasted the retries in `HealthClient::get`. For some
+/// accounts Google answers one data type with HTTP 500 every time, so that
+/// type is skipped rather than failing the user's whole sync. When every type
+/// fails like this the API itself is down, and `fetch_range` fails the run.
+fn is_server_error(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<ApiError>()
+        .is_some_and(|e| e.status >= 500)
+}
+
+/// Whether a data type is skipped instead of failing the run.
+fn is_skippable(e: &anyhow::Error) -> bool {
+    is_unavailable(e) || is_server_error(e)
+}
+
 /// What `fetch_range` did.
 #[derive(Debug, Default)]
 pub struct Fetched {
     pub points: usize,
-    /// Data types skipped because they are not readable (see `is_unavailable`).
+    /// Data types skipped because they are not readable or keep failing on
+    /// Google's side (see `is_skippable`).
     pub skipped: Vec<&'static str>,
 }
 
@@ -171,31 +186,41 @@ pub async fn fetch_range(
     from: NaiveDate,
     to: NaiveDate,
 ) -> Result<Fetched> {
-    let per_type: Vec<(&'static str, usize, bool)> = stream::iter(types.iter().copied())
-        .map(|dt| {
-            async move {
-                let mut n = 0;
-                for slot in slots(dt, from, to) {
-                    match fetch_slot(client, store, dt, &slot).await {
-                        Ok(c) => n += c,
-                        Err(e) if is_unavailable(&e) => {
-                            tracing::warn!("skipped ({e})");
-                            return Ok((dt.id, n, true));
+    // Per type: its id, points fetched and the error it was skipped for.
+    let per_type: Vec<(&'static str, usize, Option<anyhow::Error>)> =
+        stream::iter(types.iter().copied())
+            .map(|dt| {
+                async move {
+                    let mut n = 0;
+                    for slot in slots(dt, from, to) {
+                        match fetch_slot(client, store, dt, &slot).await {
+                            Ok(c) => n += c,
+                            Err(e) if is_skippable(&e) => {
+                                tracing::warn!("skipped ({e})");
+                                return Ok((dt.id, n, Some(e)));
+                            }
+                            Err(e) => return Err(e.context(format!("{} {}", dt.id, slot.key))),
                         }
-                        Err(e) => return Err(e.context(format!("{} {}", dt.id, slot.key))),
                     }
+                    Ok::<_, anyhow::Error>((dt.id, n, None))
                 }
-                Ok::<_, anyhow::Error>((dt.id, n, false))
-            }
-            .instrument(type_span(dt))
-        })
-        .buffer_unordered(CONCURRENCY)
-        .try_collect()
-        .await?;
+                .instrument(type_span(dt))
+            })
+            .buffer_unordered(CONCURRENCY)
+            .try_collect()
+            .await?;
+    if !per_type.is_empty()
+        && per_type
+            .iter()
+            .all(|(_, _, e)| e.as_ref().is_some_and(is_server_error))
+    {
+        let (id, _, e) = &per_type[0];
+        bail!("every data type failed, e.g. {id}: {}", e.as_ref().unwrap());
+    }
     let mut out = Fetched::default();
     for (id, n, skipped) in per_type {
         out.points += n;
-        if skipped {
+        if skipped.is_some() {
             out.skipped.push(id);
         }
     }
@@ -220,7 +245,7 @@ pub async fn backfill(
             async move {
                 let n = match backfill_type(client, store, dt, since, max_empty_months).await {
                     Ok(n) => n,
-                    Err(e) if is_unavailable(&e) => {
+                    Err(e) if is_skippable(&e) => {
                         tracing::warn!("skipped ({e})");
                         0
                     }
@@ -367,6 +392,22 @@ mod tests {
                 ("2026-10", d("2026-10-01"), d("2026-11-01"))
             ]
         );
+    }
+
+    #[test]
+    fn server_errors_and_missing_access_are_skipped() {
+        let err = |status| {
+            anyhow::Error::from(ApiError {
+                status,
+                body: String::new(),
+            })
+        };
+        assert!(is_skippable(&err(403)));
+        assert!(is_skippable(&err(404)));
+        assert!(is_skippable(&err(500)));
+        assert!(is_skippable(&err(503)));
+        assert!(!is_skippable(&err(400)));
+        assert!(!is_server_error(&err(404)));
     }
 
     #[test]

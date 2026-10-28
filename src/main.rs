@@ -368,7 +368,7 @@ async fn run(cli: Cli) -> Result<()> {
                 sync::fetch_range(&client, &raw, &select_types(&types)?, from, to).await?;
             println!("Sync {from}..{to} done: {} data points", fetched.points);
             if !fetched.skipped.is_empty() {
-                println!("Not readable: {}", fetched.skipped.join(", "));
+                println!("Skipped: {}", fetched.skipped.join(", "));
             }
         }
         _ => unreachable!(),

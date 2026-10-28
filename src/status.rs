@@ -54,7 +54,7 @@ pub struct Run {
     /// The refresh token no longer works: the user has to reconnect.
     pub auth_error: bool,
     pub error: Option<String>,
-    /// Data types skipped as not readable.
+    /// Data types skipped as not readable or failing on Google's side.
     #[serde(default)]
     pub skipped: Vec<String>,
 }

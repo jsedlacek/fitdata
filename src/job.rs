@@ -277,7 +277,7 @@ pub async fn client(ctx: &Ctx<'_>, user: &User) -> Result<HealthClient> {
 
 /// What a sync did and learned.
 struct Synced {
-    /// Data types skipped as not readable.
+    /// Data types skipped as not readable or failing on Google's side.
     skipped: Vec<&'static str>,
     /// A full run: every day of the window, every data type probed.
     full: bool,
@@ -351,7 +351,7 @@ async fn sync_user(ctx: &Ctx<'_>, user: &User, days: u64, before: &Status) -> Re
         fetched.points
     );
     if !fetched.skipped.is_empty() {
-        tracing::warn!("data types not readable: {}", fetched.skipped.join(", "));
+        tracing::warn!("data types skipped: {}", fetched.skipped.join(", "));
     }
     // Tables built in another time zone (changed in Settings) are rebuilt
     // whole: every local date moves.
