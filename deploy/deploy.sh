@@ -54,12 +54,14 @@ else
 fi
 
 echo "== Service $SERVICE_NAME"
-# Public endpoint; the app itself requires Google sign-in.
+# Public endpoint; the app itself requires Google sign-in. Max instances leaves
+# room for an idle instance being shut down while a new one starts: at the cap,
+# Cloud Run rejects requests at once with "no available instance".
 gcloud run deploy "$SERVICE_NAME" --project "$PROJECT" --region "$REGION" \
   --image "$IMAGE" --args serve \
   --service-account "$WEB_SA" \
   --set-env-vars "^;^${ENV//,/;};PUBLIC_URL=$PUBLIC_URL;SYNC_JOB=$JOB_NAME" \
-  --allow-unauthenticated --cpu 1 --memory 1Gi --min-instances 0 --max-instances 2
+  --allow-unauthenticated --cpu 1 --memory 1Gi --min-instances 0 --max-instances 5
 
 if [[ -n $DOMAIN ]]; then
   echo "== Domain mapping $DOMAIN"
