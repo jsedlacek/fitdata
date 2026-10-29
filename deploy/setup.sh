@@ -93,8 +93,7 @@ done
 say "Alerting ($ALERT_EMAIL)"
 # One e-mail channel and two policies: any failed run of the sync job opens an
 # incident (one mail), which closes itself once runs succeed again; an ERROR
-# log of the web service (incl. 5xx requests) mails at most once an hour,
-# except requests Cloud Run drops while scaling up from zero.
+# log of the web service (incl. 5xx requests) mails at most once an hour.
 channel=$(gcloud beta monitoring channels list --project "$PROJECT" \
   --filter='displayName="fitdata alerts" AND type="email"' --format='value(name)' | head -1)
 if [[ -z $channel ]]; then
