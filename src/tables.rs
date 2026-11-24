@@ -72,10 +72,18 @@ fn sort_key(table: &str) -> String {
     }
 }
 
-/// `rows` as a record batch of the table's schema.
-fn batch<R: Row>(rows: &[R]) -> Result<RecordBatch> {
+/// Rows per record batch of new rows.
+const BATCH_ROWS: usize = 8192;
+
+/// `rows` as record batches of the table's schema, each with its own
+/// buffers. One big batch would be sliced by DataFusion, and every slice
+/// counts the whole shared buffer against the memory limit: a month of
+/// second-by-second heart rate (~900k rows, ~20 MB) then "needs" gigabytes.
+fn batches<R: Row>(rows: &[R]) -> Result<Vec<RecordBatch>> {
     let schema = engine::schema(R::TABLE);
-    Ok(serde_arrow::to_record_batch(schema.fields(), &rows)?)
+    rows.chunks(BATCH_ROWS)
+        .map(|c| Ok(serde_arrow::to_record_batch(schema.fields(), &c)?))
+        .collect()
 }
 
 /// One file's new content: the old file without the dates in `[from, to]`,
@@ -148,7 +156,7 @@ pub async fn replace_range<R: Row>(
 ) -> Result<()> {
     let table = R::TABLE;
     let dir = tempfile::tempdir()?;
-    let new = vec![batch(rows)?];
+    let new = batches(rows)?;
     let targets: Vec<Option<String>> = if MONTHLY.contains(&table) {
         months(from, to).into_iter().map(Some).collect()
     } else {
@@ -368,6 +376,39 @@ mod tests {
         assert_eq!(
             m.files.keys().collect::<Vec<_>>(),
             ["heart_rate/2026-10.parquet"]
+        );
+    }
+
+    /// A first load writes a whole month of second-by-second heart rate
+    /// (~40k readings a day) within the merge's memory limit.
+    #[tokio::test]
+    async fn a_full_month_of_heart_rate_fits_in_memory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(tmp.path().to_str().unwrap()).await.unwrap();
+        let start = prague("2026-10-01 00:00");
+        let rows: Vec<HeartRateRow> = (0..31 * 40_000)
+            .map(|i| {
+                let ts = start + chrono::Duration::seconds(i * 2);
+                HeartRateRow {
+                    date: ts.date_naive(),
+                    ts,
+                    bpm: 60.0,
+                }
+            })
+            .collect();
+        replace_range(&store, "x", &rows, d("2026-10-01"), d("2026-10-31"))
+            .await
+            .unwrap();
+        let file = store
+            .local_dir()
+            .unwrap()
+            .join("u/x/data/heart_rate/2026-10.parquet");
+        let ctx = engine::session(64 << 20).unwrap();
+        engine::register(&ctx, "heart_rate", &[file]).await.unwrap();
+        let n = engine::run(&ctx, "SELECT * FROM heart_rate").await.unwrap();
+        assert_eq!(
+            n.iter().map(RecordBatch::num_rows).sum::<usize>(),
+            rows.len()
         );
     }
 
